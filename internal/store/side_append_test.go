@@ -71,6 +71,26 @@ func sideBundle(t *testing.T, h pj.Observation, attempt, key string, mutate func
 		return events, nil
 	}}
 }
+
+// Decisions are existing journal evidence, recorded outside AppendSide. The
+// helper keeps the raw four-event builder for full replay/history fixtures.
+func prepareSideBundle(t *testing.T, s *Store, q QueueID, request SideAppend) SideAppend {
+	t.Helper()
+	sample, err := request.Build([]uint64{1, 2, 3, 4})
+	must(t, err)
+	decisionID := appendEvents(t, s, q, sample[1].Queue)
+	build := request.Build
+	request.Count = 3
+	request.Build = func(ids []uint64) ([]journalreader.Event, error) {
+		events, err := build([]uint64{ids[0], uint64(decisionID), ids[1], ids[2]})
+		if err != nil {
+			return nil, err
+		}
+		return []journalreader.Event{events[0], events[2], events[3]}, nil
+	}
+	return request
+}
+
 func cursorVersion(t *testing.T, s *Store, q QueueID) (outsidePushProgress, int) {
 	t.Helper()
 	raw, err := s.Observation(t.Context(), q, outsidePushCursorKey)
@@ -119,16 +139,33 @@ func TestSideAppendValidatesBeforeAnyInsert(t *testing.T) {
 			// A post-rollback row count alone would also pass a validate-after-
 			// INSERT implementation. Reject any attempted insert in this schema
 			// and require the replay/variant error to win before that trigger.
+			request := sideBundle(t, sideInventory(t), "attempt", name, nil)
+			if name != "queue transition" && name != "ambiguous event" {
+				request = prepareSideBundle(t, s, q, request)
+				build := request.Build
+				request.Build = func(ids []uint64) ([]journalreader.Event, error) {
+					events, err := build(ids)
+					if err != nil {
+						return nil, err
+					}
+					// Preserve the raw builder's positions for the invalid companion mutation.
+					expanded := []journalreader.Event{events[0], {}, events[1], events[2]}
+					mutate(expanded)
+					return []journalreader.Event{expanded[0], expanded[2], expanded[3]}, nil
+				}
+			} else {
+				request = sideBundle(t, sideInventory(t), "attempt", name, mutate)
+			}
+			baseline := count(t, s, `SELECT count(*) FROM events WHERE queue_id=$1`, q)
 			_, err = s.pool.Exec(t.Context(), `CREATE FUNCTION forbid_candidate_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'unvalidated candidate reached INSERT'; END $$;
 CREATE TRIGGER forbid_candidate BEFORE INSERT ON events FOR EACH ROW EXECUTE FUNCTION forbid_candidate_insert()`)
 			must(t, err)
-			request := sideBundle(t, sideInventory(t), "attempt", name, mutate)
 			if _, err := s.AppendSide(t.Context(), q, request); err == nil {
 				t.Fatal("invalid bundle accepted")
 			} else if strings.Contains(err.Error(), "unvalidated candidate reached INSERT") {
 				t.Fatal("validation ran after an insert was attempted", err)
 			}
-			if got := count(t, s, `SELECT count(*) FROM events WHERE queue_id=$1`, q); got != 1 {
+			if got := count(t, s, `SELECT count(*) FROM events WHERE queue_id=$1`, q); got != baseline {
 				t.Fatalf("rejected record reached journal: %d", got)
 			}
 			after, err := s.Observation(t.Context(), q, outsidePushCursorKey)
@@ -162,15 +199,16 @@ func TestSideAppendCursorUpgradeAtomicAndRollback(t *testing.T) {
  CREATE TRIGGER side_cursor BEFORE INSERT ON events FOR EACH ROW EXECUTE FUNCTION assert_side_cursor()`)
 	must(t, err)
 	h := sideInventory(t)
-	if _, err := s.AppendSide(t.Context(), q, sideBundle(t, h, "attempt", "rollback", nil)); err == nil || !strings.Contains(err.Error(), "injected late insert failure") {
+	request := prepareSideBundle(t, s, q, sideBundle(t, h, "attempt", "rollback", nil))
+	if _, err := s.AppendSide(t.Context(), q, request); err == nil || !strings.Contains(err.Error(), "injected late insert failure") {
 		t.Fatal("did not reach late failure", err)
 	}
 	after, err := s.Observation(t.Context(), q, outsidePushCursorKey)
 	must(t, err)
-	if !bytes.Equal(before, after) || count(t, s, `SELECT count(*) FROM events WHERE queue_id=$1`, q) != 1 {
+	if !bytes.Equal(before, after) || count(t, s, `SELECT count(*) FROM events WHERE queue_id=$1`, q) != 2 {
 		t.Fatal("transaction rollback leaked rows/cursor")
 	}
-	request := sideBundle(t, h, "attempt", "success", nil)
+	request.DedupeKey = "success"
 	id, err := s.AppendSide(t.Context(), q, request)
 	must(t, err)
 	progress, version := cursorVersion(t, s, q)
@@ -202,7 +240,10 @@ func TestSideAppendNoCursorAndDependencyBinding(t *testing.T) {
 	must(t, err)
 	request := SideAppend{Count: 1, DedupeKey: "init", Binding: init, Build: func([]uint64) ([]journalreader.Event, error) { return []journalreader.Event{{Dependency: init}}, nil }}
 	wrong := request
-	wrong.Binding.Namespace = "invalid"
+	var otherToken [32]byte
+	otherToken[0] = 2
+	wrong.Binding, err = dependency.NewJournalIdentity(init.DatabaseIdentity, otherToken, init.ForgeInstance, init.Installation)
+	must(t, err)
 	if _, err := s.AppendSide(t.Context(), q, wrong); err == nil {
 		t.Fatal("unverified initialization accepted")
 	}
@@ -423,13 +464,16 @@ func TestSidePendingV9ReloadHasFixedReferenceBudget(t *testing.T) {
 	for i := 0; i < pj.MaxPendingLandings; i++ {
 		request := sideBundle(t, h, fmt.Sprint("pending-", i), fmt.Sprint("pending-key-", i), nil)
 		build := request.Build
-		request.Count = 2
+		events, err := build([]uint64{uint64(observationID), 1, 2, 3})
+		must(t, err)
+		decisionID := appendEvents(t, s, q, events[1].Queue)
+		request.Count = 1
 		request.Build = func(ids []uint64) ([]journalreader.Event, error) {
-			events, err := build([]uint64{uint64(observationID), ids[0], ids[1], ids[1] + 1})
+			events, err := build([]uint64{uint64(observationID), uint64(decisionID), ids[0], ids[0] + 1})
 			if err != nil {
 				return nil, err
 			}
-			return events[1:3], nil
+			return events[2:3], nil
 		}
 		_, err = s.AppendSide(t.Context(), q, request)
 		must(t, err)
@@ -456,17 +500,20 @@ func TestSidePendingV9ReloadHasFixedReferenceBudget(t *testing.T) {
 	trace.mu.Unlock()
 	t.Logf("v9 with %d unfinished attempts: %d exact-ID queries + 1 empty suffix, %s reload", pj.MaxPendingLandings, pj.MaxPendingLandings, elapsed)
 	// Preflight refuses another unfinished companion without poisoning replay.
-	before := count(t, s, `SELECT count(*) FROM events WHERE queue_id=$1`, q)
 	request := sideBundle(t, h, "pending-overflow", "pending-overflow", nil)
 	build := request.Build
-	request.Count = 2
+	events, err := build([]uint64{uint64(observationID), 1, 2, 3})
+	must(t, err)
+	decisionID := appendEvents(t, s, q, events[1].Queue)
+	request.Count = 1
 	request.Build = func(ids []uint64) ([]journalreader.Event, error) {
-		events, err := build([]uint64{uint64(observationID), ids[0], ids[1], ids[1] + 1})
+		events, err := build([]uint64{uint64(observationID), uint64(decisionID), ids[0], ids[0] + 1})
 		if err != nil {
 			return nil, err
 		}
-		return events[1:3], nil
+		return events[2:3], nil
 	}
+	before := count(t, s, `SELECT count(*) FROM events WHERE queue_id=$1`, q)
 	if _, err := s.AppendSide(t.Context(), q, request); !errors.Is(err, pj.ErrLimit) {
 		t.Fatal("pending overflow committed", err)
 	}
@@ -475,4 +522,100 @@ func TestSidePendingV9ReloadHasFixedReferenceBudget(t *testing.T) {
 	}
 	_, _, err = s.Load(t.Context(), q)
 	must(t, err)
+}
+
+func TestSideDedupeRejectsDifferentBytesAndBundleLength(t *testing.T) {
+	s := newStore(t)
+	q := ensureQueue(t, s, "")
+	h := sideInventory(t)
+	request := prepareSideBundle(t, s, q, sideBundle(t, h, "attempt", "dedupe", nil))
+	_, err := s.AppendSide(t.Context(), q, request)
+	must(t, err)
+	for _, kind := range []string{"bytes", "length"} {
+		t.Run(kind, func(t *testing.T) {
+			changed := request
+			build := request.Build
+			if kind == "length" {
+				changed.Count = 1
+				changed.Build = func(ids []uint64) ([]journalreader.Event, error) {
+					events, err := build([]uint64{ids[0], ids[0] + 1, ids[0] + 2})
+					return events[:1], err
+				}
+			} else {
+				changed.Build = func(ids []uint64) ([]journalreader.Event, error) {
+					events, err := build(ids)
+					if err != nil {
+						return nil, err
+					}
+					obs := events[0].Provenance.(pj.Observation)
+					obs.Request.Generation = "different"
+					obs.Digest = pj.InventoryDigest(obs, obs.Commits)
+					events[0].Provenance = obs
+					return events, nil
+				}
+			}
+			if _, err := s.AppendSide(t.Context(), q, changed); err == nil {
+				t.Fatal("dedupe accepted different bundle")
+			}
+		})
+	}
+	if count(t, s, `SELECT count(*) FROM events WHERE queue_id=$1`, q) != 4 {
+		t.Fatal("dedupe mismatch published rows")
+	}
+}
+
+func TestSideAppendRefusesLandingDecision(t *testing.T) {
+	s := newStore(t)
+	q := ensureQueue(t, s, "")
+	request := sideBundle(t, sideInventory(t), "attempt", "decision-bypass", nil)
+	if _, err := s.AppendSide(t.Context(), q, request); err == nil || !strings.Contains(err.Error(), "does not admit queue events") {
+		t.Fatal("unvalidated decision admitted", err)
+	}
+	if count(t, s, `SELECT count(*) FROM events WHERE queue_id=$1`, q) != 0 {
+		t.Fatal("partial decision bundle")
+	}
+}
+
+func TestSideAppendAndLoadResumeCheckpointWithOnlySuffixRows(t *testing.T) {
+	s := newStore(t)
+	q := ensureQueue(t, s, "")
+	_, err := s.pool.Exec(t.Context(), `INSERT INTO events(queue_id,type,payload) SELECT $1,'refresh_requested','{"version":1,"type":"refresh_requested","data":{}}'::jsonb FROM generate_series(1,2000)`, q)
+	must(t, err)
+	h := sideInventory(t)
+	last, err := s.AppendSide(t.Context(), q, sideObservation(h, "initial"))
+	must(t, err)
+	trace := traceAuditQueries(t, s)
+	for i := 0; i < 20; i++ {
+		h.Request.Generation = fmt.Sprint("checkpoint-next-", i)
+		h.PreviousObservationID = uint64(last)
+		h.Digest = pj.InventoryDigest(h, h.Commits)
+		trace.reset()
+		last, err = s.AppendSide(t.Context(), q, sideObservation(h, fmt.Sprint("next-", i)))
+		must(t, err)
+		trace.mu.Lock()
+		queries, rows := len(trace.queries), trace.rows
+		suffix := 0
+		for _, query := range trace.queries {
+			if strings.Contains(query.SQL, "id>$2") {
+				suffix++
+				if query.Args[1].(int64) < 2000 {
+					t.Fatal("append replayed historical prefix")
+				}
+			}
+		}
+		trace.mu.Unlock()
+		if queries != 2 || rows != 0 || suffix != 1 {
+			t.Fatalf("append read history: %d queries, %d rows, %d suffix pages", queries, rows, suffix)
+		}
+		trace.reset()
+		_, watermark, err := s.Load(t.Context(), q)
+		must(t, err)
+		trace.mu.Lock()
+		queries, rows = len(trace.queries), trace.rows
+		trace.mu.Unlock()
+		if watermark != last || queries != 1 || rows != 0 {
+			t.Fatalf("load read history: %d queries/%d rows at %d", queries, rows, watermark)
+		}
+	}
+	t.Log("2000-row prefix, 20 appends: each append 1 dedupe + 1 empty suffix query; each Load 1 empty suffix query, 0 historical rows")
 }

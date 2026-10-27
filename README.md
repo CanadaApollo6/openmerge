@@ -456,3 +456,10 @@ SHA of an activated build, never arbitrary history scans.
 
 The audit export format is defined by the normative
 [v1 frozen specification](docs/research/adr-0008-10a-design.md#v1-frozen-specification).
+
+ADR 0010/0011 writer foundations remain **Hold**, with no production writers.
+The derived provenance projection retires abandoned and dropped work using
+existing queue journal outcomes, while retaining original audit evidence and
+rejection fences. Lifetime fences still consume finite checkpoint capacity;
+unlimited-history pruning remains unresolved. See the
+[retention and recovery contract](docs/operating.md#shared-reader-retention-recovery).

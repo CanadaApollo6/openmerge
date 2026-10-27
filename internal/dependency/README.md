@@ -431,17 +431,30 @@ lock before any INSERT, preflights capacity, and upgrades the existing audit
 cursor to v9 in that same transaction. No production caller is enabled. The
 writer guard allowlists only this adapter and forbids production callers.
 
-Projection compaction retires completed tested/landed evidence pairs and unpinned
-superseded inventories, preserving exact generation/CAS and attempt fences.
+Projection compaction retires completed tested/landed pairs, terminal non-landed
+attempts (including abandonment), and generations dropped by dequeue, closure,
+head/revision supersession or queue retirement. Uncertain fenced landings retain
+evidence until their definitive outcome. Exact generation/CAS and attempt fences
+survive restart; retired identities cannot be reused.
 Original journal evidence is retained forever for ADR 0008/0010 audit closure;
 settled and superseded generations remain exportable by original ID. A fresh
 generation is required before further use of a retired inventory. The active
-budget is 4096 records / 32 MiB (including compact metadata), with at most 16
-unfinished tested companions and 256 reference targets in total (counted per
-companion, matching lookup caching). Writer preflight stays below the record/byte caps;
+budget is 4256 records / 32 MiB (including compact metadata), with at most 32
+unfinished tested companions, 385 reference targets per companion and 12,320
+in aggregate. These derive from batch size 128 and speculation depth 32, with
+per-member headroom, and match lookup caching. Writer preflight stays below the record/byte caps;
 capacity refusal must never publish effects or partial bundles. Dependency holds
 are not pruned. See the complete [retention decision, cursor invariant and
 recovery procedure](../../docs/operating.md#shared-reader-retention-recovery).
+
+The owned replay fold updates lifetime fence maps without copying them per event.
+Append and Load resume a separate append/audit checkpoint and its paged suffix;
+append checkpoints never advance outside-push audit progress. Checkpoint work
+and durable identity fences still grow with lifetime history: active projection
+pruning is implemented, but unlimited-history pruning is not fully resolved.
+AppendSide refuses queue events, including decisions, which remain on the existing
+authorized landing path. Dedupe retries compare complete canonical bundle bytes,
+length, reserved IDs and independent binding before returning success.
 
 V9 loads revalidate only retained unfinished companion references. Audits retain
 the 256-row suffix bound, including after large completed histories. The original

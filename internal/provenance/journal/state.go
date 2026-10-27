@@ -21,7 +21,7 @@ type group struct {
 	ids     []uint64
 }
 
-// State is an immutable retained-evidence fold, not a queue authorization API.
+// State is a retained-evidence fold, not a queue authorization API.
 // It keeps bounded active records; audit selection uses immutable journal rows.
 type State struct {
 	records    []Record
@@ -31,7 +31,7 @@ type State struct {
 	bytes      int
 	lastID     uint64
 	retired    map[string]uint64 // generation key -> original chunk zero
-	settled    map[string]uint64 // attempt -> landed companion ID
+	settled    map[string]uint64 // attempt -> landed or terminal tested companion ID
 	landingIDs map[string]uint64
 	fenceBytes int
 }
@@ -75,6 +75,16 @@ func (s State) Inventory(r p.InventoryRequest) (Inventory, bool) {
 // DecisionID and layer References are only fenced to earlier positions here;
 // slice 3c's composed reader must resolve their queue/dependency event targets.
 func Apply(s State, id uint64, e Event) (State, error) {
+	s.retired = maps.Clone(s.retired)
+	s.settled = maps.Clone(s.settled)
+	s.latest = maps.Clone(s.latest)
+	return ApplyOwned(s, id, e)
+}
+
+// ApplyOwned transfers ownership of s to the result on success. A failed apply
+// leaves s unchanged. Replay readers own their fold and avoid copying lifetime
+// fences per event; callers retaining old states must use Apply instead.
+func ApplyOwned(s State, id uint64, e Event) (_ State, applyErr error) {
 	_, raw, err := EncodeEvent(e)
 	if err != nil {
 		return s, err
@@ -88,7 +98,6 @@ func Apply(s State, id uint64, e Event) (State, error) {
 		return s, err
 	}
 	next := s
-	next.retired = maps.Clone(s.retired)
 	if next.retired == nil {
 		next.retired = map[string]uint64{}
 	}
@@ -96,7 +105,6 @@ func Apply(s State, id uint64, e Event) (State, error) {
 	if next.landingIDs == nil {
 		next.landingIDs = map[string]uint64{}
 	}
-	next.settled = maps.Clone(s.settled)
 	if next.settled == nil {
 		next.settled = map[string]uint64{}
 	}
@@ -105,13 +113,31 @@ func Apply(s State, id uint64, e Event) (State, error) {
 	if next.groups == nil {
 		next.groups = map[string]group{}
 	}
-	next.latest = maps.Clone(s.latest)
 	if next.latest == nil {
 		next.latest = map[string]string{}
 	}
 	next.landings = maps.Clone(s.landings)
 	if next.landings == nil {
 		next.landings = map[string]Landing{}
+	}
+	var undo []func()
+	defer func() {
+		if applyErr != nil {
+			for i := len(undo) - 1; i >= 0; i-- {
+				undo[i]()
+			}
+		}
+	}()
+	put := func(m map[string]uint64, key string, value uint64) {
+		old, exists := m[key]
+		undo = append(undo, func() {
+			if exists {
+				m[key] = old
+			} else {
+				delete(m, key)
+			}
+		})
+		m[key] = value
 	}
 	switch v := e.(type) {
 	case Observation:
@@ -134,6 +160,14 @@ func Apply(s State, id uint64, e Event) (State, error) {
 			g = group{header: v, commits: []p.Commit{}, ids: []uint64{}}
 			g.header.Commits = []p.Commit{}
 			g.header.Index = 0
+			old, exists := next.latest[ck]
+			undo = append(undo, func() {
+				if exists {
+					next.latest[ck] = old
+				} else {
+					delete(next.latest, ck)
+				}
+			})
 			next.latest[ck] = key
 		} else {
 			header := v
@@ -155,7 +189,7 @@ func Apply(s State, id uint64, e Event) (State, error) {
 		}
 		next.groups[key] = g
 	case Landing:
-		if count := ReferenceCount(v); count > MaxRetainedReferences {
+		if count := ReferenceCount(v); count > MaxLandingReferences {
 			return s, RetentionLimitError{Records: len(s.records) + 1, Bytes: s.bytes + len(raw), References: count}
 		}
 		if _, settled := s.settled[v.AttemptID]; settled {
@@ -225,7 +259,7 @@ func Apply(s State, id uint64, e Event) (State, error) {
 	next.records = append(next.records, Record{id, raw})
 	next.bytes += len(raw)
 	next.lastID = id
-	next = compact(next)
+	next = compact(next, put)
 	if err := next.capacity(false); err != nil {
 		return s, err
 	}

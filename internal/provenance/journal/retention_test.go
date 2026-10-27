@@ -5,8 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"testing"
+	"time"
+
+	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
 
 func retainedSnapshot(t *testing.T, s State) State {
@@ -163,28 +167,237 @@ func TestRetentionReferenceBudgetPrecedesLookup(t *testing.T) {
 	s := apply(t, State{}, 3, h)
 	l := landing(h, []uint64{3})
 	l.DecisionID = 1
-	refs := make([]uint64, MaxRetainedReferences)
+	refs := make([]uint64, MaxLandingReferences)
 	for i := range refs {
 		refs[i] = uint64(i + 1)
 	}
 	l.Members[0].Layers[0].References = refs
 	l.Members[0].Layers[2].References = []uint64{2}
 	l.Members[0].RecordDigest = MemberDigest(l.Members[0])
-	s = apply(t, s, 1000, l)
+	for i := 0; i < MaxPendingLandings; i++ {
+		l.AttemptID = fmt.Sprint(i)
+		s = apply(t, s, uint64(1000+i), l)
+	}
 	if err := s.Preflight(); err != nil {
 		t.Fatal(err)
 	}
 	restored := retainedSnapshot(t, s)
-	if len(restored.landings) != 1 {
+	if len(restored.landings) != MaxPendingLandings {
 		t.Fatal("budgeted companion lost")
 	}
 	l.AttemptID = "overflow"
-	if _, err := Apply(s, 1001, l); !errors.Is(err, ErrLimit) {
+	if _, err := Apply(s, 20000, l); !errors.Is(err, ErrLimit) {
 		t.Fatal("aggregate reference budget ignored", err)
 	}
-	l.Members[0].Layers[0].References = append(slices.Clone(refs), 257)
+	l.Members[0].Layers[0].References = append(slices.Clone(refs), uint64(MaxLandingReferences+1))
 	l.Members[0].RecordDigest = MemberDigest(l.Members[0])
-	if _, err := Apply(State{}, 1001, l); !errors.Is(err, ErrLimit) {
+	if _, err := Apply(State{}, 20000, l); !errors.Is(err, ErrLimit) {
 		t.Fatal("single-record reference budget ignored", err)
+	}
+}
+
+func TestSettledAttemptCannotBeReusedWithFreshInventory(t *testing.T) {
+	h, _ := fixture(t)
+	s := apply(t, State{}, 3, h)
+	l := landing(h, []uint64{3})
+	s = apply(t, s, 11, l)
+	l.Stage = "landed"
+	l.Members[0].Mapping.Build.Stage = "landed"
+	l.Members[0].Mapping.Build.ID = "composition-L"
+	l.Members[0].RecordDigest = MemberDigest(l.Members[0])
+	s = apply(t, s, 12, l)
+	h.Request.Generation = "fresh"
+	h.PreviousObservationID = 3
+	h.Digest = InventoryDigest(h, h.Commits)
+	s = apply(t, retainedSnapshot(t, s), 13, h)
+	l = landing(h, []uint64{13})
+	rejectUnchanged(t, s, 20, l, ErrBinding)
+}
+
+func TestCheckpointRejectsBrokenGenerationChainAndTemporalBinding(t *testing.T) {
+	h, _ := fixture(t)
+	s := apply(t, State{}, 3, h)
+	l := landing(h, []uint64{3})
+	s = apply(t, s, 11, l)
+	h.Request.Generation = "new"
+	h.PreviousObservationID = 3
+	h.Digest = InventoryDigest(h, h.Commits)
+	s = apply(t, s, 13, h)
+	// Force a checkpoint by retiring an unrelated generation.
+	other := h
+	other.Request.ChangeID = "other"
+	other.Request.Generation = "old"
+	other.PreviousObservationID = 0
+	other.Digest = InventoryDigest(other, other.Commits)
+	s = apply(t, s, 14, other)
+	other.Request.Generation = "new"
+	other.PreviousObservationID = 14
+	other.Digest = InventoryDigest(other, other.Commits)
+	s = apply(t, s, 15, other)
+	raw, err := EncodeSnapshot("queue", []byte(`{"Version":6}`), s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"chain", "temporal"} {
+		t.Run(kind, func(t *testing.T) {
+			var v compactSnapshot
+			if err := json.Unmarshal(raw, &v); err != nil {
+				t.Fatal(err)
+			}
+			if kind == "chain" {
+				e, err := DecodeEvent(v.Records[2].Payload)
+				if err != nil {
+					t.Fatal(err)
+				}
+				obs := e.(Observation)
+				obs.PreviousObservationID = 2
+				obs.Digest = InventoryDigest(obs, obs.Commits)
+				_, v.Records[2].Payload, err = EncodeEvent(obs)
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				v.Records[1].ID = 16
+				v.LastID, v.Compaction.Through = 16, 16
+				slices.SortFunc(v.Records, func(a, b Record) int {
+					if a.ID < b.ID {
+						return -1
+					}
+					if a.ID > b.ID {
+						return 1
+					}
+					return 0
+				})
+			}
+			b, err := json.Marshal(v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := DecodeSnapshot(b, func(string, []byte) error { return nil }); err == nil {
+				t.Fatal("accepted corrupt checkpoint", kind)
+			}
+		})
+	}
+}
+
+func TestOwnedFoldScalePreservesFenceMaps(t *testing.T) {
+	h, _ := fixture(t)
+	var s State
+	var prior uint64
+	var retiredMap, settledMap, latestMap uintptr
+	started := time.Now()
+	for i := 0; i < 20000; i++ {
+		id := uint64(i*4 + 3)
+		h.Request.Generation = fmt.Sprint(i)
+		h.PreviousObservationID = prior
+		h.Digest = InventoryDigest(h, h.Commits)
+		var err error
+		s, err = ApplyOwned(s, id, h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l := landing(h, []uint64{id})
+		l.AttemptID = fmt.Sprint(i)
+		l.DecisionID = id - 1
+		s, err = ApplyOwned(s, id+1, l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.Stage = "landed"
+		l.Members[0].Mapping.Build.Stage = "landed"
+		l.Members[0].Mapping.Build.ID = "composition-L"
+		l.Members[0].RecordDigest = MemberDigest(l.Members[0])
+		s, err = ApplyOwned(s, id+2, l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		currentRetired, currentSettled, currentLatest := reflect.ValueOf(s.retired).Pointer(), reflect.ValueOf(s.settled).Pointer(), reflect.ValueOf(s.latest).Pointer()
+		if i > 0 && (currentRetired != retiredMap || currentSettled != settledMap || currentLatest != latestMap) {
+			t.Fatal("fold copied a lifetime map")
+		}
+		retiredMap, settledMap, latestMap = currentRetired, currentSettled, currentLatest
+		prior = id
+		if len(s.records) != 0 || len(s.retired) != i+1 || len(s.settled) != i+1 {
+			t.Fatal("nonlinear retained state")
+		}
+		if i == 1999 || i == 7999 || i == 19999 {
+			t.Logf("%d attempts: %d retired, %d settled, 0 records; 0 lifetime-map copies; %s elapsed", i+1, len(s.retired), len(s.settled), time.Since(started))
+		}
+	}
+}
+
+func TestMaximumBatchAtMaximumSpeculationDepthFitsReferenceBudget(t *testing.T) {
+	if MaxPendingLandings != queue.MaxSpeculationDepth || MaxBatchMembers != queue.MaxBatchSize {
+		t.Fatal("retention no longer covers the accepted configuration maxima")
+	}
+	h, _ := fixture(t)
+	var s State
+	var id uint64 = 1000
+	for attempt := 0; attempt < MaxPendingLandings; attempt++ {
+		members := make([]Member, MaxBatchMembers)
+		for member := range members {
+			h.Request.ChangeID = fmt.Sprintf("member-%d-%d", attempt, member)
+			h.Digest = InventoryDigest(h, h.Commits)
+			id++
+			var err error
+			s, err = ApplyOwned(s, id, h)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := landing(h, []uint64{id}).Members[0]
+			for layer := range m.Layers {
+				m.Layers[layer].References = []uint64{uint64(2*member + 2), uint64(2*member + 3)}
+			}
+			m.RecordDigest = MemberDigest(m)
+			members[member] = m
+		}
+		l := Landing{AttemptID: fmt.Sprint(attempt), BatchID: fmt.Sprint("batch-", attempt), DecisionID: 1, Stage: "tested", Members: members}
+		if ReferenceCount(l) != MaxBatchMembers*ReferencesPerMember+1 {
+			t.Fatal("maximum-envelope fixture lost references")
+		}
+		id++
+		var err error
+		s, err = ApplyOwned(s, id, l)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Preflight(); err != nil {
+		t.Fatal(err)
+	}
+	s = retainedSnapshot(t, s)
+	if len(s.landings) != MaxPendingLandings || len(s.groups) != MaxPendingLandings*MaxBatchMembers {
+		t.Fatal("maximum configuration did not survive restart")
+	}
+	t.Logf("%d distinct members x %d attempts: %d reference targets, cap %d; %d active records (cap %d)", MaxBatchMembers, MaxPendingLandings, MaxPendingLandings*(MaxBatchMembers*ReferencesPerMember+1), MaxRetainedReferences, len(s.records), MaxActiveRecords)
+}
+
+func TestOwnedRejectionRollsBackLifetimeFenceUpdates(t *testing.T) {
+	h, _ := fixture(t)
+	s := apply(t, State{}, 3, h)
+	s.fenceBytes = maxSnapshotBytes / 2
+	// Compaction will retire the old generation before discovering the byte
+	// ceiling. Neither that fence nor the latest-generation CAS may leak.
+	before, err := EncodeSnapshot("queue", []byte(`{"Version":6}`), s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Request.Generation = "new"
+	h.PreviousObservationID = 3
+	h.Digest = InventoryDigest(h, h.Commits)
+	next, err := ApplyOwned(s, 5, h)
+	if !errors.Is(err, ErrLimit) {
+		t.Fatal("fixture did not hit capacity", err)
+	}
+	after, err := EncodeSnapshot("queue", []byte(`{"Version":6}`), next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := EncodeSnapshot("queue", []byte(`{"Version":6}`), s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) || !bytes.Equal(before, original) {
+		t.Fatal("owned rejection leaked a fence update")
 	}
 }

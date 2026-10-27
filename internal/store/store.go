@@ -492,7 +492,7 @@ func (s *Store) authorizeStart(ctx context.Context, tx pgx.Tx, execution emissio
 	return true, err
 }
 
-// Load derives state from the immutable bootstrap and every committed event.
+// Load derives state from a validated checkpoint and the committed journal suffix.
 func (s *Store) Load(ctx context.Context, q QueueID) (queue.State, int64, error) {
 	var state queue.State
 	var watermark int64

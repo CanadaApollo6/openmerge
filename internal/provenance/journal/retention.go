@@ -3,16 +3,33 @@ package journal
 import (
 	"encoding/json"
 	"slices"
+
+	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
 
 // MaxPendingLandings bounds v9 reload reference validation independently of the
 // lifetime journal length. Completed attempts are retained in the journal only.
-const MaxPendingLandings = 16
+const MaxPendingLandings = queue.MaxSpeculationDepth
 
-// MaxRetainedReferences caps the sum of per-companion distinct external targets.
-// The composed validator caches targets within each companion, so this is also
-// the maximum number of exact-ID DB queries on a compact v9 reload.
-const MaxRetainedReferences = 256
+// MaxBatchMembers follows the maximum batch accepted by the loader/planner.
+const MaxBatchMembers = queue.MaxBatchSize
+
+// ReferencesPerMember reserves decision and policy evidence for each member.
+const ReferencesPerMember = 2
+
+// MaxActiveRecords admits one inventory and companion per member/attempt at the
+// configured maxima, plus one maximum batch of record headroom. Byte limits
+// still independently refuse oversized inventories and bundles.
+const MaxActiveRecords = MaxPendingLandings*(MaxBatchMembers+1) + MaxBatchMembers
+
+// MaxLandingReferences admits a maximum batch plus one reference per member of
+// headroom. The decision anchor is counted separately from member references.
+const MaxLandingReferences = MaxBatchMembers*ReferencesPerMember + 1 + MaxBatchMembers
+
+// MaxRetainedReferences caps aggregate per-companion distinct external targets.
+// It admits maximum batches at every supported speculation depth and bounds the
+// exact-ID queries on a compact v9 reload, matching the validator's cache scope.
+const MaxRetainedReferences = MaxLandingReferences * MaxPendingLandings
 
 // ReferenceCount counts distinct targets using the composed validator's cache scope.
 func ReferenceCount(l Landing) int {
@@ -69,7 +86,7 @@ func (s State) checkpoint() checkpoint {
 }
 func (s State) compacted() bool { return len(s.retired) != 0 || len(s.settled) != 0 }
 
-// Through is the latest folded side-event ID, including retired records.
+// Through is the latest provenance or terminal queue ID folded into this state.
 func (s State) Through() uint64 { return s.lastID }
 
 // Preflight leaves headroom below both caps for a transaction's complete bundle.
@@ -97,7 +114,7 @@ func (s State) capacity(reserve bool) error {
 	return nil
 }
 
-func compact(s State) State {
+func compact(s State, put func(map[string]uint64, string, uint64)) State {
 	// Retire a completed pair, keeping a small immutable duplicate fence. A fresh
 	// inventory generation is required before reusing a settled member for work.
 	settledGroups := map[string]bool{}
@@ -105,7 +122,7 @@ func compact(s State) State {
 		if l.Stage != "landed" {
 			continue
 		}
-		s.settled[l.AttemptID] = s.lastID
+		put(s.settled, l.AttemptID, s.lastID)
 		s.fenceBytes += fenceSize(l.AttemptID, s.lastID)
 		for _, m := range l.Members {
 			settledGroups[generationKey(m.Request)] = true
@@ -124,7 +141,7 @@ func compact(s State) State {
 	keep := map[uint64]bool{}
 	for key, g := range s.groups {
 		if !needed[key] && (settledGroups[key] || s.latest[changeKey(g.header.Request)] != key) {
-			s.retired[key] = g.ids[0]
+			put(s.retired, key, g.ids[0])
 			s.fenceBytes += fenceSize(key, g.ids[0])
 			delete(s.groups, key)
 		} else {

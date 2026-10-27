@@ -2576,10 +2576,16 @@ projection and v9 audit cursor; it never deletes or rewrites events or snapshots
 in the database. No migration, index or retention configuration is added.
 
 The projection retires a tested/landed companion pair after validating the landed
-companion. It releases that pair's inventories unless another unfinished tested
+companion. Existing terminal queue journal events also retire non-landed work:
+`LandingAbandoned` and discarded/rebuilt batches release their tested companions;
+accepted dequeue acknowledgements, PR closure, head/revision supersession and
+queue retirement release the change's unfinished generations and companions.
+An uncertain fenced landing keeps its evidence until its definitive outcome.
+Retirement is deterministic on full replay and snapshot-plus-tail replay; no
+new event kinds or changes to existing event fields are needed. Settlement releases the pair's inventories unless another unfinished tested
 attempt still needs them. A superseded inventory is released when no unfinished
-attempt pins it. Current and partial inventories and unfinished tested companions
-stay retained. Small generation/chunk-zero and completed-attempt fences survive
+attempt pins it. Current and partial inventories and unfinished tested companions stay retained
+only while the work is live. Small generation/chunk-zero and completed-attempt fences survive
 compaction: stale CAS predecessors, duplicate generations and reused completed
 attempt IDs remain rejected across restart. The latest generation fence remains
 even after its inventory is retired. Further work after completed evidence must
@@ -2593,11 +2599,15 @@ Those rows remain exportable after settlement, supersession, policy disablement
 and retirement. A missing required original still fails export. A compact cursor
 is never a replacement for source evidence or an external anchor.
 
-The active provenance budget remains **4096 records / 32 MiB**, now counting
+The active provenance budget is **4256 records / 32 MiB**, now counting
 compact fence metadata within the byte budget as well as canonical payloads.
-There are at most **16 unfinished tested companions** and **256 per-companion
-distinct reference targets in total** per queue. The latter matches the exact-ID
-lookup cache scope and caps compact-v9 reloads at 256 reference queries. This bounds v9
+There are at most **32 unfinished tested companions**, **385 distinct reference
+targets per companion**, and **12,320 targets in aggregate** per queue. The
+record bound reserves `32*(128+1) + 128` records so 4096 distinct inventories,
+32 companions and a batch of headroom fit. Reference bounds derive from the loader/planner maxima of 128 batch members
+and speculation depth 32: two references per member plus the decision anchor, with another 128
+references of headroom per companion. The aggregate matches the exact-ID lookup
+cache scope and caps compact-v9 reloads at 12,320 reference queries. This bounds v9
 reference revalidation by active work rather than lifetime completed attempts;
 completed history requires no reference queries on reload. Inventories pinned by
 unfinished attempts are deliberately not evicted to admit more work. These are
@@ -2612,10 +2622,13 @@ references, namespace binding, chunk order, member agreement and retention, befo
 **any** event INSERT. Each intermediate projection and final snapshot must fit;
 writer preflight stays strictly below the record and byte ceilings. A rejection
 leaves both journal and cursor unchanged. Reserved sequence gaps are harmless.
-The API accepts side evidence and landing-decision companions, not queue state
-transitions; future start/settlement integration must retain existing authority
-checks. Unverified dependency evidence stays quarantined, and a caller-supplied
-binding does not make currently unconfigured runtime readers accept dependency
+The API admits exactly provenance observations/companions and the six existing
+dependency journal kinds. It refuses every queue event, including landing
+decisions. Decisions remain on the existing policy/phase-authorized
+`StartLanding` path; future writers must co-transact companions there.
+A matching dedupe key succeeds only when bundle length, reserved IDs, independent
+binding and all canonical stored payload bytes match; a changed bundle fails.
+Unverified dependency evidence stays quarantined, and a caller-supplied binding does not make currently unconfigured runtime readers accept dependency
 references in provenance layers.
 
 ### Cursor prefix invariant and rollback
@@ -2627,11 +2640,28 @@ created at watermark zero; no unaudited moves are skipped. The queue lock and
 existing observation-byte CAS prevent a stale audit from undoing the upgrade.
 Invalid existing cursors cause append refusal rather than guessed progress.
 
+The owned provenance replay fold updates lifetime rejection fences in place,
+with rollback on validation failure. It copies only bounded active state per
+event; the immutable `journal.Apply` adapter remains available for callers that
+retain old states. Checkpoint encoding, decoding and sorting still process lifetime fence metadata,
+with that cost paid at checkpoint boundaries rather than on every folded event.
+`AppendSide` atomically saves its own derived checkpoint in observations.
+`AppendSide` and `Store.Load` resume the newest eligible append/audit checkpoint
+and stream only its suffix in 512-row pages; the first checkpoint still requires
+bootstrap replay. This checkpoint never advances outside-push audit bookkeeping.
+Dedupe manifests are also derived observations; immutable journal rows remain
+the evidence source. No SQL migration, index or snapshot-table writer is added.
+
 Outside-push audits still read only the next **256 events per poll**. V9 resumes
 the bounded suffix and retained state, with exact-ID lookups only for unfinished
 companions. Tests cover a 268,000-row history, idle/restart and nonempty suffixes,
-and pin the reference query count at the unfinished-attempt ceiling. Legacy and
-no-side-evidence cursors retain their complete existing envelope/snapshot bytes,
+20 consecutive checkpoint-resuming appends, 10,000 serial abandonments, and
+10,000 dropped changes per terminal path. Active payload retention stays at one
+record for serial abandonments and zero for dropped changes; durable rejection
+fences still grow with lifetime identities. Pruning is therefore bounded active
+projection retention, not a complete solution for unlimited history: finite
+fence/checkpoint budgets and future writer activation remain explicit work.
+Legacy and no-side-evidence cursors retain their complete existing envelope/snapshot bytes,
 including #178's full cursor goldens.
 
 The original strict v9 shape remains readable. A distinct strict v9 shape with a

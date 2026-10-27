@@ -480,7 +480,7 @@ receipt identity and refreshed evidence. MVP extraction outcomes retain
 `not_requested` checkpoint resolution; resolver observations require a later
 new event kind and are not fabricated by this decoder.
 
-The pure fold retains at most 4096 provenance records / 32 MiB of canonical
+The pure fold retains at most 4256 provenance records / 32 MiB of canonical
 event payloads, within a 64 MiB wrapper bound. It returns detached immutable
 values and leaves prior state unchanged on error. The writer foundations below add deterministic projection compaction and count
 its replay fences in the byte budget; original journal evidence is retained
@@ -559,7 +559,7 @@ No reader/writer activation or v1 audit-format change occurs in 3a.
 - `guards_test.go` pins forged declaration digests, each fail-closed/dedupe guard,
   assembled digest corruption in one or every chunk, tested-before-landed,
   canonical snapshot payloads, base kind/version fences, detached base bytes,
-  and the 4096-record boundary. Each requested guard is also proved by an
+  and the 4256-record boundary. Each requested guard is also proved by an
   isolated source mutation that makes its focused test fail.
 
 ## Shared reader migration (slice 3c, Hold)
@@ -602,7 +602,7 @@ contract; the persisted schema has no graph edges with which to prove them.
 The pre-existing fixtures retain their original scope and replay does no Git or
 forge reads.
 
-The 4096-record active cap is a typed operator-visible refusal. The writer
+The 4256-record active cap is a typed operator-visible refusal. The writer
 foundations compact completed and unpinned superseded projection records,
 retaining original journal evidence and compact replay fences.
 See [retention recovery](../../docs/operating.md#shared-reader-retention-recovery).
@@ -626,17 +626,30 @@ lock before any INSERT, preflights capacity, and upgrades the existing audit
 cursor to v9 in that same transaction. No production caller is enabled. The
 writer guard allowlists only this adapter and forbids production callers.
 
-Projection compaction retires completed tested/landed evidence pairs and unpinned
-superseded inventories, preserving exact generation/CAS and attempt fences.
+Projection compaction retires completed tested/landed pairs, terminal non-landed
+attempts (including abandonment), and generations dropped by dequeue, closure,
+head/revision supersession or queue retirement. Uncertain fenced landings retain
+evidence until their definitive outcome. Exact generation/CAS and attempt fences
+survive restart; retired identities cannot be reused.
 Original journal evidence is retained forever for ADR 0008/0010 audit closure;
 settled and superseded generations remain exportable by original ID. A fresh
 generation is required before further use of a retired inventory. The active
-budget is 4096 records / 32 MiB (including compact metadata), with at most 16
-unfinished tested companions and 256 reference targets in total (counted per
-companion, matching lookup caching). Writer preflight stays below the record/byte caps;
+budget is 4256 records / 32 MiB (including compact metadata), with at most 32
+unfinished tested companions, 385 reference targets per companion and 12,320
+in aggregate. These derive from batch size 128 and speculation depth 32, with
+per-member headroom, and match lookup caching. Writer preflight stays below the record/byte caps;
 capacity refusal must never publish effects or partial bundles. Dependency holds
 are not pruned. See the complete [retention decision, cursor invariant and
 recovery procedure](../../docs/operating.md#shared-reader-retention-recovery).
+
+The owned replay fold updates lifetime fence maps without copying them per event.
+Append and Load resume a separate append/audit checkpoint and its paged suffix;
+append checkpoints never advance outside-push audit progress. Checkpoint work
+and durable identity fences still grow with lifetime history: active projection
+pruning is implemented, but unlimited-history pruning is not fully resolved.
+AppendSide refuses queue events, including decisions, which remain on the existing
+authorized landing path. Dedupe retries compare complete canonical bundle bytes,
+length, reserved IDs and independent binding before returning success.
 
 V9 loads revalidate only retained unfinished companion references. Audits retain
 the 256-row suffix bound, including after large completed histories. The original

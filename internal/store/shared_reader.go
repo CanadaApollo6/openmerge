@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 
 	"github.com/CanadaApollo6/openmerge/internal/dependency"
 	"github.com/CanadaApollo6/openmerge/internal/journalreader"
@@ -31,6 +33,34 @@ func replayJournal(ctx context.Context, db journalQuery, q QueueID, seed queue.S
 		raw []byte
 	}
 	var watermark int64
+	// The append checkpoint is independent of outside-push audit progress: using
+	// it must never skip unaudited base moves. Both are derived, validated prefixes.
+	rows, err := db.Query(ctx, `SELECT value FROM observations WHERE queue_id=$1 AND key IN ($2,$3)`, q, sideCheckpointKey, outsidePushCursorKey)
+	if err != nil {
+		return r, 0, err
+	}
+	values, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) ([]byte, error) { var raw []byte; err := row.Scan(&raw); return raw, err })
+	if err != nil {
+		return r, 0, err
+	}
+	var selected outsidePushProgress
+	for _, raw := range values {
+		var progress outsidePushProgress
+		if err := json.Unmarshal(raw, &progress); err != nil {
+			return r, 0, err
+		}
+		if progress.ScannedThrough < 0 {
+			return r, 0, errors.New("negative journal checkpoint")
+		}
+		if (through == 0 || progress.ScannedThrough <= through) && progress.ScannedThrough >= watermark && len(progress.State) > 0 {
+			watermark, selected = progress.ScannedThrough, progress
+		}
+	}
+	if len(selected.State) > 0 {
+		if err := r.LoadSnapshot(selected.State, uint64(watermark)); err != nil {
+			return r, 0, err
+		}
+	}
 	for {
 		rows, err := db.Query(ctx, `SELECT id, payload FROM events WHERE queue_id=$1 AND id>$2 AND ($3::bigint=0 OR id<=$3) ORDER BY id LIMIT 512`, q, watermark, through)
 		if err != nil {
@@ -55,3 +85,5 @@ func replayJournal(ctx context.Context, db journalQuery, q QueueID, seed queue.S
 		}
 	}
 }
+
+const sideCheckpointKey = "side-append/checkpoint-v1"

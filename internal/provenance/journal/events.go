@@ -21,7 +21,7 @@ const WireVersion = 1
 const (
 	maxEventBytes    = 1 << 20
 	maxSnapshotBytes = 64 << 20
-	maxRecords       = 4096
+	maxRecords       = MaxActiveRecords
 	maxChunkCommits  = 128
 )
 

@@ -108,6 +108,7 @@ func (r *Reader) Apply(id uint64, raw []byte) (_ Event, applyErr error) {
 	switch {
 	case e.Queue != nil:
 		next.Queue = queue.Apply(r.Queue, e.Queue)
+		next.Provenance = retireTerminal(r.Provenance, id, e.Queue, r.Queue, next.Queue)
 	case e.Dependency != nil:
 		if init, ok := e.Dependency.(dependency.JournalInitialized); ok && r.expected != (dependency.JournalInitialized{}) {
 			if err := init.VerifyBinding(r.expected); err != nil {
@@ -116,18 +117,17 @@ func (r *Reader) Apply(id uint64, raw []byte) (_ Event, applyErr error) {
 		}
 		next.dependencies, err = dependency.Apply(r.dependencies, id, e.Dependency)
 	case e.Provenance != nil:
-		// Refuse over-budget candidates before external reference lookups, while
-		// preserving the composed reader's reference errors for other failures.
-		next.Provenance, err = pj.Apply(r.Provenance, id, e.Provenance)
-		foldErr := err
-		if !errors.Is(foldErr, pj.ErrLimit) {
-			if l, ok := e.Provenance.(pj.Landing); ok {
-				err = r.validateLanding(id, l)
+		// Validate external targets before transferring the owned fold. An invalid
+		// target cannot mutate lifetime fences. Oversized companions fail pre-lookup.
+		if l, ok := e.Provenance.(pj.Landing); ok {
+			if pj.ReferenceCount(l) > pj.MaxLandingReferences {
+				return Event{}, pj.ErrLimit
 			}
-			if err == nil {
-				err = foldErr
+			if err := r.validateLanding(id, l); err != nil {
+				return Event{}, err
 			}
 		}
+		next.Provenance, err = pj.ApplyOwned(r.Provenance, id, e.Provenance)
 
 	}
 	if err != nil {

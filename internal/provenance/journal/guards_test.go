@@ -241,7 +241,7 @@ func TestSnapshotBaseBytesDetached(t *testing.T) {
 }
 
 func TestRetainedRecordCap(t *testing.T) {
-	if maxRecords != 4096 {
+	if maxRecords != MaxPendingLandings*(MaxBatchMembers+1)+MaxBatchMembers {
 		t.Fatalf("record contract changed: %d", maxRecords)
 	}
 	h, _ := fixture(t)
@@ -265,7 +265,7 @@ func TestRetainedRecordCap(t *testing.T) {
 	if err := s.Preflight(); !errors.Is(err, ErrLimit) {
 		t.Fatal("writer preflight must stay below cap", err)
 	}
-	if len(s.Records()) != 4096 {
+	if len(s.Records()) != maxRecords {
 		t.Fatal("lost retained records")
 	}
 	h.Request.ChangeID = "overflow"
