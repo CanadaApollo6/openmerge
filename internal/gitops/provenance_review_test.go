@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -385,9 +386,18 @@ func TestProvenanceInventorySupervisedProcessFailure(t *testing.T) {
 func TestProvenanceReaderCanceledBatch(t *testing.T) {
 	f := newProvenanceFixture(t)
 	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	r, err := newProvenanceReader(ctx, f.dir, provenance.DefaultInventoryLimits())
 	must(t, err)
+	defer func() { _ = r.close() }()
+	_, _, err = r.info(f.root)
+	must(t, err)
 	cancel()
+	// Keep stdin open until cancellation stops Git. Otherwise close's EOF can
+	// race CommandContext's kill and legitimately produce a clean exit.
+	if _, err := r.output.Peek(1); !errors.Is(err, io.EOF) {
+		t.Fatalf("canceled batch output = %v, want EOF", err)
+	}
 	// CommandContext's kill must retain cancellation rather than becoming an
 	// expansion failure. Wait also guarantees the persistent child is reaped.
 	if err := r.close(); !errors.Is(err, context.Canceled) || r.batch.ProcessState == nil {
