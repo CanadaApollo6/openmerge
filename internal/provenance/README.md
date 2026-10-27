@@ -623,6 +623,24 @@ chunks, both wrapper base kinds and #163 held requests. Store integration tests
 exercise actual journal load/reporting, partial-chunk cursor restart, v9 cursor
 resume, complete legacy cursor byte goldens and wrong-kind decision refusal.
 
+**BLOCKING prerequisites for ADR 0010 slice 4b and ADR 0011 slices 4a/4b:**
+
+- **Lifetime fence growth.** Fences count against the 32 MiB projection cap.
+  Astra's review estimates exhaustion at 121–146k retired pairs, about 4–5 months
+  at 1,000 landings/day. Sonnet's review estimates 130–250k lifetime landings and
+  about 0.7 s of checkpoint decode per `Load` at 100k. These are review estimates,
+  not supported capacity guarantees. Before enabling writers on a high-volume
+  queue, provide a fence-compaction strategy, or at minimum a metric and alert.
+- **Shared-transaction helper.** Decisions are written only inside `startLanding`'s
+  transaction; `AppendSide` opens its own transaction. Writer slices must factor
+  `AppendSide`'s validate-and-insert logic into a helper that accepts an existing
+  transaction so a decision and its companion commit atomically.
+- **Idempotent landed companion.** If a tested companion's batch emits `Landed`
+  but a crash prevents its landed companion from being written, the tested
+  companion is never retired. At 32 such unfinished companions, capacity refuses
+  new writer work. Writer slice 4b must write the landed companion idempotently
+  on restart or recovery.
+
 The **Hold writer foundations** provide the unwired `Store.AppendSide` API.
 It validates an entire bundle through the composed replay fold under the queue
 lock before any INSERT, preflights capacity, and upgrades the existing audit

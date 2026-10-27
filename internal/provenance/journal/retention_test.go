@@ -401,3 +401,64 @@ func TestOwnedRejectionRollsBackLifetimeFenceUpdates(t *testing.T) {
 		t.Fatal("owned rejection leaked a fence update")
 	}
 }
+
+func TestCheckpointRejectsPendingBeforeFinalInventoryChunk(t *testing.T) {
+	h, commits := fixture(t)
+	parts := chunks(h, commits)
+	s := apply(t, State{}, 3, parts[0])
+	s = apply(t, s, 5, parts[1])
+	l := landing(h, []uint64{3, 5})
+	s = apply(t, s, 11, l)
+	// Supersede unrelated work to select the compact checkpoint decoder.
+	other := h
+	other.Request.ChangeID = "other"
+	other.Digest = InventoryDigest(other, other.Commits)
+	s = apply(t, s, 12, other)
+	other.Request.Generation, other.PreviousObservationID = "next", 12
+	other.Digest = InventoryDigest(other, other.Commits)
+	s = apply(t, s, 13, other)
+	raw, err := EncodeSnapshot("queue", []byte(`{"Version":6}`), s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeSnapshot(raw, func(string, []byte) error { return nil }); err != nil {
+		t.Fatal("valid multi-chunk checkpoint rejected", err)
+	}
+	var forged compactSnapshot
+	if err := json.Unmarshal(raw, &forged); err != nil {
+		t.Fatal(err)
+	}
+	// Keep chunk zero before the companion, but move its final chunk after it.
+	// All IDs, payloads, references and the generation's first-ID ordering remain
+	// valid individually; only the inventory-completion ordering is forged.
+	for i := range forged.Records {
+		if forged.Records[i].ID == 5 {
+			forged.Records[i].ID = 14
+		}
+		if forged.Records[i].ID == 11 {
+			l.Members[0].ObservationIDs = []uint64{3, 14}
+			l.Members[0].RecordDigest = MemberDigest(l.Members[0])
+			_, forged.Records[i].Payload, err = EncodeEvent(l)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	forged.LastID, forged.Compaction.Through = 14, 14
+	slices.SortFunc(forged.Records, func(a, b Record) int {
+		if a.ID < b.ID {
+			return -1
+		}
+		if a.ID > b.ID {
+			return 1
+		}
+		return 0
+	})
+	raw, err = json.Marshal(forged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeSnapshot(raw, func(string, []byte) error { return nil }); !errors.Is(err, ErrBinding) {
+		t.Fatalf("accepted pending companion before its final inventory chunk: %v", err)
+	}
+}

@@ -464,6 +464,12 @@ rejection fences. Lifetime fences still consume finite checkpoint capacity;
 unlimited-history pruning remains unresolved. See the
 [retention and recovery contract](docs/operating.md#shared-reader-retention-recovery).
 
+Writer activation has **BLOCKING** prerequisites for ADR 0010 4b and ADR 0011
+4a/4b: address lifetime fence growth with compaction or at least a metric and
+alert, factor append validation/insertion into the landing transaction, and
+recover missing landed companions idempotently. See the
+[writer prerequisites](docs/operating.md#shared-reader-retention-recovery).
+
 Provenance audit exports use bounded scratch storage on the output filesystem.
 The defaults are 256 MiB of accounted index/fold bytes and 65,536 files/directories;
 `--scratch-max-bytes` and `--scratch-max-files` override them. Exhaustion fails the

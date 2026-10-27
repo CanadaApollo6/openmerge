@@ -509,7 +509,7 @@ func load(ctx context.Context, tx pgx.Tx, q QueueID) (queue.State, int64, error)
 	if err := tx.QueryRow(ctx, `SELECT base, COALESCE(initial_fence, '') FROM queues WHERE id = $1`, q).Scan(&state.BaseBranch, &state.Fence); err != nil {
 		return state, 0, err
 	}
-	r, watermark, err := replayJournal(ctx, tx, q, state, 0)
+	r, watermark, err := replayJournal(ctx, tx, q, state, 0, false)
 	return r.Queue, watermark, err
 }
 

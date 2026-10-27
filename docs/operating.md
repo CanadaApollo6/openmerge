@@ -2568,6 +2568,24 @@ drain incompatible readers/workers, verify snapshot-plus-tail replay, and verify
 a whole-database pre-emission backup. Writer authority, landing-start fencing,
 namespace initialization/recovery and owner opt-in remain later slices.
 
+**BLOCKING prerequisites for ADR 0010 slice 4b and ADR 0011 slices 4a/4b:**
+
+- **Lifetime fence growth.** Fences count against the 32 MiB projection cap.
+  Astra's review estimates exhaustion at 121–146k retired pairs, about 4–5 months
+  at 1,000 landings/day. Sonnet's review estimates 130–250k lifetime landings and
+  about 0.7 s of checkpoint decode per `Load` at 100k. These are review estimates,
+  not supported capacity guarantees. Before enabling writers on a high-volume
+  queue, provide a fence-compaction strategy, or at minimum a metric and alert.
+- **Shared-transaction helper.** Decisions are written only inside `startLanding`'s
+  transaction; `AppendSide` opens its own transaction. Writer slices must factor
+  `AppendSide`'s validate-and-insert logic into a helper that accepts an existing
+  transaction so a decision and its companion commit atomically.
+- **Idempotent landed companion.** If a tested companion's batch emits `Landed`
+  but a crash prevents its landed companion from being written, the tested
+  companion is never retired. At 32 such unfinished companions, capacity refuses
+  new writer work. Writer slice 4b must write the landed companion idempotently
+  on restart or recovery.
+
 ### Retention decision and audit closure
 
 **Retain all original journal evidence, without a time window.** ADR 0008 10b's
@@ -2639,6 +2657,21 @@ its existing scanned watermark and outside-move bookkeeping. A missing cursor is
 created at watermark zero; no unaudited moves are skipped. The queue lock and
 existing observation-byte CAS prevent a stale audit from undoing the upgrade.
 Invalid existing cursors cause append refusal rather than guessed progress.
+
+`Load`, `Plan` and `StartLanding` treat checkpoints as disposable caches. On a
+cursor-envelope unmarshal error or checkpoint `LoadSnapshot` error, they log
+`journal checkpoint unusable; replaying from seed`, with the queue ID and reason,
+and replay from the queue seed. They do not change the cursor. Invalid journal
+records still fail replay; this fallback cannot make an incompatible side event
+readable by an older binary.
+
+`AppendSide` remains strict because it must not append on state it cannot verify.
+The next outside-push audit pass reports `CursorResetReason`, rebuilds from the
+journal in bounded pages and commits the replacement cursor using the original
+bytes for CAS. Appends recover after that reset commits, provided journal replay
+and the other checkpoints are valid. A read alone does not repair the cache.
+An incompatible append checkpoint also falls back for reads, but requires a
+compatible reader or reviewed cache repair before appends can resume.
 
 The owned provenance replay fold updates lifetime rejection fences in place,
 with rollback on validation failure. It copies only bounded active state per

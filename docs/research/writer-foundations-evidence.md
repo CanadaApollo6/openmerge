@@ -166,3 +166,67 @@ Post-merge **vet PASS**, **lint PASS (0 issues)**, **18/18 compiling mutants
 killed**, gofmt clean, and `git diff --check` clean. All requested checks passed.
 The additional dropped-companion mutant fails the pinned/partial-generation
 close assertion. No production writer was enabled; the PR remains Hold.
+
+
+## Fix round 2
+
+Merged main at `cea664a68bbdc9577d4e1fe5599effd7661e9571` without rewriting
+history. The merge preserves #181's audit decoder allowance and the unwired
+side-append allowance in the production writer tripwire.
+
+`Load`, `Plan` and `StartLanding` now log an unusable checkpoint's queue ID and
+reason, then replay from the queue seed. Database query and journal-validation
+errors still propagate. `AppendSide` keeps strict checkpoint admission; an
+outside-push audit reset must commit before a new append can recover.
+
+`TestSharedReaderInvalidAuditCursorRecovery` failed before the fix for garbage
+snapshot data, non-JSON cursor bytes and snapshot version 999. After the fix,
+all three cases match full replay, pass planning and landing-start validation,
+refuse an append without changing journal/cursor bytes, and append successfully
+after the audit's reset commits. A separate invalid-journal case proves fallback
+does not suppress authoritative event errors.
+
+`TestCheckpointRejectsPendingBeforeFinalInventoryChunk` accepts a valid
+multi-chunk compact checkpoint and rejects a forged checkpoint whose final
+inventory chunk follows its pending companion. In an isolated archive, removing
+`g.ids[len(g.ids)-1] >= r.ID` from `restoreCheckpoint` compiles and fails that
+assertion with an accepted forged checkpoint. This kills the surviving P3 mutant.
+
+Operating guidance and both internal READMEs now mark lifetime fence growth,
+transaction sharing for decision/companion writes, and idempotent landed-companion
+recovery as BLOCKING prerequisites for ADR 0010 4b and ADR 0011 4a/4b. The root
+README links those gates. Review capacity and decode-time estimates are labeled
+as estimates rather than supported limits.
+
+Commands for this round use the `go_safe` wrapper and database URL exports above:
+
+```sh
+go_safe test ./internal/store ./internal/provenance/journal -run 'TestSharedReaderInvalid|TestCheckpointRejectsPendingBeforeFinalInventoryChunk' -count=1
+go_safe test ./internal/store ./internal/journalreader ./internal/provenance/journal ./internal/dependency ./internal/queue ./internal/serve ./internal/status ./internal/audit ./cmd/openmerge -count=1
+go_safe test -race ./internal/store ./internal/serve -count=1
+go_safe vet ./...
+# Same flock, Go toolchain and resource environment as go_safe:
+golangci-lint run
+python3 -I scripts/test_verify_audit_anchor.py
+node scripts/verify-audit-v1-node.cjs
+python3 -I /home/riels/.cache/pr183-fix-r2/check-oracle.py
+```
+
+The independent Node v1 oracle reproduces all 100 frozen files. The v2 oracle
+redirects derivation into temporary scratch storage and reproduces all 20 frozen
+files without changing repository fixtures. The Python anchor contract passes.
+Focused regression checks pass, and the isolated compiling ordering mutant is
+killed. Logs and the verification script are under
+`/home/riels/.cache/pr183-fix-r2/`.
+
+The complete normal package matrix passes, including `internal/store`,
+`internal/journalreader`, `internal/provenance/journal`, `internal/dependency`,
+`internal/queue`, `internal/serve`, `internal/status`, `internal/audit` and
+`cmd/openmerge`. This includes the full legacy cursor goldens and #181's audit
+export/replay, scratch limits, provenance closure and CLI integration coverage
+on the merged tree.
+
+The complete store and serve suites also pass under `-race`. `go vet ./...`
+passes, `golangci-lint run` reports **0 issues**, and gofmt and `git diff --check`
+are clean. All required round-2 validation passes. No production writer is
+enabled; the PR remains Hold.

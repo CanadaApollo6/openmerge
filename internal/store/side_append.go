@@ -54,7 +54,7 @@ func (s *Store) AppendSide(ctx context.Context, q QueueID, request SideAppend) (
 		if err := tx.QueryRow(ctx, `SELECT base, COALESCE(initial_fence, '') FROM queues WHERE id=$1`, q).Scan(&seed.BaseBranch, &seed.Fence); err != nil {
 			return err
 		}
-		reader, _, err := replayJournal(ctx, tx, q, seed, 0)
+		reader, _, err := replayJournal(ctx, tx, q, seed, 0, true)
 		if err != nil {
 			return err
 		}
