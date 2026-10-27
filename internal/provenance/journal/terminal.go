@@ -11,6 +11,9 @@ func RetireOwned(s State, id uint64, batch string, drop func(p.InventoryRequest)
 	}
 	changed := false
 	for key, l := range s.landings {
+		if _, pending := s.awaiting[l.AttemptID]; pending {
+			continue
+		}
 		retire := batch != "" && l.BatchID == batch
 		for _, m := range l.Members {
 			retire = retire || drop != nil && drop(m.Request)
@@ -28,7 +31,7 @@ func RetireOwned(s State, id uint64, batch string, drop func(p.InventoryRequest)
 		changed = true
 	}
 	for key, g := range s.groups {
-		if drop == nil || !drop(g.header.Request) {
+		if drop == nil || !drop(g.header.Request) || s.pendingGeneration(key) {
 			continue
 		}
 		if s.retired == nil {

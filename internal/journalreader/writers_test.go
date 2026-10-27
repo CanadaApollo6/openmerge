@@ -65,10 +65,26 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 			"internal/dependency/projection.go":     true,
 			"internal/dependency/snapshot.go":       true,
 		}
+		allowedStarts := disabledCompanionStarts(file, rel)
 		ast.Inspect(file, func(n ast.Node) bool {
 			// Include function-value captures, not just direct calls.
-			if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "AppendSide" && rel != "internal/store/side_append.go" {
-				t.Errorf("production side append caller in %s", path)
+			if sel, ok := n.(*ast.SelectorExpr); ok {
+				switch sel.Sel.Name {
+				case "AppendSide":
+					if rel != "internal/store/side_append.go" {
+						t.Errorf("production side append caller in %s", path)
+					}
+				case "RecoverLanded":
+					t.Errorf("production landed recovery caller in %s", path)
+				case "appendSideTx":
+					if rel != "internal/store/side_append.go" && rel != "internal/store/landing_start.go" {
+						t.Errorf("production transaction append caller in %s", path)
+					}
+				case "startLandingWithSide":
+					if !allowedStarts[sel] {
+						t.Errorf("production companion start caller/capture in %s", path)
+					}
+				}
 			}
 
 			if literal, ok := n.(*ast.BasicLit); ok && literal.Kind == token.STRING && !allowedKinds[rel] {
@@ -112,4 +128,45 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 		})
 		return nil
 	}))
+}
+
+// Only the ordinary landing wrapper may reference the seam, as a direct call
+// with a literal nil builder. A function-value capture would bypass argument
+// inspection, so it is deliberately absent from this set.
+func disabledCompanionStarts(file *ast.File, rel string) map[*ast.SelectorExpr]bool {
+	allowed := map[*ast.SelectorExpr]bool{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || rel != "internal/store/landing_start.go" || len(call.Args) < 9 {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "startLandingWithSide" {
+			return true
+		}
+		if arg, ok := call.Args[8].(*ast.Ident); ok && arg.Name == "nil" {
+			allowed[sel] = true
+		}
+		return true
+	})
+	return allowed
+}
+
+func TestCompanionStartHoldGuard(t *testing.T) {
+	for _, tc := range []struct {
+		source, path string
+		want         bool
+	}{
+		{`s.startLandingWithSide(a,b,c,d,e,f,g,h,nil)`, "internal/store/landing_start.go", true},
+		{`s.startLandingWithSide(a,b,c,d,e,f,g,h,build)`, "internal/store/landing_start.go", false},
+		{`s.startLandingWithSide(a,b,c,d,e,f,g,h,nil)`, "internal/serve/worker.go", false},
+		{`_ = s.startLandingWithSide`, "internal/store/landing_start.go", false},
+	} {
+		file, err := parser.ParseFile(token.NewFileSet(), "guard.go", "package store; func guard(){"+tc.source+"}", 0)
+		must(t, err)
+		allowed := disabledCompanionStarts(file, tc.path)
+		if (len(allowed) == 1) != tc.want {
+			t.Fatalf("guard mismatch for %s in %s", tc.source, tc.path)
+		}
+	}
 }

@@ -49,7 +49,16 @@ func (s *Store) lockMigration(ctx context.Context, tx pgx.Tx) error {
 // InitializeFence: queue advisory -> queues UPDATE -> events ACCESS SHARE read.
 // Append/EmitWithPolicy/Record, landing-start and outside-push writers: queue
 // advisory -> action/observation locks as needed -> events ROW EXCLUSIVE INSERT
-// -> queues FK KEY SHARE. Plan/BeginConsequential/poison publication take queue
+// -> queues FK KEY SHARE. appendSideTx inherits the already-held queue
+// advisory from startLandingWithSide (or AppendSide/RecoverLanded); it takes
+// observations INSERT/UPDATE locks only AFTER that advisory and existing action
+// row locks. Observation INSERTs also take queues FK KEY SHARE. None of these
+// paths takes queues FOR UPDATE or updates its key, and no observation holder
+// subsequently waits for an action row: there is no action/observation inversion.
+// Notify's queues UPDATE takes NO KEY UPDATE and is compatible with FK KEY SHARE;
+// TakeNotification's FOR UPDATE can delay inserts but never waits on the queue
+// advisory/action/observation locks. Shared append never acquires a second tx.
+// Plan/BeginConsequential/poison publication take queue
 // advisory -> actions row locks -> event INSERT/FK locks. Claim/ClaimQueue commit
 // action row locks before a separate queue-locked poison-publication transaction;
 // Complete updates action rows only. None acquires tenancy after a queue lock.

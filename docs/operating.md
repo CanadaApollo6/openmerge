@@ -2568,30 +2568,124 @@ drain incompatible readers/workers, verify snapshot-plus-tail replay, and verify
 a whole-database pre-emission backup. Writer authority, landing-start fencing,
 namespace initialization/recovery and owner opt-in remain later slices.
 
-**BLOCKING prerequisites for ADR 0010 slice 4b and ADR 0011 slices 4a/4b:**
+**Writer prerequisites delivered under Hold for ADR 0010 slice 4b and ADR 0011
+slices 4a/4b (production integration remains disabled):**
 
-- **Lifetime fence growth.** Fences count against the 32 MiB projection cap.
-  Astra's review estimates exhaustion at 121–146k retired pairs, about 4–5 months
-  at 1,000 landings/day. Sonnet's review estimates 130–250k lifetime landings and
-  about 0.7 s of checkpoint decode per `Load` at 100k. These are review estimates,
-  not supported capacity guarantees. Before enabling writers on a high-volume
-  queue, provide a fence-compaction strategy, or at minimum a metric and alert.
-- **Shared-transaction helper.** Decisions are written only inside `startLanding`'s
-  transaction; `AppendSide` opens its own transaction. Writer slices must factor
-  `AppendSide`'s validate-and-insert logic into a helper that accepts an existing
-  transaction so a decision and its companion commit atomically.
-- **Idempotent landed companion.** If a tested companion's batch emits `Landed`
-  but a crash prevents its landed companion from being written, the tested
-  companion is never retired. At 32 such unfinished companions, capacity refuses
-  new writer work. Writer slice 4b must write the landed companion idempotently
-  on restart or recovery.
+- **Shared transaction.** `appendSideTx` accepts the existing queue-locked
+  transaction. The unwired `startLandingWithSide` seam supplies exact inserted
+  decision IDs and commits decisions, companions, v9 cursor upgrade, dedupe
+  manifest and append checkpoint together. A failure after decision insertion
+  rolls everything back. The ordinary production start supplies no companion
+  builder. Acquire the queue advisory before action/observation locks or event
+  INSERTs; FK `KEY SHARE` on queues is part of this order. Never call the public
+  wrapper in a second transaction while holding the first transaction's lock.
+- **Landed recovery.** The unwired `RecoverLanded` helper checks an immutable
+  `Landed` row against the immediately preceding queue state, rejecting stale
+  outcomes and mismatched attempts/decisions. It validates exact historical batch
+  membership, revisions and heads, every member's complete accepted decision
+  (including classification, policy/brief identity and source evidence), and
+  the terminal member's final landed composition (intermediate results remain
+  valid). Close, dequeue and head-change events preserve a pending landed
+  companion until recovery completes. V9 checkpoints optionally retain bounded
+  `Awaiting` attempt/outcome markers, including alongside `FenceTable`; deploy
+  this reader before writing those checkpoints. Original event fields do not
+  change. An existing companion under another key
+  returns typed `LandedAlreadyCompleteError`. Its deterministic outcome key
+  compares complete canonical bundles on retry. The caller must reconstruct the
+  actual landed composition from immutable inputs: a `Landed` row alone cannot
+  supply source-to-build mappings. Recovery appends the missing companion once,
+  allowing tested evidence to retire. Future startup/recovery wiring must invoke
+  it before starting new work; no production caller is enabled here.
+  A recovery bundle may contain only the landed companion and inventory chunks
+  consumed by its exact member generations. Reconstructed inventories must match
+  the historical tested inventory after rebinding the generation and exact
+  predecessor; unrelated side records are refused. Recovery preserves the dynamic
+  retirement reserve for every remaining active inventory and attempt, even when
+  bypassing the configurable admission high water.
+  Recovery bypasses admission high water only when it settles the pending attempt
+  and strictly reduces retained projection bytes; all hard caps still apply.
+- **Lifetime fences.** Exact arbitrary string identities and original journal
+  anchors are retained in a lossless, sorted, front-coded compressed fence table.
+  A watermark/range is unsound because these IDs have no monotonic allocation
+  contract. The strict `FenceTable` v9 checkpoint shape reads both earlier v9
+  shapes; legacy-only queues retain their full byte identity. Replay measures
+  compressed capacity geometrically; bundle preflight measures once and final
+  checkpoint encoding reuses the unchanged pack. The 32 MiB projection ceiling
+  still applies,
+  including base64 framing. Decoding also bounds expansion to 128 MiB and
+  2,097,152 fences; preflight and encoding enforce these same memory bounds.
+  This reduces lifetime metadata substantially without
+  pretending that arbitrary, unbounded histories fit a finite cap. The scale test
+  folds 200,001 real landings outside short mode (400 in short mode), asserts
+  linear capacity-measurement work, and checks restart, suffix equivalence and
+  exact generation/attempt reuse rejection. Original audit rows never change.
+
+- **Capacity and queue-event reserve.** Side append preflights once per complete
+  bundle. It caches the exact fence pack for the final cursor encode, rather
+  than packing per record. `Store.WithSideHighWaterPercent` configures the
+  admission threshold (default 80% of the 32 MiB provenance projection cap;
+  values must be 1–99). The same fraction reserves expanded fence bytes and
+  entry capacity. Admission also reserves the exact expanded generation-fence
+  charge for every active inventory and the maximum-ID attempt-fence charge for
+  every active companion. A percentage in range still refuses the bundle if
+  that inventory could later exceed either hard fence cap on retirement.
+  Queue-driven retirement and recovery replay retain the
+  hard cap, reserving space for terminal fence growth. Queue status JSON exposes
+  `provenance_capacity.fence_count`, `projected_bytes`, `limit_bytes` and
+  `high_water_bytes` for queues with retained side evidence. Alert at 70% of
+  `limit_bytes`, before the default 80% admission refusal. Track fence count and
+  growth rate to plan rollover well before refusal; raising the threshold cannot
+  spend the required active-inventory retirement reserve. Projected bytes include
+  active canonical evidence,
+  compressed/base64 fences and framing, but exclude the queue/dependency base;
+  final snapshot encoding independently enforces the complete snapshot cap.
+
+**Still BLOCKING before enabling writers on a high-volume queue:** a structural
+fence bound (e.g., deriving attempt/generation IDs from monotonic journal positions
+so a watermark can replace per-ID fences), or an explicit lifetime/rollover
+policy. Lossless compaction only delays the cliff: the reviewed identity
+distribution reaches the hard projection cap at about 281k lifetime landings;
+the default high-water mark refuses new side evidence earlier. This estimate
+is workload-dependent, not a supported lifetime guarantee. No structural bound
+or rollover policy is implemented here. Production integration, reader-first
+rollout, authority/start fencing, namespace recovery and owner opt-in remain
+gated; no production writer is enabled.
+
+### Permanently failing landed recovery
+
+An accepted `Landed` without its companion pins its tested evidence and an
+`Awaiting` marker. Close, dequeue, head changes and queue retirement cannot clear
+that marker. Up to **32** unfinished attempts can remain pinned indefinitely;
+when that budget is exhausted, new tested landings are refused. Successful
+recovery is the only exit for an accepted pending landing; there is no
+force-forget or abandon-pending API. Raising high water cannot fix inconsistent
+evidence, and recovery may drain markers above high water within the hard caps.
+
+Keep side emission stopped while diagnosing a permanent refusal. On a restored
+copy, inspect the immutable `Landed` outcome and immediately preceding accepted
+batch/attempt, every member's revision/head and full accepted decision, tested
+companion, inventory chunks/generation predecessors, and original layer targets.
+Reconstruct the actual landed composition from immutable build inputs, including
+intermediate member results and the terminal `NewBaseSHA`. Check the strict v9
+reader version, namespace binding, missing originals, superseded inventories,
+and capacity error separately. If an inventory was superseded, recovery needs a
+fresh valid generation for the same historical inputs with the exact current
+predecessor; an old generation must not be reused.
+
+Escalate an irreconstructible composition, missing original, contradictory
+historical tested evidence or persistent hard-cap failure to the maintainers
+with the queue/attempt/outcome IDs, exact error, reader version and a protected
+copy of the original journal and checkpoint. Validate a reviewed compatible
+reader/retention fix or restore on that copy before resuming emission. Never
+delete pending markers, alter original events or invent a successful companion
+to release capacity. These helpers remain unwired under Hold.
 
 ### Retention decision and audit closure
 
 **Retain all original journal evidence, without a time window.** ADR 0008 10b's
 retain-all rule remains in force. Compaction affects only the derived provenance
 projection and v9 audit cursor; it never deletes or rewrites events or snapshots
-in the database. No migration, index or retention configuration is added.
+in the database. No migration or index is added; the high-water option controls only future side admission.
 
 The projection retires a tested/landed companion pair after validating the landed
 companion. Existing terminal queue journal events also retire non-landed work:
@@ -2676,7 +2770,7 @@ compatible reader or reviewed cache repair before appends can resume.
 The owned provenance replay fold updates lifetime rejection fences in place,
 with rollback on validation failure. It copies only bounded active state per
 event; the immutable `journal.Apply` adapter remains available for callers that
-retain old states. Checkpoint encoding, decoding and sorting still process lifetime fence metadata,
+retain old states. Checkpoint encoding, decoding and sorting still process compressed lifetime fence metadata,
 with that cost paid at checkpoint boundaries rather than on every folded event.
 `AppendSide` atomically saves its own derived checkpoint in observations.
 `AppendSide` and `Store.Load` resume the newest eligible append/audit checkpoint
@@ -2690,17 +2784,18 @@ the bounded suffix and retained state, with exact-ID lookups only for unfinished
 companions. Tests cover a 268,000-row history, idle/restart and nonempty suffixes,
 20 consecutive checkpoint-resuming appends, 10,000 serial abandonments, and
 10,000 dropped changes per terminal path. Active payload retention stays at one
-record for serial abandonments and zero for dropped changes; durable rejection
-fences still grow with lifetime identities. Pruning is therefore bounded active
-projection retention, not a complete solution for unlimited history: finite
-fence/checkpoint budgets and future writer activation remain explicit work.
+record for serial abandonments and zero for dropped changes. Lossless fence-table
+compaction now reduces lifetime metadata, while finite fence/checkpoint budgets
+and future writer activation remain explicit constraints.
 Legacy and no-side-evidence cursors retain their complete existing envelope/snapshot bytes,
 including #178's full cursor goldens.
 
 The original strict v9 shape remains readable. A distinct strict v9 shape with a
 `Compaction` checkpoint carries retired fences after projection compaction; it is
 not emitted for legacy-only queues. Every checkpoint field is required and
-validated. **The first side event or compact v9 cursor is a future binary rollback
+validated. The strict `FenceTable` shape losslessly compresses the same exact
+fences and is another reader compatibility boundary. Deploy this reader before
+emitting that shape. **The first side event or compact v9 cursor is a future binary rollback
 boundary.** Once writers are enabled, rollback requires a compatible reader, or
 stopped workers, retained post-backup evidence, restoration of the verified
 pre-emission backup, token rotation and reconciliation of remote refs/subsequent
@@ -2750,5 +2845,7 @@ kind names; it does not catch string concatenation, `.sql` files or `_test.go`
 files. Only `journalreader/snapshot.go` may compose v8/v9 for derived audit
 cursors. `store/side_append.go` is the sole allowlisted production adapter for encoding
 and inserting side events, and the guard rejects production references to its
-entry point (including function-value captures). Review every future persistence
+entry points (including function-value captures). Transaction-local append is
+allowlisted only in the adapter and landing-start seam; production starts must
+pass a literal nil companion builder, and production recovery calls are forbidden. Review every future persistence
 path independently.

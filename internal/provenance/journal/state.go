@@ -24,16 +24,22 @@ type group struct {
 // State is a retained-evidence fold, not a queue authorization API.
 // It keeps bounded active records; audit selection uses immutable journal rows.
 type State struct {
-	records    []Record
-	groups     map[string]group
-	latest     map[string]string
-	landings   map[string]Landing
-	bytes      int
-	lastID     uint64
-	retired    map[string]uint64 // generation key -> original chunk zero
-	settled    map[string]uint64 // attempt -> landed or terminal tested companion ID
-	landingIDs map[string]uint64
-	fenceBytes int
+	records       []Record
+	groups        map[string]group
+	latest        map[string]string
+	landings      map[string]Landing
+	bytes         int
+	lastID        uint64
+	retired       map[string]uint64 // generation key -> original chunk zero
+	settled       map[string]uint64 // attempt -> landed or terminal tested companion ID
+	landingIDs    map[string]uint64
+	fenceBytes    int
+	packedAt      int               // uncompressed fence bytes at the last capacity measurement
+	packedTable   []byte            // immutable cached compressed table at packedAt
+	packedBytes   int               // measured JSON/base64 table bytes
+	awaiting      map[string]uint64 // attempt -> accepted Landed outcome awaiting companion
+	awaitingBytes int
+	packingWork   uint64 // entries visited by capacity measurements
 }
 
 func changeKey(r p.InventoryRequest) string {
@@ -78,6 +84,7 @@ func Apply(s State, id uint64, e Event) (State, error) {
 	s.retired = maps.Clone(s.retired)
 	s.settled = maps.Clone(s.settled)
 	s.latest = maps.Clone(s.latest)
+	s.awaiting = maps.Clone(s.awaiting)
 	return ApplyOwned(s, id, e)
 }
 
@@ -98,6 +105,7 @@ func ApplyOwned(s State, id uint64, e Event) (_ State, applyErr error) {
 		return s, err
 	}
 	next := s
+	next.awaiting = maps.Clone(s.awaiting)
 	if next.retired == nil {
 		next.retired = map[string]uint64{}
 	}
@@ -299,4 +307,44 @@ func validateInventory(g group) error {
 		return ErrBinding
 	}
 	return nil
+}
+
+// SettledAttempt returns the immutable completion/terminal fence position.
+func (s State) SettledAttempt(attempt string) (uint64, bool) {
+	id, ok := s.settled[attempt]
+	return id, ok
+}
+
+// AwaitLandedOwned retains the tested evidence after an accepted queue outcome.
+// The marker is checkpointed until its landed companion completes the attempt.
+func AwaitLandedOwned(s State, id uint64, batch, attempt string) State {
+	l, ok := s.landings[stringJSON([]string{attempt, "tested"})]
+	if !ok || l.BatchID != batch {
+		return s
+	}
+	if _, exists := s.awaiting[attempt]; exists {
+		return s
+	}
+	if s.awaiting == nil {
+		s.awaiting = map[string]uint64{}
+	}
+	s.awaiting[attempt] = id
+	s.awaitingBytes += fenceSize(attempt, id)
+	s.lastID = id
+	return s
+}
+
+// pendingGeneration protects exact inventories awaiting a landed companion.
+func (s State) pendingGeneration(key string) bool {
+	for _, l := range s.landings {
+		if _, pending := s.awaiting[l.AttemptID]; !pending {
+			continue
+		}
+		for _, m := range l.Members {
+			if generationKey(m.Request) == key {
+				return true
+			}
+		}
+	}
+	return false
 }

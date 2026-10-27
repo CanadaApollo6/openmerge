@@ -17,6 +17,8 @@ type Journal struct {
 	Events          []JournalEvent
 	OutsideWarnings OutsideWarningSummary
 	HasAuthorityPin bool
+
+	ProvenanceCapacity *ProvenanceCapacity
 }
 
 // JournalEvent retains the persisted wire envelope for explainability clients.
@@ -82,6 +84,10 @@ func (s *Store) journals(ctx context.Context, keys []QueueKey, warnings bool) ([
 				if _, ok := event.Event.(queue.PolicyAuthorityApplied); ok {
 					journal.HasAuthorityPin = true
 				}
+			}
+			gauge := reader.Provenance.Capacity(s.sideHighWater)
+			if gauge.FenceCount != 0 || len(reader.Provenance.Records()) != 0 {
+				journal.ProvenanceCapacity = &gauge
 			}
 			ids = append(ids, id)
 			result = append(result, journal)

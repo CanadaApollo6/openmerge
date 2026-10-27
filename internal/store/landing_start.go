@@ -49,6 +49,13 @@ func (s *Store) StartLanding(ctx context.Context, claim ClaimedAction, cfg queue
 }
 
 func (s *Store) startLanding(ctx context.Context, claim ClaimedAction, cfg queue.Config, policy cp.Policy, fresh []queue.ApprovalEligibilityObserved, decisions []queue.LandingDecisionRecorded, start queue.LandingStarted, authorize func(context.Context, pgx.Tx, emission, queue.Event) (bool, error), checks ...queue.LandingChecksRecorded) error {
+	return s.startLandingWithSide(ctx, claim, cfg, policy, fresh, decisions, start, authorize, nil, checks...)
+}
+
+// startLandingWithSide is an unwired writer integration seam. Build is pure and
+// receives the exact inserted decision IDs. The ordinary production start path
+// always supplies nil; companion emission remains Hold.
+func (s *Store) startLandingWithSide(ctx context.Context, claim ClaimedAction, cfg queue.Config, policy cp.Policy, fresh []queue.ApprovalEligibilityObserved, decisions []queue.LandingDecisionRecorded, start queue.LandingStarted, authorize func(context.Context, pgx.Tx, emission, queue.Event) (bool, error), build func([]uint64) (SideAppend, error), checks ...queue.LandingChecksRecorded) error {
 	if !policy.Enabled() && (len(fresh) != 0 || len(decisions) != 0) {
 		return LandingDecisionRequiredError{}
 	}
@@ -141,10 +148,27 @@ func (s *Store) startLanding(ctx context.Context, claim ClaimedAction, cfg queue
 		if stale || !queue.CanStart(cfg, state, claim.Action, currentStart()) {
 			return ErrStale
 		}
-		for _, event := range encodedEvents {
-			if _, err := tx.Exec(ctx, `INSERT INTO events(queue_id,type,payload) VALUES ($1,$2,$3::jsonb)`, claim.QueueID, event.name, string(event.payload)); err != nil {
+		var decisionIDs []uint64
+		for i, event := range encodedEvents {
+			var id uint64
+			if err := tx.QueryRow(ctx, `INSERT INTO events(queue_id,type,payload) VALUES ($1,$2,$3::jsonb) RETURNING id`, claim.QueueID, event.name, string(event.payload)).Scan(&id); err != nil {
 				return err
 			}
+			if _, ok := events[i].(queue.LandingDecisionRecorded); ok {
+				decisionIDs = append(decisionIDs, id)
+			}
+		}
+		if build != nil {
+			request, err := build(decisionIDs)
+			if err != nil {
+				return err
+			}
+			request, err = withTestedBatchValidation(request, state, start.BatchID, start.AttemptID, land.TestedSHA, decisionIDs)
+			if err != nil {
+				return err
+			}
+			_, err = s.appendSideTx(ctx, tx, claim.QueueID, request, "")
+			return err
 		}
 		return nil
 	})

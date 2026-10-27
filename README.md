@@ -464,10 +464,18 @@ rejection fences. Lifetime fences still consume finite checkpoint capacity;
 unlimited-history pruning remains unresolved. See the
 [retention and recovery contract](docs/operating.md#shared-reader-retention-recovery).
 
-Writer activation has **BLOCKING** prerequisites for ADR 0010 4b and ADR 0011
-4a/4b: address lifetime fence growth with compaction or at least a metric and
-alert, factor append validation/insertion into the landing transaction, and
-recover missing landed companions idempotently. See the
+The shared landing transaction, idempotent missing-companion recovery, exact
+batch/composition validation, capacity gauge and default 80% admission high-water
+mark are resolved under Hold. Status exposes fence count and projected bytes;
+alert at 70% of the projection cap.
+
+Still **BLOCKING** before enabling writers on a high-volume queue: a structural
+fence bound (e.g., deriving attempt/generation IDs from monotonic journal positions
+so a watermark can replace per-ID fences), or an explicit lifetime/rollover
+policy. Compaction only delays the cliff to about 281k lifetime landings for the
+reviewed identity distribution; the admission high-water mark refuses earlier.
+Production integration, authority/start fencing, namespace recovery, owner opt-in
+and reader-first rollout remain gated. See the
 [writer prerequisites](docs/operating.md#shared-reader-retention-recovery).
 
 Provenance audit exports use bounded scratch storage on the output filesystem.

@@ -90,10 +90,6 @@ func (r Reader) CursorSnapshot() ([]byte, error) {
 func (r *Reader) UpgradeCursor() { r.composed = true }
 
 // Preflight checks the complete candidate projection before any durable insert.
-func (r Reader) Preflight() error {
-	if err := r.Provenance.Preflight(); err != nil {
-		return err
-	}
-	_, err := r.CursorSnapshot()
-	return err
+func (r *Reader) Preflight(highWater ...int) error {
+	return r.Provenance.Preflight(highWater...)
 }
