@@ -44,7 +44,8 @@ type Option func(*Store)
 
 // WithSideHighWaterPercent configures the side-evidence byte threshold (default
 // 80). Zero selects the default; other values must be in 1..99. Invalid values
-// cause append preflight to refuse the operation.
+// cause append preflight to refuse the operation. Every threshold also reserves
+// enough fence space to retire the current active inventory and attempts.
 func WithSideHighWaterPercent(percent int) Option {
 	return func(s *Store) { s.sideHighWater = percent }
 }

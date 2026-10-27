@@ -141,12 +141,43 @@ func (s *State) Preflight(highWater ...int) error {
 	if s.fenceBytes > maxFenceTableBytes*percent/100 || len(s.retired)+len(s.settled) > maxFenceEntries*percent/100 {
 		return fmt.Errorf("%w: expanded fence high-water reserve (%d%%) reached", ErrLimit, percent)
 	}
+	// Queue events cannot preflight side evidence. Reserve enough expanded
+	// space to retire every current generation and attempt, regardless of the
+	// configured percentage or the compression ratio of existing fences.
+	retirementBytes, retirementEntries := s.fenceBytes, len(s.retired)+len(s.settled)
+	for key, g := range s.groups {
+		retirementBytes += fenceSize(key, g.ids[0])
+		retirementEntries++
+	}
+	for _, l := range s.landings {
+		retirementBytes += fenceSize(l.AttemptID, ^uint64(0))
+		retirementEntries++
+	}
+	if retirementBytes > maxFenceTableBytes || retirementEntries > maxFenceEntries {
+		return fmt.Errorf("%w: active evidence exceeds queue retirement reserve", ErrLimit)
+	}
 	gauge := s.Capacity(percent)
 	if err := s.capacity(true); err != nil {
 		return err
 	}
 	if gauge.ProjectedBytes+1 > gauge.HighWaterBytes {
 		return RetentionLimitError{Records: len(s.records) + 1, Bytes: gauge.ProjectedBytes + 1}
+	}
+	return nil
+}
+
+// PreflightRecovery permits draining pending evidence above the admission
+// threshold, while requiring a strict net reduction and the same hard caps.
+func (s *State) PreflightRecovery(before CapacityGauge) error {
+	if err := s.fenceTableCapacity(); err != nil {
+		return err
+	}
+	after := s.Capacity(0)
+	if err := s.capacity(false); err != nil {
+		return err
+	}
+	if after.ProjectedBytes >= before.ProjectedBytes {
+		return fmt.Errorf("%w: landed recovery must reduce retained bytes", ErrLimit)
 	}
 	return nil
 }

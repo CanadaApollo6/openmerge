@@ -2582,7 +2582,8 @@ slices 4a/4b (production integration remains disabled):**
 - **Landed recovery.** The unwired `RecoverLanded` helper checks an immutable
   `Landed` row against the immediately preceding queue state, rejecting stale
   outcomes and mismatched attempts/decisions. It validates exact historical batch
-  membership, revisions and heads, the accepted decision's tested identity, and
+  membership, revisions and heads, every member's complete accepted decision
+  (including classification, policy/brief identity and source evidence), and
   the terminal member's final landed composition (intermediate results remain
   valid). Close, dequeue and head-change events preserve a pending landed
   companion until recovery completes. V9 checkpoints optionally retain bounded
@@ -2595,6 +2596,8 @@ slices 4a/4b (production integration remains disabled):**
   supply source-to-build mappings. Recovery appends the missing companion once,
   allowing tested evidence to retire. Future startup/recovery wiring must invoke
   it before starting new work; no production caller is enabled here.
+  Recovery bypasses admission high water only when it settles the pending attempt
+  and strictly reduces retained projection bytes; all hard caps still apply.
 - **Lifetime fences.** Exact arbitrary string identities and original journal
   anchors are retained in a lossless, sorted, front-coded compressed fence table.
   A watermark/range is unsound because these IDs have no monotonic allocation
@@ -2616,13 +2619,18 @@ slices 4a/4b (production integration remains disabled):**
   than packing per record. `Store.WithSideHighWaterPercent` configures the
   admission threshold (default 80% of the 32 MiB provenance projection cap;
   values must be 1–99). The same fraction reserves expanded fence bytes and
-  entry capacity. Queue-driven retirement and recovery replay retain the
+  entry capacity. Admission also reserves the exact expanded generation-fence
+  charge for every active inventory and the maximum-ID attempt-fence charge for
+  every active companion. A percentage in range still refuses the bundle if
+  that inventory could later exceed either hard fence cap on retirement.
+  Queue-driven retirement and recovery replay retain the
   hard cap, reserving space for terminal fence growth. Queue status JSON exposes
   `provenance_capacity.fence_count`, `projected_bytes`, `limit_bytes` and
   `high_water_bytes` for queues with retained side evidence. Alert at 70% of
   `limit_bytes`, before the default 80% admission refusal. Track fence count and
-  growth rate to plan rollover well before refusal; raising the threshold spends
-  the queue-event reserve. Projected bytes include active canonical evidence,
+  growth rate to plan rollover well before refusal; raising the threshold cannot
+  spend the required active-inventory retirement reserve. Projected bytes include
+  active canonical evidence,
   compressed/base64 fences and framing, but exclude the queue/dependency base;
   final snapshot encoding independently enforces the complete snapshot cap.
 
@@ -2636,6 +2644,35 @@ is workload-dependent, not a supported lifetime guarantee. No structural bound
 or rollover policy is implemented here. Production integration, reader-first
 rollout, authority/start fencing, namespace recovery and owner opt-in remain
 gated; no production writer is enabled.
+
+### Permanently failing landed recovery
+
+An accepted `Landed` without its companion pins its tested evidence and an
+`Awaiting` marker. Close, dequeue, head changes and queue retirement cannot clear
+that marker. Up to **32** unfinished attempts can remain pinned indefinitely;
+when that budget is exhausted, new tested landings are refused. Successful
+recovery is the only exit for an accepted pending landing; there is no
+force-forget or abandon-pending API. Raising high water cannot fix inconsistent
+evidence, and recovery may drain markers above high water within the hard caps.
+
+Keep side emission stopped while diagnosing a permanent refusal. On a restored
+copy, inspect the immutable `Landed` outcome and immediately preceding accepted
+batch/attempt, every member's revision/head and full accepted decision, tested
+companion, inventory chunks/generation predecessors, and original layer targets.
+Reconstruct the actual landed composition from immutable build inputs, including
+intermediate member results and the terminal `NewBaseSHA`. Check the strict v9
+reader version, namespace binding, missing originals, superseded inventories,
+and capacity error separately. If an inventory was superseded, recovery needs a
+fresh valid generation for the same historical inputs with the exact current
+predecessor; an old generation must not be reused.
+
+Escalate an irreconstructible composition, missing original, contradictory
+historical tested evidence or persistent hard-cap failure to the maintainers
+with the queue/attempt/outcome IDs, exact error, reader version and a protected
+copy of the original journal and checkpoint. Validate a reviewed compatible
+reader/retention fix or restore on that copy before resuming emission. Never
+delete pending markers, alter original events or invent a successful companion
+to release capacity. These helpers remain unwired under Hold.
 
 ### Retention decision and audit closure
 

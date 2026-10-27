@@ -167,7 +167,7 @@ func (s *Store) startLandingWithSide(ctx context.Context, claim ClaimedAction, c
 			if err != nil {
 				return err
 			}
-			_, err = s.appendSideTx(ctx, tx, claim.QueueID, request)
+			_, err = s.appendSideTx(ctx, tx, claim.QueueID, request, "")
 			return err
 		}
 		return nil

@@ -1,5 +1,126 @@
 # Hold writer prerequisite evidence — 2026-10-27
 
+## PR #188 fix round 2
+
+Starting head: `1157460a00e38db67faf97243951e89bbe2cca72`. Work stays on the
+existing PR branch under Hold; production writers remain unwired.
+
+- Recovery resolves the anchor and every member-layer reference, checking every
+  referenced decision against the complete accepted historical decision. Both
+  newly built and already-complete companions take this path. Identical duplicate
+  decisions remain valid. Candidate observations resolve through the recovery
+  bundle overlay, so reconstructing an inventory in that transaction still works.
+- Admission reserves the expanded fence bytes and entry count needed to retire
+  every current inventory and attempt. Generation IDs are immutable original
+  chunk-zero IDs; attempt charges use the maximum uint64 ID. The 1–99% setting
+  remains supported, but a configuration/inventory combination that could exceed
+  the hard fence caps is refused even below its percentage threshold.
+- Recovery uses the hard caps and a strict reduction in retained projection bytes
+  instead of admission high water, and must settle the recovered attempt. A bundle
+  that adds enough unrelated evidence to increase the projection is refused.
+- The operating runbook covers indefinitely pinned attempts, the 32-attempt limit,
+  refusal of new tested landings, immutable-input checks and maintainer escalation.
+  There is no force-forget path.
+
+`TestRecoverLandedDuplicateMemberDecision` carries Astra's singleton/two-member
+reproducer. `TestRecoverLandedValidatesCompletedSecondaryDecision` covers the
+already-complete branch. `TestRecoverLandedDecisionFieldMutations` walks every
+wire field in the approval and generated-remedy fixtures: **223 mutations** are
+rejected (**41 structurally valid**, **182 strict-wire refusals**), then the
+identical secondary duplicate successfully recovers in both variants.
+
+`TestConfiguredReserveAccountsForActiveInventory` uses Astra's strict, reloadable
+checkpoint with **18,536 retired fences**, **132,873,478 expanded bytes** and
+**500 active inventories**. Admission at 99% now refuses it. The test confirms
+that bypassing admission would grow it beyond the 128 MiB cap on retirement,
+then admits a smaller 100-inventory checkpoint at the same setting and reloads
+it after retirement. `TestTerminalReserveAtActiveRecordLimit` retires and reloads
+**4,255 inventories** at once. Recovery tests drain `Awaiting` above 1% high water,
+reject growing bundles and retain the hard caps, and verify an inventory built
+and referenced in the recovery bundle.
+
+All Go commands use the lock/toolchain/environment prefix documented below and
+both designated PostgreSQL test URL variables. Round-2 logs and the reproducible
+Go-overlay mutation runner are in `/home/riels/.cache/pr188-fix-r2/`:
+`ci-packages.log`, `ci-store-final.log`, `focused-store-final.log`,
+`focused-remedy.log`, `mutations.py`, `mutations.json`, `mutation-*.log`,
+`legacy-status.log`, `status-head.json`, `vet.log`, `lint.log`, and `gofmt.log`.
+
+### Round-2 CI-mode results
+
+The six affected suites passed `go test -race -short -count=1 -timeout=15m`;
+total wall time was **444.222 s**. The final store rerun includes the additional
+in-bundle reconstructed-inventory reference regression. Its time replaces the
+first store run's 213.809 s below. All packages finish within six minutes,
+comfortably below the 15-minute timeout; retention exceeds the five-minute aim.
+
+| Package | CI-mode time |
+| --- | ---: |
+| `internal/store` (final rerun) | 170.219 s |
+| `internal/journalreader` | 26.227 s |
+| `internal/provenance/journal` | 349.852 s |
+| `internal/status` | 11.075 s |
+| `internal/audit` | 104.988 s |
+| `cmd/openmerge` | 102.039 s |
+
+The recovery-above-high-water probe reduced retained bytes from **400,869** to
+**396,304**, both above the configured **335,544-byte** high water, and removed
+`Awaiting`. It also rejected the same recovery bundled with unrelated evidence
+that would increase retained bytes.
+
+A separate Go-overlay run of Astra's legacy status/health probe reproduced all
+**21 serialized outputs / 10,491 decoded bytes** exactly against the saved
+`3bef3b3` baseline. The serialized comparison artifact's SHA-256 remains
+`4b976f6eccd68c2a440bda16547d7a62e6aa2e097b87e2fe6265b2447a850fdd`.
+The full audit suite covers #181 v1/v2 export compatibility, and the reader suite
+retains the unchanged production-writer/import guards.
+
+Commands following the common lock/environment prefix:
+
+```sh
+go test -race -short -count=1 -timeout=15m ./internal/store ./internal/journalreader ./internal/provenance/journal ./internal/status ./internal/audit ./cmd/openmerge
+go test -race -short -count=1 -timeout=15m ./internal/store
+go test -overlay /home/riels/.cache/pr188-fix-r2/status-overlay.json -race -short -count=1 -timeout=15m ./internal/status -run '^TestReviewR2LegacyOutputBytes$'
+```
+
+All **12 isolated source mutants** compiled and failed their intended behavioral
+assertions under the same CI flags. Go overlays kept the implementation files
+unchanged. The original eight guards remain effective, and the four additional
+mutants remove secondary-decision validation, active-inventory retirement reserve,
+recovery's high-water exemption, or its net-reduction requirement.
+
+| Mutation | Failing test |
+| --- | --- |
+| `fence-byte-charge` | `TestRetireOwnedLandingsBranchSettlesAttempt` |
+| `decision-binding` | `TestRecoveryRejectsContradictoryBindings/wrong-tested-decision` |
+| `terminal-composition` | `TestRecoveryRejectsContradictoryBindings/wrong-landed-result` |
+| `recovery-membership` | `TestRecoverCompanionRequiresExactBatchCoverage/incomplete-historical-tested` |
+| `start-membership` | `TestStartCompanionRequiresExactBatchCoverage/missing` |
+| `per-record-preflight` | `TestSideBundlePacksFencesOnceUnderLock` |
+| `high-water` | `TestSideHighWaterReservesTerminalFenceHeadroom` |
+| `pending-companion` | `TestRecoverySurvivesTerminalQueueEvents/close` |
+| `anchor-only` | `TestRecoverLandedDuplicateMemberDecision/multi-altered` |
+| `inventory-reserve` | `TestConfiguredReserveAccountsForActiveInventory` |
+| `recovery-high-water` | `TestRecoverLandedAboveHighWaterDrainsPending` |
+| `recovery-growth` | `TestRecoveryPreflightKeepsHardCapsAndReduction/(unchanged\|growth)` |
+
+`go vet ./...` passed in **5.718 s**; `golangci-lint run` passed in **6.941 s**
+with `0 issues.`. Whole-repository `gofmt -l .` returned no files, and
+`git diff --check` passed. The mutation runner completed in **58.583 s**.
+
+```sh
+python3 /home/riels/.cache/pr188-fix-r2/mutations.py
+# Prefix the next two commands with the common lock/environment prefix:
+go vet ./...
+golangci-lint run
+/home/riels/.local/share/mise/installs/go/1.27.3/bin/gofmt -l .
+git diff --check
+```
+
+The first focused run exposed a canceled subtest context in the mutation-table
+cleanup. Cleanup now uses the parent test context; both later focused runs and
+the final complete suites pass. No production source mutant was left applied.
+
 ## PR #188 fix round 1
 
 Starting head: `3bef3b3f40a881d662056c440d06b465246ca03d`. Fetched the requested
