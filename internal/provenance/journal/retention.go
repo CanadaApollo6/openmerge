@@ -2,6 +2,7 @@ package journal
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -90,11 +91,50 @@ func (s State) compacted() bool { return len(s.retired) != 0 || len(s.settled) !
 func (s State) Through() uint64 { return s.lastID }
 
 // Preflight leaves headroom below both caps for a transaction's complete bundle.
-func (s State) Preflight() error { return s.capacity(true) }
-func (s State) capacity(reserve bool) error {
+func (s State) Preflight() error {
+	if err := s.fenceTableCapacity(); err != nil {
+		return err
+	}
+	// Writers measure the complete table, rather than relying on replay's
+	// amortized capacity estimate. Checkpoint encoding enforces it again.
+	if len(s.retired)+len(s.settled) >= 128 {
+		s.measureFences()
+	}
+	return s.capacity(true)
+}
+
+func (s *State) measureFences() {
+	table := packFences(s.checkpoint())
+	s.packedAt = s.fenceBytes
+	s.packedBytes = 4*((len(table)+2)/3) + 2
+	s.packingWork += uint64(len(s.retired) + len(s.settled))
+}
+
+// Bound decoded checkpoint memory as well as its compressed projection bytes.
+func (s State) fenceTableCapacity() error {
+	if len(s.retired)+len(s.settled) > maxFenceEntries || s.fenceBytes > maxFenceTableBytes {
+		return fmt.Errorf("%w: fence table expansion exceeds %d entries or %d uncompressed bytes", ErrLimit, maxFenceEntries, maxFenceTableBytes)
+	}
+	return nil
+}
+
+func (s *State) capacity(reserve bool) error {
+	if err := s.fenceTableCapacity(); err != nil {
+		return err
+	}
 	metadata := 0
 	if s.compacted() {
 		metadata = s.fenceBytes + 128
+		if len(s.retired)+len(s.settled) >= 128 {
+			// Amortize replay measurements geometrically. Charge new fences
+			// at twice their JSON size between measurements; writers and
+			// checkpoint encoding always measure the exact table independently.
+			metadata = s.packedBytes + 2*(s.fenceBytes-s.packedAt) + 128
+			if s.packedAt == 0 || s.fenceBytes >= 2*s.packedAt || metadata+s.bytes+1 >= maxSnapshotBytes/2 {
+				s.measureFences()
+				metadata = s.packedBytes + 128
+			}
+		}
 	}
 	pending, references := 0, 0
 	for _, l := range s.landings {

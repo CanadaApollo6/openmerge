@@ -32,9 +32,6 @@ type SideAppend struct {
 // queue lock, before inserting any record. Failed validation rolls back cursor
 // changes too. Sequence reservations may leave gaps, as ordinary rollbacks do.
 func (s *Store) AppendSide(ctx context.Context, q QueueID, request SideAppend) (int64, error) {
-	if request.Count < 1 || request.Count >= pj.MaxActiveRecords || request.Build == nil || request.DedupeKey == "" {
-		return 0, errors.New("invalid side append bundle")
-	}
 	var watermark int64
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if err := s.lockQueue(ctx, tx, q); err != nil {
@@ -43,6 +40,26 @@ func (s *Store) AppendSide(ctx context.Context, q QueueID, request SideAppend) (
 		if err := checkApprovalRead(ctx, tx, q); err != nil {
 			return err
 		}
+		var err error
+		watermark, err = s.appendSideTx(ctx, tx, q, request)
+		return err
+	})
+	return watermark, err
+}
+
+// appendSideTx validates and inserts using the caller's transaction. The caller
+// MUST acquire this queue's advisory lock before any action/observation row locks
+// or events INSERTs (whose FK takes queues KEY SHARE). Never enter via another
+// transaction while holding that lock. Check checkApprovalRead BEFORE the first
+// write, not after inserting the transaction's own eligibility records.
+// Errors require rolling back the whole tx,
+// including preceding decisions; this helper neither commits nor rolls back.
+func (s *Store) appendSideTx(ctx context.Context, tx pgx.Tx, q QueueID, request SideAppend) (int64, error) {
+	if request.Count < 1 || request.Count >= pj.MaxActiveRecords || request.Build == nil || request.DedupeKey == "" {
+		return 0, errors.New("invalid side append bundle")
+	}
+	var watermark int64
+	err := func() error {
 		err := tx.QueryRow(ctx, `SELECT id FROM events WHERE queue_id=$1 AND dedupe_key=$2`, q, request.DedupeKey).Scan(&watermark)
 		if err == nil {
 			return compareSideBundle(ctx, tx, q, watermark, request)
@@ -189,7 +206,7 @@ func (s *Store) AppendSide(ctx context.Context, q QueueID, request SideAppend) (
 			return err
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO observations(queue_id,key,value) VALUES($1,$2,$3)
-   ON CONFLICT(queue_id,key) DO UPDATE SET value=EXCLUDED.value`, q, outsidePushCursorKey, raw); err != nil {
+	   ON CONFLICT(queue_id,key) DO UPDATE SET value=EXCLUDED.value`, q, outsidePushCursorKey, raw); err != nil {
 			return err
 		}
 		// No candidate row reaches events until EVERY candidate and cursor is valid.
@@ -220,7 +237,7 @@ func (s *Store) AppendSide(ctx context.Context, q QueueID, request SideAppend) (
 		}
 		_, err = tx.Exec(ctx, `INSERT INTO observations(queue_id,key,value) VALUES($1,$2,$3) ON CONFLICT(queue_id,key) DO UPDATE SET value=EXCLUDED.value`, q, sideCheckpointKey, checkpointRaw)
 		return err
-	})
+	}()
 	if err != nil {
 		return 0, err
 	}
@@ -321,4 +338,90 @@ func compareSideBundle(ctx context.Context, tx pgx.Tx, q QueueID, watermark int6
 type sideBundleManifest struct {
 	IDs     []uint64
 	Binding dependency.JournalInitialized
+}
+
+// RecoverLanded repairs a crash after an accepted journal Landed but before its
+// companion. Build must reconstruct canonical landed evidence from immutable
+// inputs, including the actual landed composition; Landed alone does not prove
+// a source-to-build mapping. No forge reads or effects may run inside Build.
+// The journal outcome supplies the batch/attempt binding and deterministic
+// dedupe key. Retries compare the entire canonical bundle, never just that key.
+// This helper is Hold: only tests may call it until writer integration review.
+func (s *Store) RecoverLanded(ctx context.Context, q QueueID, landedID int64, request SideAppend) (int64, error) {
+	if landedID <= 1 || request.Build == nil {
+		return 0, errors.New("invalid landed recovery")
+	}
+	var watermark int64
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if err := s.lockQueue(ctx, tx, q); err != nil {
+			return err
+		}
+		if err := checkApprovalRead(ctx, tx, q); err != nil {
+			return err
+		}
+		var raw []byte
+		if err := tx.QueryRow(ctx, `SELECT payload FROM events WHERE queue_id=$1 AND id=$2`, q, landedID).Scan(&raw); err != nil {
+			return err
+		}
+		event, err := journalreader.DecodeEvent(raw)
+		if err != nil {
+			return err
+		}
+		outcome, ok := event.Queue.(queue.Landed)
+		if !ok {
+			return errors.New("landed recovery requires journal Landed")
+		}
+		var seed queue.State
+		if err := tx.QueryRow(ctx, `SELECT base, COALESCE(initial_fence, '') FROM queues WHERE id=$1`, q).Scan(&seed.BaseBranch, &seed.Fence); err != nil {
+			return err
+		}
+		before, _, err := replayJournal(ctx, tx, q, seed, landedID-1, true)
+		if err != nil {
+			return err
+		}
+		batch := before.Queue.Batch(outcome.BatchID)
+		if batch == nil || batch.Phase != queue.Landing || batch.LandingAttempt.ID == "" {
+			return errors.New("landed recovery requires an accepted landing outcome")
+		}
+		after := queue.Apply(before.Queue, outcome)
+		if after.Batch(outcome.BatchID) != nil || after.BaseSHA != outcome.NewBaseSHA {
+			return errors.New("landed recovery requires an accepted landing outcome")
+		}
+		build := request.Build
+		request.Build = func(ids []uint64) ([]journalreader.Event, error) {
+			events, err := build(ids)
+			if err != nil {
+				return nil, err
+			}
+			if len(events) == 0 {
+				return nil, errors.New("missing landed recovery companion")
+			}
+			companion, ok := events[len(events)-1].Provenance.(pj.Landing)
+			if !ok || companion.Stage != "landed" || companion.BatchID != outcome.BatchID || companion.AttemptID != batch.LandingAttempt.ID {
+				return nil, errors.New("landed recovery companion binding mismatch")
+			}
+			// The decision certifies the batch's final result. Member mappings may
+			// describe intermediate commits, so do not equate each to NewBaseSHA.
+			var decisionRaw []byte
+			if err := tx.QueryRow(ctx, `SELECT payload FROM events WHERE queue_id=$1 AND id=$2`, q, companion.DecisionID).Scan(&decisionRaw); err != nil {
+				return nil, err
+			}
+			decisionEvent, err := journalreader.DecodeEvent(decisionRaw)
+			if err != nil {
+				return nil, err
+			}
+			decision, ok := decisionEvent.Queue.(queue.LandingDecisionRecorded)
+			if !ok || decision.LandedSHA != outcome.NewBaseSHA || decision.BatchID != companion.BatchID || decision.AttemptID != companion.AttemptID {
+				return nil, errors.New("landed recovery decision binding mismatch")
+			}
+			return events, nil
+		}
+		request.DedupeKey = fmt.Sprintf("side-append/recover-landed/%d", landedID)
+		watermark, err = s.appendSideTx(ctx, tx, q, request)
+		return err
+	})
+	if err != nil {
+		return 0, err
+	}
+	return watermark, nil
 }

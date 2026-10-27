@@ -24,16 +24,19 @@ type group struct {
 // State is a retained-evidence fold, not a queue authorization API.
 // It keeps bounded active records; audit selection uses immutable journal rows.
 type State struct {
-	records    []Record
-	groups     map[string]group
-	latest     map[string]string
-	landings   map[string]Landing
-	bytes      int
-	lastID     uint64
-	retired    map[string]uint64 // generation key -> original chunk zero
-	settled    map[string]uint64 // attempt -> landed or terminal tested companion ID
-	landingIDs map[string]uint64
-	fenceBytes int
+	records     []Record
+	groups      map[string]group
+	latest      map[string]string
+	landings    map[string]Landing
+	bytes       int
+	lastID      uint64
+	retired     map[string]uint64 // generation key -> original chunk zero
+	settled     map[string]uint64 // attempt -> landed or terminal tested companion ID
+	landingIDs  map[string]uint64
+	fenceBytes  int
+	packedAt    int    // uncompressed fence bytes at the last capacity measurement
+	packedBytes int    // measured JSON/base64 table bytes
+	packingWork uint64 // entries visited by capacity measurements
 }
 
 func changeKey(r p.InventoryRequest) string {

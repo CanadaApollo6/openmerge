@@ -2,6 +2,7 @@ package journal
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -36,6 +37,17 @@ type snapshot struct {
 	Records  []Record        `json:"Records"`
 }
 
+// A separately discriminated shape preserves both earlier v9 formats. The
+// table expands to the same exact checkpoint and uses its existing validation.
+type tableSnapshot struct {
+	Version    int             `json:"Version"`
+	BaseKind   string          `json:"BaseKind"`
+	Base       json.RawMessage `json:"Base"`
+	LastID     uint64          `json:"LastID"`
+	Records    []Record        `json:"Records"`
+	FenceTable string          `json:"FenceTable"`
+}
+
 // DecodeSnapshot accepts legacy/v8 bytes through the
 // supplied decoder and v9 through a strict retained-evidence fold. Nested v9
 // wrappers and unrecognized base versions are rejected before invoking callbacks.
@@ -62,7 +74,22 @@ func DecodeSnapshot(raw []byte, decodeBase BaseDecoder, validate ...func(uint64,
 			return Snapshot{}, err
 		}
 		var v snapshot
-		if _, ok := discriminator["Compaction"]; ok {
+		if _, ok := discriminator["FenceTable"]; ok {
+			var tv tableSnapshot
+			if err := strictJSON(raw, &tv); err != nil {
+				return Snapshot{}, err
+			}
+			table, err := base64.StdEncoding.Strict().DecodeString(tv.FenceTable)
+			if err != nil || base64.StdEncoding.EncodeToString(table) != tv.FenceTable {
+				return Snapshot{}, ErrMalformed
+			}
+			c, err := unpackFences(table, tv.LastID)
+			if err != nil {
+				return Snapshot{}, err
+			}
+			v = snapshot{tv.Version, tv.BaseKind, tv.Base, tv.LastID, tv.Records}
+			compacted = &c
+		} else if _, ok := discriminator["Compaction"]; ok {
 			var cv compactSnapshot
 			if err := strictJSON(raw, &cv); err != nil {
 				return Snapshot{}, err
@@ -167,6 +194,9 @@ func EncodeSnapshot(kind string, base []byte, state State) ([]byte, error) {
 	if !supportedBase(kind, header.Version) {
 		return nil, ErrMalformed
 	}
+	if err := state.fenceTableCapacity(); err != nil {
+		return nil, err
+	}
 	records := state.Records()
 	var lastID uint64
 	if len(records) > 0 {
@@ -175,6 +205,13 @@ func EncodeSnapshot(kind string, base []byte, state State) ([]byte, error) {
 	var value any = snapshot{SnapshotVersion, kind, base, lastID, records}
 	if state.compacted() {
 		value = compactSnapshot{SnapshotVersion, kind, base, state.lastID, records, state.checkpoint()}
+	}
+	if len(state.retired)+len(state.settled) >= 128 {
+		table := packFences(state.checkpoint())
+		if state.bytes+4*((len(table)+2)/3)+130 > maxSnapshotBytes/2 {
+			return nil, RetentionLimitError{Records: len(records), Bytes: state.bytes + 4*((len(table)+2)/3) + 130}
+		}
+		value = tableSnapshot{SnapshotVersion, kind, base, state.lastID, records, base64.StdEncoding.EncodeToString(table)}
 	}
 	raw, err := json.Marshal(value)
 	if err != nil {
