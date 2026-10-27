@@ -2560,60 +2560,97 @@ No repository, key, schedule or live service is created by this change.
 
 ## Shared reader retention recovery
 
-The shared reader migration (ADR 0010 slice 3c / ADR 0011) is **Hold**. Deploy
-only after ADR 0009 period B drains. This change installs readers only: it cannot
-append provenance/dependency events. Only derived audit cursors that have entered
-the side-evidence era persist composed v9 snapshots. Audit v2 remains a
-separate ADR 0010 slice 3b PR. Before enabling any writer slice, deploy both the
-shared readers and v2 export support everywhere, drain every older worker and
-reader, verify legacy and new snapshot-plus-tail replay, and take and verify a
-whole-database pre-emission backup. This PR alone does not complete that rollout.
+The shared reader and writer foundations (ADR 0010 / ADR 0011) are **Hold**:
+deploy only after ADR 0009 period B drains. No production path calls the new
+`Store.AppendSide` API. Before enabling any writer, deploy these readers and
+[audit v2 (#181)](https://github.com/CanadaApollo6/openmerge/pull/181) everywhere,
+drain incompatible readers/workers, verify snapshot-plus-tail replay, and verify
+a whole-database pre-emission backup. Writer authority, landing-start fencing,
+namespace initialization/recovery and owner opt-in remain later slices.
 
-Provenance retains at most **4096 records** and **32 MiB of canonical event
-payloads** per queue. A partial inventory chunk consumes one record. Replay
-returns a typed `journal.RetentionLimitError` (also `errors.Is(err, ErrLimit)`),
-including counts and this recovery link, before discarding any evidence or
-publishing a partially validated state. Oversized v9 record collections also
-return that typed error. Dependency's existing bounded active projections remain
-unchanged. Legacy journals do not acquire the provenance record bound.
+### Retention decision and audit closure
 
-**BLOCKING before any writer is enabled:** implement reviewed pruning/compaction
-with audit export/reference closure, and have writers preflight the complete
-append below both caps so replay never encounters the limit. At three records
-per single-member successful attempt (inventory, tested, landed), 1,365 attempts
-consume 4,095 records; attempt **1,366** reaches 4,096 at its inventory and fails
-at its tested companion. Larger inventories, retries or the byte cap exhaust the
-budget sooner. There is no automatic compaction today.
+**Retain all original journal evidence, without a time window.** ADR 0008 10b's
+retain-all rule remains in force. Compaction affects only the derived provenance
+projection and v9 audit cursor; it never deletes or rewrites events or snapshots
+in the database. No migration, index or retention configuration is added.
 
-**BLOCKING writer-slice requirement — legacy-cursor prefix invariant:** a
-legacy-format cursor (v6/v7 snapshot in the unchanged legacy envelope) certifies
-that its journal prefix contains **no side-evidence kinds**. In the same
-transaction as the first side-evidence append for a queue, or before it, the
-writer MUST upgrade that queue's cursor to the composed v9 format. The upgrade
-must preserve its watermark, outside-move bookkeeping and complete folded state;
-it must coordinate with cursor compare-and-swap so a concurrent legacy audit
-cannot undo it. This obligation is separate from pruning/compaction and preflight.
+The projection retires a tested/landed companion pair after validating the landed
+companion. It releases that pair's inventories unless another unfinished tested
+attempt still needs them. A superseded inventory is released when no unfinished
+attempt pins it. Current and partial inventories and unfinished tested companions
+stay retained. Small generation/chunk-zero and completed-attempt fences survive
+compaction: stale CAS predecessors, duplicate generations and reused completed
+attempt IDs remain rejected across restart. The latest generation fence remains
+even after its inventory is retired. Further work after completed evidence must
+acquire a fresh generation with that exact predecessor, never reuse the retired
+inventory for authorization.
 
-Legacy cursors scan only the bounded suffix, with no prefix probe, upgrade
-rebuild or process-memory certificate. A side event encountered in the suffix
-switches the durable snapshot to v9; v9 resumes both side projections thereafter.
-The complete serialized cursor remains byte-identical to main for legacy-only
-queues, including its envelope. After side evidence exists, that queue crosses
-the format boundary and legacy byte identity no longer applies. No side-event
-writer or snapshot-table writer is enabled here. Rollback after emission still
-requires the verified pre-emission backup and external-effect reconciliation;
-an older binary rewriting a v9 cursor as legacy violates this invariant and is
-not a supported rollback path.
+This is projection retention, not audit retention. #181 closure follows the
+original IDs for every chunk sibling, previous generation, tested companion,
+decision and layer reference, transitively and across the selected date range.
+Those rows remain exportable after settlement, supersession, policy disablement
+and retirement. A missing required original still fails export. A compact cursor
+is never a replacement for source evidence or an external anchor.
 
-If this limit is encountered, stop new emission for the affected queue and keep
-its immutable journal and snapshots intact. Retain a verified whole-database
-backup. Deploy a compatible reader with a separately reviewed retention/export
-closure implementation (or a reviewed, resource-budgeted higher bound), then
-replay the retained journal and verify its results before resuming. Restarting,
-clearing a cache, deleting old events, or turning off policy cannot repair a full
-replay over this bound. Do not roll back to an older binary after emission;
-rollback past the boundary requires the verified pre-emission backup and
-reconciliation of subsequent external effects, as specified in ADRs 0010/0011.
+The active provenance budget remains **4096 records / 32 MiB**, now counting
+compact fence metadata within the byte budget as well as canonical payloads.
+There are at most **16 unfinished tested companions** and **256 per-companion
+distinct reference targets in total** per queue. The latter matches the exact-ID
+lookup cache scope and caps compact-v9 reloads at 256 reference queries. This bounds v9
+reference revalidation by active work rather than lifetime completed attempts;
+completed history requires no reference queries on reload. Inventories pinned by
+unfinished attempts are deliberately not evicted to admit more work. These are
+resource ceilings, not authorization or scheduling policy. Future writers must
+handle refused capacity without publishing effects or incomplete bundles. Compact
+fences also consume a finite budget; there is no promise of unlimited history in
+RAM. Original journal history remains unbounded by these projection limits.
+
+`AppendSide` reserves actual sequence IDs and builds a complete bundle under the
+queue advisory lock. It applies the exact composed replay validator, including
+references, namespace binding, chunk order, member agreement and retention, before
+**any** event INSERT. Each intermediate projection and final snapshot must fit;
+writer preflight stays strictly below the record and byte ceilings. A rejection
+leaves both journal and cursor unchanged. Reserved sequence gaps are harmless.
+The API accepts side evidence and landing-decision companions, not queue state
+transitions; future start/settlement integration must retain existing authority
+checks. Unverified dependency evidence stays quarantined, and a caller-supplied
+binding does not make currently unconfigured runtime readers accept dependency
+references in provenance layers.
+
+### Cursor prefix invariant and rollback
+
+A legacy v6/v7 cursor certifies a side-evidence-free prefix. `AppendSide` upgrades
+the cursor to **v9 in the same transaction as the first side append**, retaining
+its existing scanned watermark and outside-move bookkeeping. A missing cursor is
+created at watermark zero; no unaudited moves are skipped. The queue lock and
+existing observation-byte CAS prevent a stale audit from undoing the upgrade.
+Invalid existing cursors cause append refusal rather than guessed progress.
+
+Outside-push audits still read only the next **256 events per poll**. V9 resumes
+the bounded suffix and retained state, with exact-ID lookups only for unfinished
+companions. Tests cover a 268,000-row history, idle/restart and nonempty suffixes,
+and pin the reference query count at the unfinished-attempt ceiling. Legacy and
+no-side-evidence cursors retain their complete existing envelope/snapshot bytes,
+including #178's full cursor goldens.
+
+The original strict v9 shape remains readable. A distinct strict v9 shape with a
+`Compaction` checkpoint carries retired fences after projection compaction; it is
+not emitted for legacy-only queues. Every checkpoint field is required and
+validated. **The first side event or compact v9 cursor is a future binary rollback
+boundary.** Once writers are enabled, rollback requires a compatible reader, or
+stopped workers, retained post-backup evidence, restoration of the verified
+pre-emission backup, token rotation and reconciliation of remote refs/subsequent
+landings. Removing policy/configuration does not erase that boundary. An older
+binary rewriting a side-era cursor as legacy is unsupported.
+
+If a retention limit occurs during preflight, the complete bundle is refused;
+keep serving the already valid journal and stop that producer's new emission.
+If replay encounters an old over-budget history, stop emission and retain the
+journal, cursors, logs and verified backup. Use an isolated restored copy to
+validate a reviewed compatible retention/budget change before resuming. Restart,
+cache deletion, policy disablement and deletion/skipping of evidence are not
+recovery. `journal.RetentionLimitError` includes counts and this recovery link.
 
 Dependency projections decoded without independently verified database identity
 and incarnation are quarantined. They can be replayed for compatibility but the
@@ -2648,4 +2685,7 @@ The shared-reader AST writer guard is a **tripwire**, not proof of writer absenc
 It checks production Go imports/calls and individual raw string literals for new
 kind names; it does not catch string concatenation, `.sql` files or `_test.go`
 files. Only `journalreader/snapshot.go` may compose v8/v9 for derived audit
-cursors. Review every future persistence path independently.
+cursors. `store/side_append.go` is the sole allowlisted production adapter for encoding
+and inserting side events, and the guard rejects production references to its
+entry point (including function-value captures). Review every future persistence
+path independently.

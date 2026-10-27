@@ -1,5 +1,6 @@
 // Package journalreader composes the strict queue, dependency and provenance
-// readers. It cannot append events; only derived audit cursors encode side state.
+// readers. The store owns the unwired transactional append adapter; this package
+// validates supplied records and encodes only derived audit cursor state.
 package journalreader
 
 import (
@@ -115,12 +116,19 @@ func (r *Reader) Apply(id uint64, raw []byte) (_ Event, applyErr error) {
 		}
 		next.dependencies, err = dependency.Apply(r.dependencies, id, e.Dependency)
 	case e.Provenance != nil:
-		if l, ok := e.Provenance.(pj.Landing); ok {
-			err = r.validateLanding(id, l)
+		// Refuse over-budget candidates before external reference lookups, while
+		// preserving the composed reader's reference errors for other failures.
+		next.Provenance, err = pj.Apply(r.Provenance, id, e.Provenance)
+		foldErr := err
+		if !errors.Is(foldErr, pj.ErrLimit) {
+			if l, ok := e.Provenance.(pj.Landing); ok {
+				err = r.validateLanding(id, l)
+			}
+			if err == nil {
+				err = foldErr
+			}
 		}
-		if err == nil {
-			next.Provenance, err = pj.Apply(r.Provenance, id, e.Provenance)
-		}
+
 	}
 	if err != nil {
 		return Event{}, err
@@ -244,4 +252,13 @@ func decisionMatches(d queue.LandingDecisionRecorded, l pj.Landing, req p.Invent
 		return string(d.Remedy.ChangeID) == req.ChangeID && strconv.FormatUint(uint64(d.Remedy.Revision), 10) == req.Revision && d.Remedy.Head == req.Head
 	}
 	return false
+}
+
+// WithLookup replaces the immutable lookup with a transaction-local candidate overlay.
+func (r *Reader) WithLookup(lookup Lookup) { r.lookup = lookup }
+
+// VerifyDependencyBinding checks a writer-supplied independent identity without
+// changing the reader's trust configuration or exposing satisfaction.
+func (r Reader) VerifyDependencyBinding(binding dependency.JournalInitialized) error {
+	return r.dependencies.VerifyBinding(binding)
 }

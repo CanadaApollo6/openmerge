@@ -22,13 +22,18 @@ type group struct {
 }
 
 // State is an immutable retained-evidence fold, not a queue authorization API.
-// It keeps bounded records so later audit selection can follow exact references.
+// It keeps bounded active records; audit selection uses immutable journal rows.
 type State struct {
-	records  []Record
-	groups   map[string]group
-	latest   map[string]string
-	landings map[string]Landing
-	bytes    int
+	records    []Record
+	groups     map[string]group
+	latest     map[string]string
+	landings   map[string]Landing
+	bytes      int
+	lastID     uint64
+	retired    map[string]uint64 // generation key -> original chunk zero
+	settled    map[string]uint64 // attempt -> landed companion ID
+	landingIDs map[string]uint64
+	fenceBytes int
 }
 
 func changeKey(r p.InventoryRequest) string {
@@ -40,8 +45,8 @@ func generationKey(r p.InventoryRequest) string {
 func stringJSON(v any) string     { b, _ := json.Marshal(v); return string(b) }
 func attemptKey(e Landing) string { return stringJSON([]string{e.AttemptID, e.Stage}) }
 
-// Records returns detached records, suitable for an explicit future snapshot
-// cursor encoder. Side-event and snapshot-table writers remain unwired.
+// Records returns detached active records. It is not an audit-export source;
+// settled and superseded original evidence remains in the immutable journal.
 func (s State) Records() []Record {
 	out := make([]Record, len(s.records))
 	for i, r := range s.records {
@@ -74,11 +79,8 @@ func Apply(s State, id uint64, e Event) (State, error) {
 	if err != nil {
 		return s, err
 	}
-	if id == 0 || len(s.records) > 0 && id <= s.records[len(s.records)-1].ID {
+	if id == 0 || id <= s.lastID {
 		return s, ErrBinding
-	}
-	if len(s.records) >= maxRecords || s.bytes+len(raw) > maxSnapshotBytes/2 {
-		return s, RetentionLimitError{Records: len(s.records) + 1, Bytes: s.bytes + len(raw)}
 	}
 	// Detach all caller-owned slices, including nested gate inputs and mappings.
 	e, err = DecodeEvent(raw)
@@ -86,6 +88,18 @@ func Apply(s State, id uint64, e Event) (State, error) {
 		return s, err
 	}
 	next := s
+	next.retired = maps.Clone(s.retired)
+	if next.retired == nil {
+		next.retired = map[string]uint64{}
+	}
+	next.landingIDs = maps.Clone(s.landingIDs)
+	if next.landingIDs == nil {
+		next.landingIDs = map[string]uint64{}
+	}
+	next.settled = maps.Clone(s.settled)
+	if next.settled == nil {
+		next.settled = map[string]uint64{}
+	}
 	next.records = slices.Clone(s.records)
 	next.groups = maps.Clone(s.groups)
 	if next.groups == nil {
@@ -102,12 +116,15 @@ func Apply(s State, id uint64, e Event) (State, error) {
 	switch v := e.(type) {
 	case Observation:
 		key, ck := generationKey(v.Request), changeKey(v.Request)
+		if _, retired := s.retired[key]; retired {
+			return s, ErrBinding
+		}
 		g, exists := s.groups[key]
 		if !exists {
 			if v.Index != 0 {
 				return s, ErrIncomplete
 			}
-			var prior uint64
+			prior := s.retired[s.latest[ck]]
 			if old, ok := s.groups[s.latest[ck]]; ok {
 				prior = old.ids[0]
 			}
@@ -138,6 +155,12 @@ func Apply(s State, id uint64, e Event) (State, error) {
 		}
 		next.groups[key] = g
 	case Landing:
+		if count := ReferenceCount(v); count > MaxRetainedReferences {
+			return s, RetentionLimitError{Records: len(s.records) + 1, Bytes: s.bytes + len(raw), References: count}
+		}
+		if _, settled := s.settled[v.AttemptID]; settled {
+			return s, ErrBinding
+		}
 		if v.DecisionID >= id {
 			return s, ErrBinding
 		}
@@ -158,6 +181,9 @@ func Apply(s State, id uint64, e Event) (State, error) {
 		}
 		for _, m := range v.Members {
 			key := generationKey(m.Request)
+			if _, retired := s.retired[key]; retired {
+				return s, ErrBinding
+			}
 			g, exists := s.groups[key]
 			if !exists || s.latest[changeKey(m.Request)] != key || !same(g.header.Request, m.Request) || !g.header.Complete || len(g.ids) != g.header.Chunks {
 				return s, ErrIncomplete
@@ -194,9 +220,15 @@ func Apply(s State, id uint64, e Event) (State, error) {
 			}
 		}
 		next.landings[attemptKey(v)] = v
+		next.landingIDs[attemptKey(v)] = id
 	}
 	next.records = append(next.records, Record{id, raw})
 	next.bytes += len(raw)
+	next.lastID = id
+	next = compact(next)
+	if err := next.capacity(false); err != nil {
+		return s, err
+	}
 	return next, nil
 }
 

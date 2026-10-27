@@ -425,32 +425,33 @@ future startup/writer integration must supply independently verified identity.
 
 ## Shared-reader writer blockers
 
-**BLOCKING before any writer is enabled:** implement reviewed pruning/compaction
-with provenance audit export/reference closure. Writers must preflight complete
-appends below both caps so replay never hits the cap. The provenance cap is 4096
-records/32 MiB: at three records per single-member attempt, 1,365 attempts use
-4,095 records and attempt **1,366** fails at its tested companion. Larger
-inventories/retries or the byte cap can fail sooner; compaction is not automatic.
+The **Hold writer foundations** provide the unwired `Store.AppendSide` API.
+It validates an entire bundle through the composed replay fold under the queue
+lock before any INSERT, preflights capacity, and upgrades the existing audit
+cursor to v9 in that same transaction. No production caller is enabled. The
+writer guard allowlists only this adapter and forbids production callers.
 
-**BLOCKING writer-slice requirement — legacy-cursor prefix invariant:** a
-legacy-format cursor (v6/v7 snapshot in the unchanged legacy envelope) certifies
-that its journal prefix contains **no side-evidence kinds**. In the same
-transaction as the first side-evidence append for a queue, or before it, the
-writer MUST upgrade that queue's cursor to the composed v9 format. The upgrade
-must preserve its watermark, outside-move bookkeeping and complete folded state;
-it must coordinate with cursor compare-and-swap so a concurrent legacy audit
-cannot undo it. This obligation is separate from pruning/compaction and preflight.
+Projection compaction retires completed tested/landed evidence pairs and unpinned
+superseded inventories, preserving exact generation/CAS and attempt fences.
+Original journal evidence is retained forever for ADR 0008/0010 audit closure;
+settled and superseded generations remain exportable by original ID. A fresh
+generation is required before further use of a retired inventory. The active
+budget is 4096 records / 32 MiB (including compact metadata), with at most 16
+unfinished tested companions and 256 reference targets in total (counted per
+companion, matching lookup caching). Writer preflight stays below the record/byte caps;
+capacity refusal must never publish effects or partial bundles. Dependency holds
+are not pruned. See the complete [retention decision, cursor invariant and
+recovery procedure](../../docs/operating.md#shared-reader-retention-recovery).
 
-Legacy cursors scan only the bounded suffix, with no prefix probe, upgrade
-rebuild or process-memory certificate. A side event encountered in the suffix
-switches the durable snapshot to v9; v9 resumes both side projections thereafter.
-The complete serialized cursor remains byte-identical to main for legacy-only
-queues, including its envelope. After side evidence exists, that queue crosses
-the format boundary and legacy byte identity no longer applies. No side-event
-writer or snapshot-table writer is enabled here. Rollback after emission still
-requires the verified pre-emission backup and external-effect reconciliation;
-an older binary rewriting a v9 cursor as legacy violates this invariant and is
-not a supported rollback path.
+V9 loads revalidate only retained unfinished companion references. Audits retain
+the 256-row suffix bound, including after large completed histories. The original
+v9 shape remains readable, while a strict `Compaction` checkpoint shape persists
+retired fences. Legacy-only journals retain their exact full cursor bytes.
+The first future side append/compact cursor crosses the rollback boundary:
+deploy compatible readers and audit v2 everywhere first, drain incompatible
+workers/readers, verify the pre-emission backup, and reconcile external effects
+before any restore. No writer may activate until ADR 0009 period B drains and
+its later authority/startup/owner rollout gates are satisfied.
 
 Invalid records or unresolved references abort queue `Load` and fail `/status`
 and `Journals` for every queue in the requested key set. Events are immutable;

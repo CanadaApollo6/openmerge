@@ -251,15 +251,25 @@ func TestRetainedRecordCap(t *testing.T) {
 	h.Stable, h.Additional, h.Commits = []string{}, []string{}, []p.Commit{}
 	var s State
 	for i := 1; i <= maxRecords; i++ {
-		h.PreviousObservationID = uint64(i - 1)
+		h.Request.ChangeID = fmt.Sprint(i)
+		h.PreviousObservationID = 0
 		h.Request.Generation = fmt.Sprint(i)
 		h.Digest = InventoryDigest(h, h.Commits)
 		s = apply(t, s, uint64(i), h)
+		if i == maxRecords-1 {
+			if err := s.Preflight(); err != nil {
+				t.Fatal("preflight refused headroom", err)
+			}
+		}
+	}
+	if err := s.Preflight(); !errors.Is(err, ErrLimit) {
+		t.Fatal("writer preflight must stay below cap", err)
 	}
 	if len(s.Records()) != 4096 {
 		t.Fatal("lost retained records")
 	}
-	h.PreviousObservationID = maxRecords
+	h.Request.ChangeID = "overflow"
+	h.PreviousObservationID = 0
 	h.Request.Generation = "overflow"
 	h.Digest = InventoryDigest(h, h.Commits)
 	rejectUnchanged(t, s, maxRecords+1, h, ErrLimit)
