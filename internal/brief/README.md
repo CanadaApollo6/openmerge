@@ -148,3 +148,15 @@ evidence. `Presentation` retains stance provenance, Q4 clearing barriers,
 saturation, structured test links and journal progress, all outside Canonical.
 See [API and CLI](../../docs/api.md#recorded-change-briefs-stage-a-7b) for
 missing-evidence semantics and the scoped read route.
+
+
+## ADR 0010 slice 4a (Hold)
+
+An internal no-writer evaluation seam may supply `Fact.DeclarationDigest`, binding
+complete head-derived declarations and potential additive requirement definitions.
+Only these opted-in facts use `openmerge/brief/provenance-v1`; the declaration
+hash is appended to the canonical fields. Review applicability/satisfaction and
+checkpoint movement never enter that binding. Empty declaration digests retain
+all existing Fact JSON and v2 canonical bytes. The public loader, live receipt
+producer and status endpoints cannot activate this seam. See the
+[4a proof map](../../docs/research/adr-0010-4a-evidence.md).
