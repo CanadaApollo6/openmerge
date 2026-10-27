@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -38,11 +39,7 @@ func provenanceGit(t *testing.T, dir, input string, args ...string) string {
 
 func provenanceGitFixture(t *testing.T) (string, string, string, string, []string) {
 	t.Helper()
-	scratch, err := os.MkdirTemp("/home/riels/.cache/adr0010-slice4a", "serve-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(scratch) })
+	scratch := t.TempDir()
 	dir := filepath.Join(scratch, "objects.git")
 	provenanceGit(t, dir, "", "init", "--bare", "--template=", dir)
 	tree := provenanceGit(t, dir, "", "hash-object", "-w", "-t", "tree", "--stdin")
@@ -207,10 +204,133 @@ func TestProvenancePublicLoaderAndNestedBypassRejected(t *testing.T) {
 	}
 }
 
+// provenanceSeamViolations checks production syntax across the repository. Only
+// the dormant seam may construct a pass/policy or import its evaluator.
+func provenanceSeamViolations(path string, file *ast.File) []string {
+	const prefix = "github.com/CanadaApollo6/openmerge/internal/"
+	seam := path == "internal/serve/provenance.go"
+	var violations []string
+	var constructorBody *ast.BlockStmt
+	if seam {
+		for _, decl := range file.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "newProvenancePass" {
+				constructorBody = fn.Body
+			}
+		}
+	}
+	inConstructor := func(n ast.Node) bool {
+		return constructorBody != nil && n.Pos() >= constructorBody.Pos() && n.End() <= constructorBody.End()
+	}
+	policyAliases := map[string]bool{}
+	var policyDeclaration *ast.Ident
+	if strings.HasPrefix(path, "internal/provenance/") && file.Name.Name == "provenance" {
+		policyAliases["."] = true
+		for _, decl := range file.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "NewPolicy" {
+				policyDeclaration = fn.Name
+			}
+		}
+	}
+	for _, imp := range file.Imports {
+		importPath, err := strconv.Unquote(imp.Path.Value)
+		if err != nil {
+			violations = append(violations, "invalid import path")
+			continue
+		}
+		if importPath == prefix+"provenanceeval" && !seam {
+			violations = append(violations, "runtime imported provenance evaluator")
+		}
+		if importPath == prefix+"provenance" {
+			name := "provenance"
+			if imp.Name != nil {
+				name = imp.Name.Name
+			}
+			policyAliases[name] = true
+		}
+		if seam || strings.HasPrefix(path, "internal/provenanceeval/") {
+			if importPath == prefix+"store" || importPath == prefix+"journalreader" || strings.HasPrefix(importPath, prefix+"provenance/journal") {
+				violations = append(violations, "writer dependency: "+importPath)
+			}
+		}
+	}
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.CallExpr:
+			switch fn := n.Fun.(type) {
+			case *ast.Ident:
+				if fn.Name == "newProvenancePass" {
+					violations = append(violations, "runtime installed provenance")
+				}
+			case *ast.SelectorExpr:
+				if fn.Sel.Name == "newProvenancePass" {
+					violations = append(violations, "runtime installed provenance")
+				}
+			}
+		case *ast.CompositeLit:
+			if inConstructor(n) {
+				return true
+			}
+			switch typ := n.Type.(type) {
+			case *ast.Ident:
+				if typ.Name == "provenancePass" {
+					violations = append(violations, "runtime constructed provenance pass")
+				}
+			case *ast.SelectorExpr:
+				if typ.Sel.Name == "provenancePass" {
+					violations = append(violations, "runtime constructed provenance pass")
+				}
+			}
+		case *ast.SelectorExpr:
+			if pkg, ok := n.X.(*ast.Ident); ok && !inConstructor(n) && policyAliases[pkg.Name] && n.Sel.Name == "NewPolicy" {
+				violations = append(violations, "runtime used provenance.NewPolicy")
+			}
+		case *ast.Ident:
+			if !inConstructor(n) && policyAliases["."] && n.Name == "NewPolicy" && n != policyDeclaration {
+				violations = append(violations, "runtime used provenance.NewPolicy")
+			}
+		}
+		return true
+	})
+	return violations
+}
+
+func TestProvenanceSeamTripwire(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, source string
+		want               string
+	}{
+		{"constructor", "internal/serve/worker.go", `package serve; func f() { newProvenancePass() }`, "runtime installed provenance"},
+		{"constructor in seam", "internal/serve/provenance.go", `package serve; func activate() { newProvenancePass() }`, "runtime installed provenance"},
+		{"literal", "internal/serve/worker.go", `package serve; var pass = provenancePass{}`, "runtime constructed provenance pass"},
+		{"literal outside constructor in seam", "internal/serve/provenance.go", `package serve; var pass = provenancePass{}`, "runtime constructed provenance pass"},
+		{"policy outside constructor in seam", "internal/serve/provenance.go", `package serve; import p "github.com/CanadaApollo6/openmerge/internal/provenance"; var construct = p.NewPolicy`, "runtime used provenance.NewPolicy"},
+		{"pointer literal", "internal/serve/worker.go", `package serve; var pass = &provenancePass{}`, "runtime constructed provenance pass"},
+		{"importer outside internal", "cmd/openmerge/main.go", `package main; import _ "github.com/CanadaApollo6/openmerge/internal/provenanceeval"`, "runtime imported provenance evaluator"},
+		{"policy constructor", "internal/serve/worker.go", `package serve; import "github.com/CanadaApollo6/openmerge/internal/provenance"; var policy = provenance.NewPolicy()`, "runtime used provenance.NewPolicy"},
+		{"aliased policy value", "internal/serve/worker.go", `package serve; import p "github.com/CanadaApollo6/openmerge/internal/provenance"; var construct = p.NewPolicy`, "runtime used provenance.NewPolicy"},
+		{"dot policy value", "internal/serve/worker.go", `package serve; import . "github.com/CanadaApollo6/openmerge/internal/provenance"; var construct = NewPolicy`, "runtime used provenance.NewPolicy"},
+		{"same-package policy value", "internal/provenance/activate.go", `package provenance; var construct = NewPolicy`, "runtime used provenance.NewPolicy"},
+		{"policy definition", "internal/provenance/policy.go", `package provenance; func NewPolicy() {}`, ""},
+		{"writer", "internal/provenanceeval/evaluate.go", `package provenanceeval; import "github.com/CanadaApollo6/openmerge/internal/store"`, "writer dependency"},
+		{"dormant seam", "internal/serve/provenance.go", `package serve; import p "github.com/CanadaApollo6/openmerge/internal/provenance"; import "github.com/CanadaApollo6/openmerge/internal/provenanceeval"; func newProvenancePass() { p.NewPolicy(); _ = &provenancePass{} }`, ""},
+		{"unrelated policy", "internal/config/config.go", `package config; import "example.test/other"; var construct = other.NewPolicy`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file, err := parser.ParseFile(token.NewFileSet(), tc.path, tc.source, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := provenanceSeamViolations(tc.path, file)
+			if tc.want == "" && len(got) != 0 || tc.want != "" && !strings.Contains(strings.Join(got, "\n"), tc.want) {
+				t.Fatalf("violations = %v, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestProvenanceSeamHasNoRuntimeCallerOrWriter(t *testing.T) {
-	// Compile the complete pass, but leave its installation to the atomic writer
-	// slice. A new production caller requires explicitly revisiting this proof.
-	err := filepath.WalkDir("..", func(path string, d os.DirEntry, err error) error {
+	root := filepath.Join("..", "..")
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -221,20 +341,12 @@ func TestProvenanceSeamHasNoRuntimeCallerOrWriter(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		ast.Inspect(file, func(n ast.Node) bool {
-			if call, ok := n.(*ast.CallExpr); ok {
-				if fn, ok := call.Fun.(*ast.Ident); ok && fn.Name == "newProvenancePass" {
-					t.Errorf("runtime installed provenance: %s", path)
-				}
-			}
-			return true
-		})
-		if path == "../serve/provenance.go" || strings.HasPrefix(path, "../provenanceeval/") {
-			for _, imp := range file.Imports {
-				if strings.Contains(imp.Path.Value, "/store") || strings.Contains(imp.Path.Value, "/journalreader") || strings.Contains(imp.Path.Value, "/provenance/journal") {
-					t.Errorf("writer dependency in %s: %s", path, imp.Path.Value)
-				}
-			}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		for _, violation := range provenanceSeamViolations(filepath.ToSlash(rel), file) {
+			t.Errorf("%s: %s", rel, violation)
 		}
 		return nil
 	})

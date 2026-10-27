@@ -245,6 +245,48 @@ func TestRecommendedHumanRuleAndBaselineVeto(t *testing.T) {
 	}
 }
 
+func TestProvenanceOnlyReviewerRequestChanges(t *testing.T) {
+	s, policy, fresh, opt, inv := fixture(t, []p.Rule{securityRule(t, false)})
+	bob := identity(3).ID
+	if !reflect.DeepEqual(fresh.Groups["security"].IDs, []string{bob}) {
+		t.Fatal("Bob must be in security")
+	}
+	for name, group := range fresh.Groups {
+		if name != "security" {
+			for _, id := range group.IDs {
+				if id == bob {
+					t.Fatalf("Bob unexpectedly belongs to %s", name)
+				}
+			}
+		}
+	}
+	before, err := Evaluate(s, policy, fresh, condition.All(), nil, opt, inv)
+	if err != nil || before.Layers.Result != cp.True || !before.Identity.Recorded() {
+		t.Fatal("approved control", before, err)
+	}
+	request, ok := queue.NativeStance(fresh.Basis, forge.NativeReview{ID: 100, CommitID: fresh.Basis.Head, Author: forge.UserIdentity{ID: 3, Login: "bob", Kind: forge.UserAccount}, State: forge.ReviewChangesRequested, Submitted: forge.NativeTime{Time: fresh.Basis.At.Add(time.Second), Source: forge.ReviewSubmissionTime}})
+	if !ok {
+		t.Fatal("invalid request-for-changes fixture")
+	}
+	s = queue.Apply(s, request)
+	got, err := Evaluate(s, policy, fresh, condition.All(), nil, opt, inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.BaselineApprovals.Allowed || len(got.BaselineApprovals.BlockingIDs) != 0 || got.Layers.Baseline != cp.True {
+		t.Fatal("provenance-only veto leaked into baseline", got)
+	}
+	if got.Layers.Rules[0].Trigger != cp.True || got.LocalApprovals[0].Allowed || !reflect.DeepEqual(got.LocalApprovals[0].BlockingIDs, []string{bob}) || got.Layers.Result != cp.False {
+		t.Fatal("provenance-only request for changes did not block local evaluation", got)
+	}
+	if got.Identity != before.Identity {
+		t.Fatal("request for changes churned receipt identity")
+	}
+	if err := brief.ValidateReceipt(before.Identity, got.Brief); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestInventoryFailuresAndBindings(t *testing.T) {
 	s, policy, fresh, opt, inv := fixture(t, []p.Rule{securityRule(t, false)})
 	for _, outcome := range []p.ReadOutcome{p.ReadPending, p.LimitExceeded, p.InvalidInput} {

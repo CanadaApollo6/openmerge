@@ -69,12 +69,13 @@ New opt-in canonical bytes and hashes live under
 | Separate baseline/trigger/local snapshots; both exact Alice/platform and Bob/security cases; pending membership, repeat evaluation and rule order | `provenanceeval.TestEligibilityAcceptance` |
 | No cross-rule pool leakage; conditions-only rule uses baseline; unresolved baseline remains unknown in local conditions | `provenanceeval.TestRuleLocalConditionsAndNoCrossRuleLeak` |
 | Recommended human rule, shared baseline reviewer, author/submitter/accountable exclusions, configured agents, single-writer block and independent baseline veto | `provenanceeval.TestRecommendedHumanRuleAndBaselineVeto` |
+| Provenance-only Bob/security request for changes blocks the local layer while baseline remains allowed with no blockers; receipt identity is unchanged | `provenanceeval.TestProvenanceOnlyReviewerRequestChanges` |
 | Mutable reviews and actual applicability do not churn receipts; declaration/potential definition edits do | `provenanceeval.TestDeclarationBoundReceiptIdentity` |
 | Mutable checkpoint refs do not churn receipts; per-change classification and speculative review wait | `serve.TestProvenanceNoNetworkPassAndCheckpointMovement` |
 | Git failure, NUL and source-limit per-member exclusion; unrelated member progresses; alternates fail closed | `serve.TestProvenancePerChangePreCIExclusion` |
 | Incomplete inventories cannot become Human or produce receipts; generation, head, revision, pinned base, parser/limits mismatches refuse | `provenanceeval.TestInventoryFailuresAndBindings` |
 | Nested OR/AND/NOT ordinary-policy bypass rejected; no public configuration enables requirements | `serve.TestProvenancePublicLoaderAndNestedBypassRejected`, existing `provenance.TestCandidateSchemaAgreementAndPublicRejection` |
-| Internal pass has no runtime caller or persistence dependency | `serve.TestProvenanceSeamHasNoRuntimeCallerOrWriter` (AST tripwire, plus source review) |
+| Internal pass has no runtime caller, composite-literal bypass, new evaluator importer, policy constructor use or persistence dependency | `serve.TestProvenanceSeamHasNoRuntimeCallerOrWriter` and `serve.TestProvenanceSeamTripwire` (repository-wide AST tripwire, including import aliases and constructor references) |
 | Effective digest includes every definition, ordinary expression, full queue policy, and classifier/parser/identity/limits input; resolver attributes remain unsupported | `provenance.TestNoNetworkPolicyValidationAndIdentity`, `serve.TestProvenanceQueuePolicyEditsInvalidateIdentity` |
 | Disabled evaluation is byte-identical | `provenanceeval.TestDisabledProvenanceBaselineBytes` |
 | Existing baseline decisions, status, briefs and receipts remain byte-identical | Existing `queue.TestLandingDecisionGolden`, `queue.TestReceiptWireFactGoldenAndRejectedBindings`, `queue.TestWireV1Golden`, `brief.TestCanonicalVectors`, `brief.TestV1VectorsPreserved`, `brief.TestViewGoldensAndJSONAgreement`, `status.TestChangeReportingGoldens`, `status.TestReviewerCheckLegacyGolden`, `changepolicy.TestLegacyDigestAndMixedRepository` |
@@ -87,11 +88,11 @@ production database are accessed.
 
 ## Mutation proofs
 
-Twelve one-at-a-time source mutations were applied, tested and restored. Every
-mutation produced an assertion failure in the indicated test (not a build error).
+Thirteen one-at-a-time source mutations were applied, tested and restored,
+including the round-1 provenance-only veto regression. Every mutation produced
+an assertion failure in the indicated test (not a build error).
 The unmodified positive control passed before the run. No mutation remains in the
-change. The local transcript/results are under
-`/home/riels/.cache/adr0010-slice4a/mutation-*.log` and `mutation-results.json`.
+change. Mutation transcripts and results are local validation artifacts.
 
 | Removed or broken guard | Detecting test |
 | --- | --- |
@@ -107,15 +108,20 @@ change. The local transcript/results are under
 | Inventory observation generation binding removed | `TestInventoryFailuresAndBindings` |
 | Ordinary expressions omitted from policy hash | `TestNoNetworkPolicyValidationAndIdentity` |
 | Full queue policy omitted from effective hash | `TestProvenanceQueuePolicyEditsInvalidateIdentity` |
+| Baseline evaluation substituted for the local security approval pool, dropping Bob's local request-for-changes veto | `TestProvenanceOnlyReviewerRequestChanges` |
 
 ## Validation
 
-All Go commands use the required serialization/resource wrapper:
+All Go commands use a serialized, resource-limited Go 1.27.3 toolchain with
+`GOFLAGS=-p=2` and `GOMEMLIMIT=4GiB`.
 
-```sh
-flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOROOT=/home/riels/.local/share/mise/installs/go/1.27.3 PATH=/home/riels/.local/share/mise/installs/go/1.27.3/bin:$PATH go <arguments>
-```
+Both `TEST_DATABASE_URL` and `OPENMERGE_TEST_DATABASE_URL` point to the supplied
+isolated local Postgres instance for integration and race tests. Validation logs
+are local artifacts; no checkout-specific absolute path is required by tests.
 
-Both `TEST_DATABASE_URL` and `OPENMERGE_TEST_DATABASE_URL` point to
-`postgres://postgres@localhost:54329/postgres?sslmode=disable` for integration
-and race tests. Validation logs are in `/home/riels/.cache/adr0010-slice4a/`.
+Round 1 validation passed: full
+`go test ./internal/provenanceeval ./internal/serve -count=1` (0.022s / 261.067s), focused `TestProvenance` tests after the final AST
+tripwire tightening (0.004s / 0.185s), `go vet ./...`, and `golangci-lint run`
+(0 issues). The local-pool mutation failed by assertion and its restored control
+passed. Changed Go files are gofmt-clean; `git diff --check` and the full PR-diff
+machine-specific path scan are clean. The serve Git fixture uses `t.TempDir()`.
