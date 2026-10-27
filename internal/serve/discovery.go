@@ -236,6 +236,7 @@ func (s *Server) discover(ctx context.Context) error {
 	for _, installation := range installations {
 		id, err := strconv.ParseInt(installation.ID, 10, 64)
 		if err != nil || id <= 0 || strconv.FormatInt(id, 10) != installation.ID {
+			s.markValidationAttempted("", "")
 			return errors.New("discovery returned a noncanonical installation ID")
 		}
 		present[installation.ID] = true
@@ -243,6 +244,7 @@ func (s *Server) discover(ctx context.Context) error {
 	if s.discovery.App != "" {
 		for _, installation := range installations {
 			if err := s.store.BindInstallation(ctx, installation.ID, s.discovery.App); err != nil {
+				s.markValidationAttempted(installation.ID, "")
 				return err
 			}
 		}
@@ -555,6 +557,7 @@ func (s *Server) discoverInstallation(ctx context.Context, installation Installa
 		return result
 	}
 	if installation.Repositories == nil {
+		s.markValidationAttempted(installation.ID, "")
 		result = errors.Join(result, errors.New("installation requires repository listing"))
 		return result
 	}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -85,7 +86,7 @@ func TestStartupReportingWithPolicyObservations(t *testing.T) {
 }
 
 func TestStartupDiscoveryFailuresPublishOnce(t *testing.T) {
-	for _, boundary := range []string{"installations", "repositories", "basis"} {
+	for _, boundary := range []string{"installations", "noncanonical installation", "installation binding", "repositories", "missing repository listing", "basis"} {
 		t.Run(boundary, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
 				s, d := newDiscoveryFixture(t)
@@ -115,8 +116,19 @@ func TestStartupDiscoveryFailuresPublishOnce(t *testing.T) {
 					switch boundary {
 					case "installations":
 						d.appErr = failure
+					case "noncanonical installation":
+						d.installations[0].ID = "07"
+					case "installation binding":
+						restarted.discovery.App = "42"
+						restarted.discovery.Installations = func(context.Context) ([]Installation, error) {
+							cancel()
+							return d.installations, nil
+						}
+						failure = context.Canceled
 					case "repositories":
 						d.listErr = failure
+					case "missing repository listing":
+						d.installations[0].Repositories = nil
 					case "basis":
 						// Cancel only after the complete repository listing so the
 						// stored access-basis read fails, before refreshRepository.
@@ -128,8 +140,19 @@ func TestStartupDiscoveryFailuresPublishOnce(t *testing.T) {
 					}
 					err := restarted.Refresh(ctx)
 					cancel()
-					if !errors.Is(err, failure) {
-						t.Fatalf("refresh did not reach %s failure: %v", boundary, err)
+					switch boundary {
+					case "noncanonical installation":
+						if err == nil || !strings.Contains(err.Error(), "noncanonical installation ID") {
+							t.Fatalf("refresh did not reject installation ID: %v", err)
+						}
+					case "missing repository listing":
+						if err == nil || !strings.Contains(err.Error(), "installation requires repository listing") {
+							t.Fatalf("refresh did not reject missing listing: %v", err)
+						}
+					default:
+						if !errors.Is(err, failure) {
+							t.Fatalf("refresh did not reach %s failure: %v", boundary, err)
+						}
 					}
 					must(t, restarted.cycle(t.Context(), w))
 					check := d.f.Statuses(repo, 1)[pr.HeadSHA]
@@ -138,6 +161,115 @@ func TestStartupDiscoveryFailuresPublishOnce(t *testing.T) {
 					}
 					if strings.Contains(check.Summary, "window:") || strings.Contains(check.Summary, "batch size:") {
 						t.Fatalf("failed discovery advertised unvalidated policy: %+v", check)
+					}
+				}
+			})
+		})
+	}
+}
+
+// The second scope is still awaiting discovery, so a failure in the first
+// must not end its silent startup window.
+func TestStartupDiscoveryFailureScope(t *testing.T) {
+	for _, boundary := range []string{"repositories", "basis", "installation binding", "missing repository listing"} {
+		t.Run(boundary, func(t *testing.T) {
+			testSynctest(t, func(t *testing.T) {
+				s, d := newDiscoveryFixture(t)
+				other := forge.RepoRef{Path: "owner/other"}
+				d.f.Init(other, "main", "openmerge/fence/main")
+				_, err := d.f.PushBase(other, "main", "configured", map[string]string{".openmerge.yml": repositoryConfig})
+				must(t, err)
+				second := managedRepository(d.f, other.Path)
+				if boundary != "basis" {
+					target := second.Target
+					second.Target = func(base string) Target {
+						t := target(base)
+						t.Key.Installation = "8"
+						return t
+					}
+					d.installations = append(d.installations, Installation{ID: "8", Repositories: func(context.Context) ([]Repository, error) {
+						return []Repository{second}, nil
+					}})
+				} else {
+					d.repos = append(d.repos, second)
+				}
+				must(t, s.Refresh(t.Context()))
+				if len(s.workers()) != 2 {
+					t.Fatalf("want two workers, got %d", len(s.workers()))
+				}
+				heads := make(map[string]string)
+				for _, w := range s.workers() {
+					ref := forge.RepoRef{Path: w.Key.Repository}
+					head, err := d.f.ReadRef(t.Context(), ref, "main")
+					must(t, err)
+					pr, err := d.f.OpenPR(ref, 1, head, true)
+					must(t, err)
+					heads[ref.Path] = pr.HeadSHA
+					d.f.SetCanWrite(ref, "writer", true)
+					d.f.AddComment(ref, 1, "writer", "@openmerge queue")
+					must(t, s.cycle(t.Context(), w))
+					if check := d.f.Statuses(ref, 1)[pr.HeadSHA]; check.State != forge.Testing {
+						t.Fatalf("fixture did not publish testing for %s: %+v", ref.Path, check)
+					}
+				}
+				before := d.f.Statuses(other, 1)[heads[other.Path]]
+				restarted, err := NewDiscovery(t.Context(), s.store, d.source(), s.options)
+				must(t, err)
+				writes := make(map[string]*instructionDriver)
+				for _, w := range restarted.workers() {
+					must(t, restarted.resolveTarget(t.Context(), w))
+					writes[w.Key.Repository] = &instructionDriver{Driver: w.Driver}
+					w.Driver = writes[w.Key.Repository]
+					must(t, restarted.cycle(t.Context(), w))
+					if writes[w.Key.Repository].writes != 0 {
+						t.Fatalf("startup wrote before discovery for %s", w.Key.Repository)
+					}
+				}
+				for range 3 {
+					ctx, cancel := context.WithCancel(t.Context())
+					failure := errors.New("listing unavailable")
+					// Installation B has not made its first attempt yet.
+					restarted.discoveryBackoffs["8"] = time.Now().Add(time.Hour)
+					switch boundary {
+					case "repositories":
+						d.listErr = failure
+					case "installation binding":
+						restarted.discovery.App = "42"
+						restarted.discovery.Installations = func(context.Context) ([]Installation, error) {
+							cancel()
+							return d.installations, nil
+						}
+						failure = context.Canceled
+					case "missing repository listing":
+						d.installations[0].Repositories = nil
+					case "basis":
+						// B's descriptor is incomplete, so its validation has not
+						// started. Keep both repositories in the complete listing.
+						d.repos[1].Target = nil
+						d.installations[0].Repositories = func(context.Context) ([]Repository, error) {
+							cancel()
+							return d.repos, nil
+						}
+						failure = context.Canceled
+					}
+					err := restarted.Refresh(ctx)
+					cancel()
+					if boundary == "missing repository listing" {
+						if err == nil || !strings.Contains(err.Error(), "installation requires repository listing") {
+							t.Fatalf("refresh did not reject missing listing: %v", err)
+						}
+					} else if !errors.Is(err, failure) {
+						t.Fatalf("refresh did not reach %s failure: %v", boundary, err)
+					}
+					for _, w := range restarted.workers() {
+						must(t, restarted.cycle(t.Context(), w))
+					}
+					check := d.f.Statuses(repo, 1)[heads[repo.Path]]
+					if writes[repo.Path].writes != 1 || check.State != forge.Paused || check.Reason != "validation-pending" {
+						t.Fatalf("affected scope did not publish once: writes=%d check=%+v", writes[repo.Path].writes, check)
+					}
+					if writes[other.Path].writes != 0 || d.f.Statuses(other, 1)[heads[other.Path]] != before {
+						t.Fatalf("%s failure ended suppression for unrelated worker: writes=%d", boundary, writes[other.Path].writes)
 					}
 				}
 			})
