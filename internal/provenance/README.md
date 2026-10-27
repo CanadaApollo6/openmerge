@@ -395,3 +395,136 @@ Real-Git proof lives in `provenance_inventory_test.go`,
 The promoted parser retains the full commit-reader differential corpus and
 hostile configuration tests in `provenance_trailers_test.go`. Tests intentionally
 compare the deployed Git binary's own commit reader where 2.55 and 2.56 differ.
+
+## Slice 3a event contracts and snapshot decoder (Inert)
+
+`internal/provenance/journal` is a separate, unwired package. Its import guard
+rejects every production importer, including gitops; slices 1–2 retain their
+existing local reader. There are no append calls, SQL changes, production
+snapshot writes, or live replay changes. New events use an independent wire-v1
+envelope, not additional fields in any existing queue event:
+
+- `change_provenance_observed` retains a bounded source-inventory chunk. Its
+  request binds repository, queue, change ID, revision, pinned head/base, actual
+  build base, excluded synthetic/other-member originals, and generation. It
+  retains stable and additional originals, merge bases for both traversals,
+  normalized per-commit declarations and outcomes, effective limits, completeness,
+  and a typed diagnostic. The parser evidence includes the actual Git version,
+  fixed invocation/isolation and parser/classifier versions, plus their verified
+  `ParserPolicy.Identity()`. Governing policy evidence records the default-branch
+  ref/commit and effective policy digest; the later evaluator must compute that
+  digest including parser identity, identity rules, sources and requirements.
+- `landing_provenance_recorded` is companion evidence for an attempt, batch,
+  stage and existing decision position. Every member references *all* of its
+  exact observation positions, its generation and inventory/declaration digests,
+  its trusted original-to-build mapping, and its independent baseline, trigger
+  and rule-local gate inputs, eligibility pools, evidence references and truth
+  values. Only `true` passes; pending triggers cannot skip an unsatisfied
+  obligation. Tested T and landed L retain distinct composition IDs/stages.
+  Replay validates references and result combination; it does not re-evaluate
+  expressions, acquire Git objects, authenticate supplied eligibility, or perform
+  graph verification. Those are the trusted slice-2/4a producers' responsibilities.
+
+All fields, including false/zero/empty collections, are required. Collections
+encode as `[]`, not null. Unknown/missing fields, case aliases, duplicate keys,
+invalid UTF-8, trailing JSON, unsupported versions and oversized payloads fail
+closed. Existing slice-1/2 structs embedded in these *new* payloads retain their
+current field names; goldens freeze those shapes too. Future schema changes
+require another new kind/version, not fields in an existing event.
+
+### Chunking, bindings and digests
+
+An inventory has 1–1024 chunks, each with at most 128 commits and a 1 MiB encoded
+event bound. The effective source-commit/declaration limits may lower ceilings.
+Commit IDs, declaration sets, partitions, exclusions, mappings, typed input
+names/list values and eligibility IDs use sorted unique order. All header fields
+other than index and commit contents must match across chunks. Indices start at
+zero, arrive in order per generation, and cannot repeat. Partial generations may
+survive snapshots but never supply complete evidence. The last chunk verifies
+the full digest, disjoint stable/additional partitions and exclusion of synthetic
+markers/other members. Complete empty inventories are explicitly representable.
+
+`PreviousObservationID` compares against the previous generation's first chunk
+position for that repository/queue/change, including a prior incomplete read.
+A new revision or base rewrite needs a new generation. New generations immediately
+supersede the old one for landing; no stale success is reused while a refresh is
+pending. Historical records remain addressable for audit. A generation's full
+request must match each landing member; batch members cannot pool references.
+
+Evidence-record v1 hashes use SHA-256 of the UTF-8 domain prefix
+`openmerge-provenance-record-v1` followed by NUL and compact Go JSON, with fixed
+struct field order, HTML escaping and no trailing newline. `InventoryDigest`
+hashes `{header,commits}` after clearing the header's digest, index, chunk count
+and commit array. Thus physical chunking does not change record identity.
+`MemberDigest` hashes the member with its own record digest cleared; mutable
+condition/approval evidence and build mappings belong here. The separate
+`DeclarationDigest` is supplied by slice 1's complete inventory plus potentially
+applicable rule definitions, not recomputed from mutable gate evidence. Failed
+inventories carry no declaration digest. This preserves the distinction between
+receipt identity and refreshed evidence. MVP extraction outcomes retain
+`not_requested` checkpoint resolution; resolver observations require a later
+new event kind and are not fabricated by this decoder.
+
+The pure fold retains at most 4096 provenance records / 32 MiB of canonical
+event payloads, within a 64 MiB wrapper bound. It returns detached immutable
+values and leaves prior state unchanged on error. This is a bounded retained
+checkpoint contract, not an activated compaction strategy; future snapshot
+writers must design retention/export closure before deployment. The eventual
+writer must commit all chunks and member/decision/landing-start bindings
+atomically and reject stale generations under the transaction fence. There is
+no writer or transaction code in 3a.
+
+### Snapshot coordination: v9 wraps unchanged v8 or legacy bytes
+
+Dependency's ADR 0011 slice 2 already reserves **v8** as an explicit, unwired
+wrapper. Provenance reserves **v9**, with `Version`, `Base`, `LastID`, and
+`Records`. `Base` is exactly one unchanged queue snapshot (currently v6/v7), or
+the complete existing dependency-v8 wrapper. Sharing v8 would change an already
+introduced strict schema and require editing dependency. Distinct outer v9
+preserves that boundary and needs no changes to `internal/dependency`.
+
+`journal.DecodeSnapshot` is an **explicit, unwired decoder only**. It delegates
+base validation through a required pure `BaseDecoder`, returning the exact base
+bytes and the folded provenance state. Slice 3c can wire **one composed reader**:
+call this decoder with a closure over `dependency.DecodeSnapshot` and its
+independently verified journal identity. That existing decoder handles v8 and
+legacy queue bytes. Legacy/v8 input without provenance returns unchanged base
+bytes and empty provenance state. V9 accepts neither nested v9 nor unknown base
+versions. Dependency identity errors propagate; the wrapper grants no bypass.
+There is no `EncodeSnapshot` here; only test fixtures construct v9 bytes.
+
+Keeping the inner bytes unchanged preserves #163's `HeldRequests` and cached
+`PRObserved.PendingConditions`, as well as dependency state and existing legacy
+cursor encoding. Old queue and dependency decoders strictly refuse v9 and new
+provenance events. This does **not** make post-emission downgrade safe. Slice 3b
+must add audit-v2 closure first, then 3c installs the composed reader everywhere,
+drains old workers and takes a verified pre-emission backup before 4b writers.
+No reader/writer activation or v1 audit-format change occurs in 3a.
+
+### Slice 3a proof
+
+- `TestGoldenPayloadsAndStrictOldDecoderRefusal`: committed complete/chunked,
+  pending/terminal, tested/landed event goldens; strict old decoder refusal.
+- `TestInventoryAtSourceCeilingAndBoundedChunks`: a complete 1024-commit
+  inventory across bounded chunks and refusal above the per-chunk ceiling.
+- `TestCompleteChunkedInventoryAndGenerationBindings`,
+  `TestInventoryChunkFailuresAndOutcomes`,
+  `TestPendingCommitEvidenceAndRebuildFences`: assembly, completeness, empty inventory,
+  original partitions, exclusions, Git-policy identity and stale/reference fences.
+- `TestLandingLayersMembersAndTestedLandedBindings`: per-member isolation,
+  three-valued gate combinations and separate T/L composition identity.
+  `TestTypedGateInputsAndDeclarationDigestSeparation` pins string/bool/list
+  inputs, unknown values and mutable record versus declaration identity.
+- `TestStrictEventShape`, `TestStrictSnapshotShapeAndBindings`: every nested
+  field's required/unknown/null/case rules and corrupt version/reference refusal.
+- `TestSnapshotPlusTailEveryCutWithDependencyV8AndHeldRequests`: every cut,
+  including partial chunks, with dependency v8 and #163 held state retained.
+  `TestSnapshotPlusMixedQueueTail` also interleaves queue events and compares
+  planner output as held requests enter and leave the queue.
+- `TestLegacySnapshotBytesRemainUnchanged` and store's
+  `TestProvenanceLegacyHeldSnapshotAndCursorGolden`: unchanged deployed snapshot
+  and actual cursor bytes against the pre-existing dependency goldens. Store's
+  existing `TestDependencyLegacySnapshotAndCursorGolden` also pins every deployed
+  queue event/action wire fixture.
+- `TestNoProductionProvenanceJournalImports` and
+  `TestStateDoesNotAliasCallerEvidence`: inertness and immutable evidence.
