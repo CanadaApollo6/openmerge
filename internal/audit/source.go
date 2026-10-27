@@ -92,8 +92,10 @@ type sourceEvent struct {
 
 // Reader owns only a read-only pool. Opening it does not migrate or acquire locks.
 type Reader struct {
-	pool    *pgxpool.Pool
-	timeout time.Duration
+	// ScratchLimits must be set before use; zero selects bounded defaults.
+	ScratchLimits ScratchLimits
+	pool          *pgxpool.Pool
+	timeout       time.Duration
 }
 
 // Open constructs a pool without migrations, locks, or write queries.
@@ -131,6 +133,11 @@ func (r *Reader) snapshot(ctx context.Context, fn func(context.Context, pgx.Tx) 
 		return errSource
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	budget, err := newScratchBudget(r.ScratchLimits)
+	if err != nil {
+		return err
+	}
+	ctx = context.WithValue(ctx, scratchBudgetKey{}, budget)
 	ctx = context.WithValue(ctx, pinCursorKey{}, &pinCursor{})
 	if err = fn(ctx, tx); err != nil {
 		return err

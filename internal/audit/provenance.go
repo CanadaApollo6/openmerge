@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -88,8 +87,18 @@ func decodeProvenance(event sourceEvent) (pj.Event, error) {
 	if err != nil {
 		return nil, errSource
 	}
-	typ, _, err := pj.EncodeEvent(e)
-	if err != nil || typ != event.source.Type {
+	// DecodeEvent already validates the complete envelope and payload. Match its
+	// sealed decoded type to the journal column without invoking a writer codec.
+	switch e.(type) {
+	case pj.Observation:
+		if event.source.Type != "change_provenance_observed" {
+			return nil, errSource
+		}
+	case pj.Landing:
+		if event.source.Type != "landing_provenance_recorded" {
+			return nil, errSource
+		}
+	default:
 		return nil, errSource
 	}
 	return e, nil
@@ -102,17 +111,24 @@ func (r *evidenceResolver) provenance() error {
 	}
 	switch v := e.(type) {
 	case pj.Observation:
-		if v.Index == 0 {
-			prior, err := r.previousInventory(v.Request, r.event.source.ID)
-			if err != nil || prior != v.PreviousObservationID {
-				return errSource
-			}
+		prior, err := r.previousInventory(v.Request, r.event.source.ID)
+		if err != nil {
+			return err
+		}
+		if v.Index == 0 && prior != v.PreviousObservationID {
+			return errSource
 		}
 		// Retain all chunks, including cross-range siblings, and the previous
 		// generation fence. Exact Request equality includes head/base/exclusions.
 		for i := 0; i < v.Chunks; i++ {
-			if _, err := r.provenanceLookup(inventoryLookupIdentity(v, i), true); err != nil {
+			chunk, err := r.provenanceLookup(inventoryLookupIdentity(v, i), true)
+			if err != nil {
 				return err
+			}
+			// A later chunk must still belong to the active raw generation,
+			// even when an intervening chunk zero is outside the closure.
+			if i == 0 && v.Index != 0 && prior != uint64(chunk.source.ID) {
+				return errSource
 			}
 		}
 		if v.PreviousObservationID != 0 {
@@ -146,7 +162,10 @@ func (r *evidenceResolver) provenance() error {
 		matched := false
 		for _, m := range v.Members {
 			latest, err := r.previousInventory(m.Request, r.event.source.ID)
-			if err != nil || latest != m.ObservationIDs[0] {
+			if err != nil {
+				return err
+			}
+			if latest != m.ObservationIDs[0] {
 				return errSource
 			}
 			if m.Request.ChangeID == change && m.Request.Revision == fmt.Sprint(revision) && m.Request.Head == head {
@@ -226,7 +245,10 @@ func (r *evidenceResolver) provenanceID(id uint64, typ, relation string) (*sourc
 var ErrProvenanceVersion = errors.New("audit: provenance requires export version 2")
 
 type provenanceIndexKey struct{}
-type provenanceIndex struct{ dir string }
+type provenanceIndex struct {
+	dir    string
+	budget *scratchBudget
+}
 
 // Index raw immutable journal rows once per queue/snapshot, independently of any
 // retained side projection. Result rows and lookup files are individually bounded;
@@ -236,8 +258,8 @@ func (p provenanceIndex) queue(ctx context.Context, tx pgx.Tx, source Source, ma
 	if _, err := os.Stat(dir); err == nil {
 		return dir, nil
 	}
-	if os.Mkdir(dir, 0700) != nil {
-		return "", errOutput
+	if err := p.budget.mkdir(dir); err != nil {
+		return "", err
 	}
 	rows, err := tx.Query(ctx, provenanceIndexSQL, source.QueueID, maxID)
 	if err != nil {
@@ -263,6 +285,15 @@ func (p provenanceIndex) queue(ctx context.Context, tx pgx.Tx, source Source, ma
 			keys = []Identity{inventoryLookupIdentity(v, v.Index)}
 			if v.Index == 0 {
 				path := filepath.Join(dir, inventoryHistoryKey(v.Request))
+				var size int64
+				if info, err := os.Stat(path); err == nil {
+					size = info.Size()
+				} else if !os.IsNotExist(err) {
+					return "", errOutput
+				}
+				if err := p.budget.reserve(path, size+8); err != nil {
+					return "", err
+				}
 				f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
 				if err != nil {
 					return "", errOutput
@@ -281,14 +312,16 @@ func (p provenanceIndex) queue(ctx context.Context, tx pgx.Tx, source Source, ma
 			path := filepath.Join(dir, digest([]byte(key)))
 			if _, err := os.Stat(path); err == nil {
 				// A bounded duplicate marker; unrelated lookups still work.
-				if os.WriteFile(path, nil, 0600) != nil {
-					return "", errOutput
+				if err := p.budget.writeFile(path, nil); err != nil {
+					return "", err
 				}
 				continue
 			}
-			if err := spoolFile(path, func(out io.Writer) error {
-				return spoolWrite(out, spoolRecord{Source: event.source, Payload: event.payload})
-			}); err != nil {
+			raw, err := json.Marshal(spoolRecord{Source: event.source, Payload: event.payload})
+			if err != nil {
+				return "", errCanonical
+			}
+			if err := p.budget.writeFile(path, append(raw, '\n')); err != nil {
 				return "", err
 			}
 		}
@@ -349,7 +382,7 @@ func (r *evidenceResolver) provenanceLookup(key Identity, required bool) (*sourc
 // record exactly once; unrelated history is never folded. Temporary per-queue
 // fold state is disk-backed so the projection's 4096-record retention ceiling
 // cannot become an export lifetime or selection-size ceiling.
-func validateProvenanceClosure(path, dir string) error {
+func validateProvenanceClosure(path, dir string, budget *scratchBudget) error {
 	c, err := openSpool(path)
 	if err != nil {
 		return err
@@ -363,16 +396,19 @@ func validateProvenanceClosure(path, dir string) error {
 			if fold == nil || queueID != event.source.QueueID {
 				queueID = event.source.QueueID
 				storeDir := filepath.Join(dir, fmt.Sprintf("fold-%d", queueID))
-				if os.Mkdir(storeDir, 0700) != nil {
-					return errOutput
+				if err := budget.mkdir(storeDir); err != nil {
+					return err
 				}
-				fold = &pj.ClosureFold{Store: provenanceFoldStore{storeDir}}
+				fold = &pj.ClosureFold{Store: provenanceFoldStore{storeDir, budget}}
 			}
 			e, err := decodeProvenance(event)
 			if err != nil {
 				return err
 			}
 			if err := fold.Apply(uint64(event.source.ID), e); err != nil {
+				if errors.Is(err, ErrScratchLimit) {
+					return err
+				}
 				return errSource
 			}
 		}
@@ -383,7 +419,10 @@ func validateProvenanceClosure(path, dir string) error {
 	return nil
 }
 
-type provenanceFoldStore struct{ dir string }
+type provenanceFoldStore struct {
+	dir    string
+	budget *scratchBudget
+}
 
 func (s provenanceFoldStore) Get(key string) ([]byte, error) {
 	raw, err := os.ReadFile(filepath.Join(s.dir, digest([]byte(key))))
@@ -393,7 +432,7 @@ func (s provenanceFoldStore) Get(key string) ([]byte, error) {
 	return raw, err
 }
 func (s provenanceFoldStore) Put(key string, raw []byte) error {
-	return os.WriteFile(filepath.Join(s.dir, digest([]byte(key))), raw, 0600)
+	return s.budget.writeFile(filepath.Join(s.dir, digest([]byte(key))), raw)
 }
 
 // Preserve raw-journal generation fences even when an intervening observation

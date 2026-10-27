@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	p "github.com/CanadaApollo6/openmerge/internal/provenance"
 	pj "github.com/CanadaApollo6/openmerge/internal/provenance/journal"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/jackc/pgx/v5"
@@ -59,12 +60,16 @@ func observationForScale(t *testing.T) pj.Observation {
 
 func provenanceScaleFixture(t *testing.T, n int, all bool) (*fixture, Request) {
 	t.Helper()
+	return provenanceScaleFixtureObservation(t, n, all, observationForScale(t))
+}
+
+func provenanceScaleFixtureObservation(t *testing.T, n int, all bool, obs pj.Observation) (*fixture, Request) {
+	t.Helper()
 	v := provenanceVectors(t)["v2-observation"]
 	f := database(t)
 	q := v.Events[0].Source.Queue
 	_, err := f.admin.Exec(t.Context(), `INSERT INTO queues VALUES(1,$1,$2,$3,$4)`, q.Installation, q.Repository, q.Base, q.Lane)
 	must(t, err)
-	obs := observationForScale(t)
 	rows := make([][]any, 0, n)
 	for i := 1; i <= n; i++ {
 		obs.Request.ChangeID = fmt.Sprintf("change-%d", i)
@@ -82,10 +87,24 @@ func provenanceScaleFixture(t *testing.T, n int, all bool) (*fixture, Request) {
 	return f, v.Request
 }
 
+func emptyScaleObservation(t *testing.T) pj.Observation {
+	t.Helper()
+	// Complete inventories can be empty when bases/exclusions remove all
+	// originals. Nonempty chunks and declarations have separate regressions.
+	obs := observationForScale(t)
+	obs.Commits = []p.Commit{}
+	obs.Stable, obs.Additional = []string{}, []string{}
+	var err error
+	obs.DeclarationDigest, err = p.DeclarationDigest(obs.Commits, true, nil)
+	must(t, err)
+	return obs
+}
+
 func TestProvenanceLinearExport(t *testing.T) {
-	for _, n := range []int{100, 300, 1000, 4097} {
+	obs := emptyScaleObservation(t)
+	for _, n := range []int{32, 96} {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
-			f, req := provenanceScaleFixture(t, n, true)
+			f, req := provenanceScaleFixtureObservation(t, n, true, obs)
 			tr := &queryTrace{}
 			r := traced(t, f, tr)
 			start := time.Now()

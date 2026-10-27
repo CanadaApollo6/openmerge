@@ -34,6 +34,8 @@ func TestAuditUsageAndSanitization(t *testing.T) {
 		{append(append([]string{}, good...), "--version", "3"), 2},
 		{[]string{"audit", "export", "--manifest", "a", "--out", "b", "--version", "2"}, 2},
 		{append(append([]string{}, good...), "--timeout", "0s"), 2},
+		{append(append([]string{}, good...), "--scratch-max-bytes", "0"), 2},
+		{append(append([]string{}, good...), "--scratch-max-files", "-1"), 2},
 		{append(append([]string{}, good...), "--until", "10000-01-01T00:00:00Z"), 2},
 		{append(append([]string{}, good...), "stray"), 2},
 	} {
@@ -77,6 +79,10 @@ func TestAuditUsageAndSanitization(t *testing.T) {
 	auditFailure(&err, audit.ErrProvenanceVersion)
 	if !strings.Contains(err.String(), "--version 1 cannot include provenance; use --version 2 or omit --version") {
 		t.Fatal("missing provenance version diagnostic")
+	}
+	auditFailure(&err, &audit.ScratchLimitError{Resource: "files", Limit: 1})
+	if !strings.Contains(err.String(), "provenance scratch limit exceeded; provision disk and raise --scratch-max-bytes or --scratch-max-files") {
+		t.Fatal("missing scratch limit diagnostic")
 	}
 	auditFailure(&err, audit.ErrPinRejected)
 	if !strings.Contains(err.String(), "governing authority pin rejected by queue fold") {
