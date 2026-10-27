@@ -287,7 +287,10 @@ func TestWarningRefreshNeverBlocksForegroundOrSibling(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("refresh did not reach SQL")
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	// The background refresh stays paused until this test returns, so a foreground
+	// read that waited on it could never finish before the deadline. A generous
+	// bound keeps that guarantee without racing slow CI runners.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	result := make(chan []Journal, 1)
 	failures := make(chan error, 1)
