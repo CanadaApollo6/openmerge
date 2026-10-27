@@ -81,6 +81,10 @@ func TestTerminalReserveAtActiveRecordLimit(t *testing.T) {
 }
 
 func TestConfiguredReserveAccountsForActiveInventory(t *testing.T) {
+	if testing.Short() {
+		testRetirementReserveBoundaries(t)
+		return
+	}
 	// This supported option must not admit a state that ordinary retirement makes unreadable.
 	s := State{groups: map[string]group{}, latest: map[string]string{}, retired: map[string]uint64{}, settled: map[string]uint64{}}
 	h, _ := fixture(t)
@@ -162,12 +166,20 @@ func TestConfiguredReserveAccountsForActiveInventory(t *testing.T) {
 }
 
 func TestRecoveryPreflightKeepsHardCapsAndReduction(t *testing.T) {
-	for name, s := range map[string]State{
+	cases := map[string]State{
 		"unchanged":        {bytes: 100},
 		"growth":           {bytes: 101},
 		"fence bytes":      {fenceBytes: maxFenceTableBytes + 1},
 		"projection bytes": {bytes: maxSnapshotBytes/2 + 1},
-	} {
+		"records":          {records: make([]Record, MaxActiveRecords+1)},
+	}
+	pending := State{landings: map[string]Landing{}}
+	for i := range MaxPendingLandings + 1 {
+		key := fmt.Sprint(i)
+		pending.landings[key] = Landing{Stage: "tested", AttemptID: key}
+	}
+	cases["attempts"] = pending
+	for name, s := range cases {
 		t.Run(name, func(t *testing.T) {
 			if err := s.PreflightRecovery(CapacityGauge{ProjectedBytes: 100}); !errors.Is(err, ErrLimit) {
 				t.Fatal("unsafe recovery admitted", err)
@@ -177,5 +189,58 @@ func TestRecoveryPreflightKeepsHardCapsAndReduction(t *testing.T) {
 	s := State{bytes: 99}
 	if err := s.PreflightRecovery(CapacityGauge{ProjectedBytes: 100}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Exercise the exact hard boundary without repeatedly decoding 128 MiB of
+// escaped keys. A small real checkpoint independently proves the transfer from
+// active records to retired fences in short mode; full mode retains the stress.
+func testRetirementReserveBoundaries(t *testing.T) {
+	t.Helper()
+	h, _ := fixture(t)
+	h.Request.Repository = strings.Repeat("\x01", 256)
+	h.Request.Queue = strings.Repeat("\x02", 256)
+	h.Request.Generation = strings.Repeat("\x03", 256)
+	s := State{groups: map[string]group{}, landings: map[string]Landing{}}
+	reserve := 0
+	for i := range 500 {
+		h.Request.ChangeID = strings.Repeat("\x04", 249) + fmt.Sprintf("%07d", i)
+		key, id := generationKey(h.Request), uint64(i+1)
+		s.groups[key] = group{ids: []uint64{id}}
+		reserve += fenceSize(key, id)
+	}
+	for i := range MaxPendingLandings {
+		attempt := strings.Repeat("\x05", 249) + fmt.Sprintf("%07d", i)
+		s.landings[attempt] = Landing{Stage: "tested", AttemptID: attempt}
+		reserve += fenceSize(attempt, ^uint64(0))
+	}
+	for _, delta := range []int{-1, 0, 1} {
+		s.fenceBytes = maxFenceTableBytes - reserve + delta
+		// Isolate expanded capacity from compression and projection thresholds.
+		s.packedAt, s.packedTable = s.fenceBytes, []byte{1}
+		for _, recovery := range []bool{false, true} {
+			err := s.Preflight(99)
+			if recovery {
+				err = s.PreflightRecovery(CapacityGauge{ProjectedBytes: maxSnapshotBytes})
+			}
+			if (err != nil) != (delta > 0) {
+				t.Fatalf("recovery=%v, retirement bytes=cap%+d: %v", recovery, delta, err)
+			}
+		}
+	}
+	s = State{}
+	for i := range 32 {
+		h.Request.ChangeID = fmt.Sprint("escaped-", i)
+		h.Digest = InventoryDigest(h, h.Commits)
+		s = apply(t, s, uint64(i+1), h)
+	}
+	s = retainedSnapshot(t, s)
+	if err := s.Preflight(99); err != nil {
+		t.Fatal(err)
+	}
+	s = RetireOwned(s, s.lastID+1, "", func(p.InventoryRequest) bool { return true })
+	s = retainedSnapshot(t, s)
+	if len(s.groups) != 0 || len(s.retired) != 32 {
+		t.Fatal("retirement work count differs")
 	}
 }

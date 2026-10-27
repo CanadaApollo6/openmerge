@@ -1,5 +1,113 @@
 # Hold writer prerequisite evidence — 2026-10-27
 
+## PR #188 fix round 3
+
+Starting head: `9200ef7baceac011f6a847d4cd747240d8cb064c`. Fetched the exact
+requested branch/main refspec and created a separate local fix branch. Writers
+remain **Hold**; no production caller, event field, migration, index, Makefile,
+CI, Dockerfile or test flag changes.
+
+- Recovery accepts only its landed companion and inventory chunks consumed by
+  that companion's exact member generations. Each reconstruction matches the
+  historical tested request and inventory digest after rebinding the generation
+  and exact predecessor. Chunk assembly, completeness and predecessor CAS still
+  pass through the shared reader. Unrelated inventories, dependency records,
+  extra companions, mismatched generations and changed historical inputs refuse
+  before insertion. Canonical reconstruction retries remain valid.
+- Admission and recovery share the same dynamic retirement-reserve check.
+  Recovery can bypass the configurable percentage but cannot consume the expanded
+  bytes or entries needed to retire remaining active inventories and attempts.
+  Settlement, net projection reduction and the other hard caps still apply.
+- Short mode checks the maximum 4,128-record / 8,224-reference configuration
+  arithmetically using one encoded maximum-width attempt, then applies/reloads
+  4 attempts with 8 members each. The reserve test checks cap−1, cap and cap+1
+  with 500 active generations and 32 attempt charges, then retires/reloads 32
+  real escaped-key inventories. Record-count tests retain exact admission and
+  strict-reader limits plus a 32-record real checkpoint. Explicit work counts
+  prevent silently reducing these fixtures further. The original maximum-scale
+  runs remain outside `-short`.
+
+Both Astra reproducers failed before the fix (`baseline-repros.log`). The first
+retained unrelated evidence while shrinking **401,061 → 398,564 bytes** above
+**335,544-byte** high water. It now refuses atomically, after which the genuine
+companion can still recover. An additional reconstruction test refuses a bundle
+with an extra unrelated inventory. The second reproducer reconstructs only three
+members, shrinks **1,909,678 → 1,896,494 bytes**, and would exceed the hard fence cap
+by exactly **2,366 bytes** on queue retirement. Recovery now refuses for the
+retirement reserve. It starts from a strict checkpoint in both modes; the full
+run also verifies that the unsafe recovered projection itself reloads before
+showing the subsequent retirement overrun.
+
+Round-3 commands, overlays and logs live in `/home/riels/.cache/pr188-fix-r3/`.
+`run_checks.py`, `run_supplementary.py` and `mutations.py` preserve exact commands;
+all Go invocations use the required lock, Go 1.27.3, `GOFLAGS=-p=2`,
+`GOMEMLIMIT=4GiB`, toolchain PATH and both designated PostgreSQL test URLs.
+
+### Round-3 validation
+
+All six affected packages passed `go test -race -short -count=1 -timeout=900s`.
+Combined wall time was **304.598 s**. The journal package now finishes well below
+180 seconds, including the new strict-checkpoint retirement reproducer.
+
+| Package | CI-mode time |
+| --- | ---: |
+| `internal/journalreader` | 20.379 s |
+| `internal/provenance/journal` | 69.995 s |
+| `internal/status` | 10.436 s |
+| `internal/store` | 196.382 s |
+| `internal/audit` | 101.741 s |
+| `cmd/openmerge` | 99.713 s |
+
+The three optimized tests took **1.770 s** (maximum configuration), **1.540 s**
+(active-inventory reserve) and **4.390 s** (record cap), versus Astra's earlier
+150.790 / 89.960 / 49.600 s measurements. These are per-test wall times under
+concurrent package execution, not isolated performance benchmarks.
+
+The complete store run rejected the existing **223 field mutations** (41 valid
+wire changes reaching historical binding and 182 strict-wire refusals), then
+accepted identical duplicates. The audit suite retains #181 v1/v2 compatibility.
+
+The full non-short maximum batch/depth, record ceiling, configured-reserve and
+reconstructed-recovery tests also passed together in **40.233 s** without race
+instrumentation. Astra's three-member overlay repeated all **446 additional
+field mutations** against the middle and final members (82 valid-wire historical
+binding refusals and 364 strict-wire refusals), then recovered identical
+duplicates in all four variants; package time **102.604 s**. Combined with the
+committed matrix this is **669 rejected field mutations**.
+
+The legacy status/health overlay reproduced **21 outputs / 10,491 decoded bytes**
+exactly; artifact SHA-256 remains
+`4b976f6eccd68c2a440bda16547d7a62e6aa2e097b87e2fe6265b2447a850fdd`.
+`go vet ./...` and `golangci-lint run` passed; lint reports `0 issues.`.
+Whole-repository `gofmt -l .` returned no files and `git diff --check` passed.
+The command-driver elapsed times for vet/lint/full boundaries include waiting
+on the shared lock; package timings above exclude that wait.
+
+All **18 source mutants compiled and failed behavioral assertions** in **102.478 s**.
+The 12 prior guards were rerun, including active inventory reserve and recovery
+high-water/reduction checks. Six added mutants remove the recovery-bundle
+restriction, historical inventory digest binding, recovery retirement reserve,
+maximum reference budget, record-count hard cap, or strict snapshot record-count
+check. There were no survivors, build/setup failures or panic-only kills. The
+short-mode replacements therefore retain the affected mutation coverage.
+
+Commands after the common lock/environment prefix:
+
+```sh
+go test -json -race -short -count=1 -timeout=900s ./internal/store ./internal/journalreader ./internal/provenance/journal ./internal/status ./internal/audit ./cmd/openmerge
+go test -count=1 -timeout=900s ./internal/provenance/journal -run '^(TestMaximumBatchAtMaximumSpeculationDepthFitsReferenceBudget|TestConfiguredReserveAccountsForActiveInventory|TestRetainedRecordCap|TestReconstructedRecoveryPreservesRetirementReserve)$'
+go test -overlay /home/riels/.cache/pr188-fix-r3/three-member-overlay.json -race -short -count=1 -timeout=900s -v ./internal/store -run '^TestReviewR3ThreeMemberFields$'
+go test -overlay /home/riels/.cache/pr188-fix-r3/status-overlay.json -race -short -count=1 -timeout=900s ./internal/status -run '^TestReviewR2LegacyOutputBytes$'
+go vet ./...
+golangci-lint run
+```
+
+The status overlay sets `REVIEW_STATUS_OUT` to the round-3 scratch artifact.
+`python3 /home/riels/.cache/pr188-fix-r3/mutations.py` applies the same Go prefix
+and CI flags to each isolated source overlay. Formatting was checked with
+`/home/riels/.local/share/mise/installs/go/1.27.3/bin/gofmt -l .`; whitespace with
+`git diff --check`. No mutation changes working-tree implementation files.
+
 ## PR #188 fix round 2
 
 Starting head: `1157460a00e38db67faf97243951e89bbe2cca72`. Work stays on the

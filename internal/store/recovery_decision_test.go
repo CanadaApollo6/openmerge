@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/CanadaApollo6/openmerge/internal/dependency"
 	"github.com/CanadaApollo6/openmerge/internal/journalreader"
 	pj "github.com/CanadaApollo6/openmerge/internal/provenance/journal"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -110,7 +111,7 @@ func TestRecoverLandedAboveHighWaterDrainsPending(t *testing.T) {
 		events, err := growth.Build(ids)
 		return append(events, journalreader.Event{Provenance: l}), err
 	}
-	if _, err := s.RecoverLanded(t.Context(), q, landedID, growing); err == nil || !strings.Contains(err.Error(), "must reduce retained bytes") {
+	if _, err := s.RecoverLanded(t.Context(), q, landedID, growing); err == nil || !strings.Contains(err.Error(), "not bound to historical member") {
 		t.Fatal("growing recovery admitted", err)
 	}
 	_, err := s.AppendSide(t.Context(), q, growth)
@@ -306,35 +307,89 @@ func testRecoverLandedDecisionFields(t *testing.T, variant string) {
 }
 
 func TestRecoverLandedReferencesReconstructedInventoryInBundle(t *testing.T) {
-	s := newStore(t)
-	q, claim, c, d := decisionLand(t, s)
-	must(t, startWithSide(t.Context(), s, claim, c, d, landingSide(t, c)))
-	landedID := appendEvents(t, s, q, queue.Landed{BatchID: c.Start.BatchID, NewBaseSHA: d.LandedSHA, NewFence: "next"})
-	l := recoveredCompanion(t, s, q)
-	var raw []byte
-	must(t, s.pool.QueryRow(t.Context(), `SELECT payload FROM events WHERE queue_id=$1 AND id=$2`, q, l.Members[0].ObservationIDs[0]).Scan(&raw))
-	e, err := pj.DecodeEvent(raw)
-	must(t, err)
-	h := e.(pj.Observation)
-	h.PreviousObservationID = l.Members[0].ObservationIDs[0]
-	h.Request.Generation = "reconstructed-for-recovery"
-	h.Digest = pj.InventoryDigest(h, h.Commits)
-	request := SideAppend{Count: 2, Build: func(ids []uint64) ([]journalreader.Event, error) {
-		m := &l.Members[0]
-		m.Request, m.Mapping.Request = h.Request, h.Request
-		m.ObservationIDs = []uint64{ids[0]}
-		m.InventoryDigest = h.Digest
-		for i := range m.Layers {
-			m.Layers[i].References = append(m.Layers[i].References, ids[0])
-		}
-		m.RecordDigest = pj.MemberDigest(*m)
-		return []journalreader.Event{{Provenance: h}, {Provenance: l}}, nil
-	}}
-	_, err = s.RecoverLanded(t.Context(), q, landedID, request)
-	must(t, err)
-	reader, _, err := replayJournal(t.Context(), s.pool, q, queue.State{BaseBranch: "release"}, 0, true)
-	must(t, err)
-	if len(reader.Provenance.Records()) != 0 {
-		t.Fatal("reconstructed recovery did not drain evidence")
+	for _, scenario := range []string{"valid", "extra-inventory", "extra-dependency", "extra-companion", "wrong-generation", "wrong-pinned-base", "altered-inventory"} {
+		t.Run(scenario, func(t *testing.T) {
+			s := newStore(t)
+			q, claim, c, d := decisionLand(t, s)
+			must(t, startWithSide(t.Context(), s, claim, c, d, landingSide(t, c)))
+			landedID := appendEvents(t, s, q, queue.Landed{BatchID: c.Start.BatchID, NewBaseSHA: d.LandedSHA, NewFence: "next"})
+			l := recoveredCompanion(t, s, q)
+			var raw []byte
+			must(t, s.pool.QueryRow(t.Context(), `SELECT payload FROM events WHERE queue_id=$1 AND id=$2`, q, l.Members[0].ObservationIDs[0]).Scan(&raw))
+			e, err := pj.DecodeEvent(raw)
+			must(t, err)
+			h := e.(pj.Observation)
+			h.PreviousObservationID = l.Members[0].ObservationIDs[0]
+			h.Request.Generation = "reconstructed-for-recovery"
+			if scenario == "wrong-pinned-base" {
+				h.Request.PinnedBase = strings.Repeat("8", 40)
+			}
+			if scenario == "altered-inventory" {
+				h.Limits.SourceCommits--
+			}
+			h.Digest = pj.InventoryDigest(h, h.Commits)
+			count := 2
+			if strings.HasPrefix(scenario, "extra-") {
+				count++
+			}
+			_, companionRaw, err := pj.EncodeEvent(l)
+			must(t, err)
+			var token [32]byte
+			token[0] = 1
+			binding, err := dependency.NewJournalIdentity("openmerge-db-v2:sha256:"+strings.Repeat("a", 64), token, "github:https://github.com", "7")
+			must(t, err)
+			request := SideAppend{Count: count, Binding: binding, Build: func(ids []uint64) ([]journalreader.Event, error) {
+				event, err := pj.DecodeEvent(companionRaw)
+				if err != nil {
+					return nil, err
+				}
+				l := event.(pj.Landing)
+				m := &l.Members[0]
+				m.Request, m.Mapping.Request = h.Request, h.Request
+				m.ObservationIDs = []uint64{ids[0]}
+				m.InventoryDigest = h.Digest
+				for i := range m.Layers {
+					m.Layers[i].References = append(m.Layers[i].References, ids[0])
+				}
+				m.RecordDigest = pj.MemberDigest(*m)
+				events := []journalreader.Event{{Provenance: h}}
+				switch scenario {
+				case "extra-inventory":
+					extra := sideInventory(t)
+					extra.Request.ChangeID = "unrelated"
+					extra.Digest = pj.InventoryDigest(extra, extra.Commits)
+					events = append(events, journalreader.Event{Provenance: extra})
+				case "extra-dependency":
+					events = append(events, journalreader.Event{Dependency: binding})
+				case "extra-companion":
+					events = append(events, journalreader.Event{Provenance: l})
+				case "wrong-generation":
+					m.Request.Generation = "not-the-reconstructed-generation"
+					m.Mapping.Request = m.Request
+					m.RecordDigest = pj.MemberDigest(*m)
+				}
+				return append(events, journalreader.Event{Provenance: l}), nil
+			}}
+			before := eventCount(t, s, q)
+			_, err = s.RecoverLanded(t.Context(), q, landedID, request)
+			if scenario != "valid" {
+				if err == nil || !strings.Contains(err.Error(), "landed recovery") {
+					t.Fatal("invalid reconstruction admitted", err)
+				}
+				if eventCount(t, s, q) != before {
+					t.Fatal("invalid reconstruction wrote evidence")
+				}
+				return
+			}
+			must(t, err)
+			// Canonical retries must validate against the same historical inventory.
+			_, err = s.RecoverLanded(t.Context(), q, landedID, request)
+			must(t, err)
+			reader, _, err := replayJournal(t.Context(), s.pool, q, queue.State{BaseBranch: "release"}, 0, true)
+			must(t, err)
+			if len(reader.Provenance.Records()) != 0 {
+				t.Fatal("reconstructed recovery did not drain evidence")
+			}
+		})
 	}
 }

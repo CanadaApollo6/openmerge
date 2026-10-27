@@ -478,6 +478,16 @@ func (s *Store) RecoverLanded(ctx context.Context, q QueueID, landedID int64, re
 				}
 			}
 		}
+		var historical pj.Landing
+		for _, record := range before.Provenance.Records() {
+			event, err := pj.DecodeEvent(record.Payload)
+			if err != nil {
+				return err
+			}
+			if l, ok := event.(pj.Landing); ok && l.Stage == "tested" && l.AttemptID == batch.LandingAttempt.ID && l.BatchID == batch.ID {
+				historical = l
+			}
+		}
 		build := request.Build
 		request.Build = func(ids []uint64) ([]journalreader.Event, error) {
 			events, err := build(ids)
@@ -493,6 +503,9 @@ func (s *Store) RecoverLanded(ctx context.Context, q QueueID, landedID int64, re
 			companion, ok := events[len(events)-1].Provenance.(pj.Landing)
 			if !ok {
 				return nil, errors.New("missing landed recovery companion")
+			}
+			if err := validateRecoveryInventories(events, ids, companion, historical, before.Provenance); err != nil {
+				return nil, err
 			}
 			candidates := make(map[uint64]journalreader.Event, len(events))
 			for i, event := range events {
@@ -511,6 +524,44 @@ func (s *Store) RecoverLanded(ctx context.Context, q QueueID, landedID int64, re
 		return 0, err
 	}
 	return watermark, nil
+}
+
+// Only inventories actually consumed by this companion may share recovery's
+// high-water exemption. The reader still validates chunks, digests and the
+// generation CAS; the historical tested request fixes the immutable inputs.
+func validateRecoveryInventories(events []journalreader.Event, ids []uint64, companion, historical pj.Landing, evidence pj.State) error {
+	for i, event := range events[:len(events)-1] {
+		h, ok := event.Provenance.(pj.Observation)
+		if !ok || event.Queue != nil || event.Dependency != nil {
+			return errors.New("landed recovery admits only required member inventories")
+		}
+		bound := false
+		for _, member := range companion.Members {
+			if !slices.Contains(member.ObservationIDs, ids[i]) || !reflect.DeepEqual(h.Request, member.Request) || h.Digest != member.InventoryDigest || h.DeclarationDigest != member.DeclarationDigest {
+				continue
+			}
+			for _, prior := range historical.Members {
+				request := h.Request
+				request.Generation = prior.Request.Generation
+				if !reflect.DeepEqual(request, prior.Request) {
+					continue
+				}
+				inventory, ok := evidence.Inventory(prior.Request)
+				if !ok {
+					continue
+				}
+				inventory.Header.Request = h.Request
+				inventory.Header.PreviousObservationID = h.PreviousObservationID
+				if pj.InventoryDigest(inventory.Header, inventory.Commits) == h.Digest {
+					bound = true
+				}
+			}
+		}
+		if !bound {
+			return errors.New("landed recovery inventory is not bound to historical member")
+		}
+	}
+	return nil
 }
 
 // LandedAlreadyCompleteError reports a companion committed through another key.

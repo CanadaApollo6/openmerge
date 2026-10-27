@@ -374,11 +374,47 @@ func TestMaximumBatchAtMaximumSpeculationDepthFitsReferenceBudget(t *testing.T) 
 	if MaxPendingLandings != queue.MaxSpeculationDepth || MaxBatchMembers != queue.MaxBatchSize {
 		t.Fatal("retention no longer covers the accepted configuration maxima")
 	}
+	maxReferences := MaxPendingLandings * (MaxBatchMembers*ReferencesPerMember + 1)
+	maxRecords := MaxPendingLandings * (MaxBatchMembers + 1)
+	if maxReferences > MaxRetainedReferences || maxRecords+1 > MaxActiveRecords {
+		t.Fatal("maximum configuration exceeds reference or record budget")
+	}
+	// Encode one maximum-width attempt. The final indices have the longest
+	// identities, and uint64 observation positions conservatively bound IDs.
 	h, _ := fixture(t)
+	maximum := Landing{AttemptID: fmt.Sprint(MaxPendingLandings - 1), BatchID: fmt.Sprint("batch-", MaxPendingLandings-1), DecisionID: 1, Stage: "tested"}
+	inventoryBytes := 0
+	for member := range MaxBatchMembers {
+		h.Request.ChangeID = fmt.Sprintf("member-%d-%d", MaxPendingLandings-1, member)
+		h.Digest = InventoryDigest(h, h.Commits)
+		_, raw, err := EncodeEvent(h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inventoryBytes += len(raw)
+		m := landing(h, []uint64{^uint64(0) - uint64(member)}).Members[0]
+		for layer := range m.Layers {
+			m.Layers[layer].References = []uint64{uint64(2*member + 2), uint64(2*member + 3)}
+		}
+		m.RecordDigest = MemberDigest(m)
+		maximum.Members = append(maximum.Members, m)
+	}
+	_, raw, err := EncodeEvent(maximum)
+	if err != nil {
+		t.Fatal(err)
+	}
+	maximumBytes := MaxPendingLandings * (inventoryBytes + len(raw))
+	if ReferenceCount(maximum) != MaxBatchMembers*ReferencesPerMember+1 || maximumBytes+128 >= maxSnapshotBytes/2*DefaultHighWaterPercent/100 {
+		t.Fatal("maximum fixture exceeds reference or byte budget", maximumBytes)
+	}
+	attempts, batchSize := MaxPendingLandings, MaxBatchMembers
+	if testing.Short() {
+		attempts, batchSize = 4, 8
+	}
 	s := capacityFixture(t)
 	var id uint64 = 1000
-	for attempt := 0; attempt < MaxPendingLandings; attempt++ {
-		members := make([]Member, MaxBatchMembers)
+	for attempt := 0; attempt < attempts; attempt++ {
+		members := make([]Member, batchSize)
 		for member := range members {
 			h.Request.ChangeID = fmt.Sprintf("member-%d-%d", attempt, member)
 			h.Digest = InventoryDigest(h, h.Commits)
@@ -392,7 +428,7 @@ func TestMaximumBatchAtMaximumSpeculationDepthFitsReferenceBudget(t *testing.T) 
 			members[member] = m
 		}
 		l := Landing{AttemptID: fmt.Sprint(attempt), BatchID: fmt.Sprint("batch-", attempt), DecisionID: 1, Stage: "tested", Members: members}
-		if ReferenceCount(l) != MaxBatchMembers*ReferencesPerMember+1 {
+		if ReferenceCount(l) != batchSize*ReferencesPerMember+1 {
 			t.Fatal("maximum-envelope fixture lost references")
 		}
 		id++
@@ -405,11 +441,17 @@ func TestMaximumBatchAtMaximumSpeculationDepthFitsReferenceBudget(t *testing.T) 
 	if err := s.Preflight(); err != nil {
 		t.Fatal(err)
 	}
+	if s.bytes > maximumBytes {
+		t.Fatal("real run exceeds the maximum byte estimate", s.bytes, maximumBytes)
+	}
+	if len(s.records) != attempts*(batchSize+1) {
+		t.Fatal("unexpected inventory/companion work count")
+	}
 	s = retainedSnapshot(t, s)
-	if len(s.landings) != MaxPendingLandings || len(s.groups) != MaxPendingLandings*MaxBatchMembers {
+	if len(s.landings) != attempts || len(s.groups) != attempts*batchSize {
 		t.Fatal("maximum configuration did not survive restart")
 	}
-	t.Logf("%d distinct members x %d attempts: %d reference targets, cap %d; %d active records (cap %d)", MaxBatchMembers, MaxPendingLandings, MaxPendingLandings*(MaxBatchMembers*ReferencesPerMember+1), MaxRetainedReferences, len(s.records), MaxActiveRecords)
+	t.Logf("maximum: %d records, %d references, <=%d payload bytes; replay/reload: %d members x %d attempts, %d records", maxRecords, maxReferences, maximumBytes, batchSize, attempts, len(s.records))
 }
 
 func TestOwnedRejectionRollsBackLifetimeFenceUpdates(t *testing.T) {

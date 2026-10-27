@@ -244,6 +244,10 @@ func TestRetainedRecordCap(t *testing.T) {
 	if maxRecords != MaxPendingLandings*(MaxBatchMembers+1)+MaxBatchMembers {
 		t.Fatalf("record contract changed: %d", maxRecords)
 	}
+	if testing.Short() {
+		testRetainedRecordCapShort(t)
+		return
+	}
 	h, _ := fixture(t)
 	// Empty pending observations keep this focused on record count, not bytes.
 	h.Complete, h.DeclarationDigest = false, ""
@@ -359,4 +363,53 @@ func TestChunkCommitSortOrder(t *testing.T) {
 	c[0], c[1] = c[1], c[0]
 	h.Digest = InventoryDigest(h, c)
 	rejectUnchanged(t, State{}, 3, h, ErrMalformed)
+}
+
+func testRetainedRecordCapShort(t *testing.T) {
+	t.Helper()
+	h, _ := fixture(t)
+	s := State{}
+	for i := range 32 {
+		h.Request.ChangeID = fmt.Sprint(i)
+		h.Digest = InventoryDigest(h, h.Commits)
+		s = apply(t, s, uint64(i+1), h)
+	}
+	s = retainedSnapshot(t, s)
+	if len(s.records) != 32 {
+		t.Fatal("reduced checkpoint lost records")
+	}
+	// Record admission is independent of payload contents. Pad only the count
+	// model; the real reduced fixture above exercises strict checkpoint replay.
+	s.records = append(s.records, make([]Record, maxRecords-len(s.records)-1)...)
+	if err := s.Preflight(); err != nil {
+		t.Fatal("preflight refused headroom", err)
+	}
+	s.records = append(s.records, Record{})
+	if err := s.Preflight(); !errors.Is(err, ErrLimit) {
+		t.Fatal("writer preflight must stay below cap", err)
+	}
+	if err := s.capacity(false); err != nil {
+		t.Fatal("hard cap refused ceiling", err)
+	}
+	s.records = append(s.records, Record{})
+	err := s.capacity(false)
+	var limit RetentionLimitError
+	if !errors.As(err, &limit) || limit.Records != maxRecords+1 || !strings.Contains(err.Error(), "shared-reader-retention-recovery") {
+		t.Fatal("missing typed operator recovery at record ceiling", err)
+	}
+	_, payload, err := EncodeEvent(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := snapshot{Version: 9, BaseKind: "queue", Base: []byte(`{"Version":6}`), LastID: maxRecords + 1}
+	for i := range maxRecords + 1 {
+		v.Records = append(v.Records, Record{uint64(i + 1), payload})
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeSnapshot(raw, func(string, []byte) error { return nil }); !errors.Is(err, ErrLimit) {
+		t.Fatal("snapshot record cap not enforced before fold", err)
+	}
 }

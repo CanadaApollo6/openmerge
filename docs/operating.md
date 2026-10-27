@@ -2596,6 +2596,12 @@ slices 4a/4b (production integration remains disabled):**
   supply source-to-build mappings. Recovery appends the missing companion once,
   allowing tested evidence to retire. Future startup/recovery wiring must invoke
   it before starting new work; no production caller is enabled here.
+  A recovery bundle may contain only the landed companion and inventory chunks
+  consumed by its exact member generations. Reconstructed inventories must match
+  the historical tested inventory after rebinding the generation and exact
+  predecessor; unrelated side records are refused. Recovery preserves the dynamic
+  retirement reserve for every remaining active inventory and attempt, even when
+  bypassing the configurable admission high water.
   Recovery bypasses admission high water only when it settles the pending attempt
   and strictly reduces retained projection bytes; all hard caps still apply.
 - **Lifetime fences.** Exact arbitrary string identities and original journal
