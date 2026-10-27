@@ -69,10 +69,13 @@ func (s *Store) ReadOutsidePushAudit(ctx context.Context, q QueueID) (*OutsidePu
 		return nil, err
 	}
 	var state queue.State
+	reader := sharedReader(ctx, s.pool, q, state)
 	if len(a.expected) != 0 {
 		err = json.Unmarshal(a.expected, &a.progress)
 		if err == nil {
-			state, err = queue.DecodeSnapshot(a.progress.State)
+			reader = sharedReader(ctx, s.pool, q, queue.State{})
+			err = reader.LoadSnapshot(a.progress.State, uint64(a.progress.ScannedThrough))
+			state = reader.Queue
 		}
 		if err != nil {
 			a.CursorResetReason = err.Error()
@@ -88,6 +91,27 @@ func (s *Store) ReadOutsidePushAudit(ctx context.Context, q QueueID) (*OutsidePu
 	if err != nil {
 		return nil, err
 	}
+	// Legacy cache bytes carry no side projection. Rebuild that projection from
+	// immutable history before tail replay; never write v8/v9 from this cursor.
+	reader.Queue = state
+	if a.progress.ScannedThrough > 0 {
+		var hasSide bool
+		err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT FROM events WHERE queue_id=$1 AND id<=$2 AND type IN ('change_provenance_observed','landing_provenance_recorded','dependency_journal_initialized'))`, q, a.progress.ScannedThrough).Scan(&hasSide)
+		if err != nil {
+			return nil, err
+		}
+		if hasSide {
+			var seed queue.State
+			if err := s.pool.QueryRow(ctx, `SELECT base, COALESCE(initial_fence, '') FROM queues WHERE id=$1`, q).Scan(&seed.BaseBranch, &seed.Fence); err != nil {
+				return nil, err
+			}
+			reader, _, err = replayJournal(ctx, s.pool, q, seed, a.progress.ScannedThrough)
+			if err != nil {
+				return nil, err
+			}
+			state = reader.Queue
+		}
+	}
 	rows, err := s.pool.Query(ctx, `SELECT id, recorded_at, payload FROM events
  WHERE queue_id=$1 AND id > $2 ORDER BY id LIMIT $3`, q, a.progress.ScannedThrough, outsidePushScanLimit)
 	if err != nil {
@@ -98,15 +122,19 @@ func (s *Store) ReadOutsidePushAudit(ctx context.Context, q QueueID) (*OutsidePu
 		if err := row.Scan(&r.ID, &r.RecordedAt, &r.Payload); err != nil {
 			return r, err
 		}
-		r.Event, err = queue.DecodeEvent(r.Payload)
-		return r, err
+		return r, nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	for _, r := range records {
 		before := state.Active
-		next := queue.Apply(state, r.Event)
+		decoded, err := reader.Apply(uint64(r.ID), r.Payload)
+		if err != nil {
+			return nil, err
+		}
+		r.Event = decoded.Queue
+		next := reader.Queue
 		switch e := r.Event.(type) {
 		case queue.BaseMoved:
 			move := pendingOutsideMove{OutsidePushMove: OutsidePushMove{

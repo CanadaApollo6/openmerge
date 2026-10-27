@@ -1,0 +1,237 @@
+// Package journalreader composes the strict queue, dependency and provenance
+// readers. It cannot append events or encode snapshots.
+package journalreader
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"reflect"
+	"slices"
+	"strconv"
+
+	"github.com/CanadaApollo6/openmerge/internal/dependency"
+	p "github.com/CanadaApollo6/openmerge/internal/provenance"
+	pj "github.com/CanadaApollo6/openmerge/internal/provenance/journal"
+	"github.com/CanadaApollo6/openmerge/internal/queue"
+)
+
+// ErrReference identifies missing, out-of-order or mismatched journal evidence.
+var ErrReference = errors.New("unresolved or mismatched journal evidence reference")
+
+// Lookup reads an exact position in this queue's immutable journal, including
+// positions before a snapshot. It must not fetch mutable external observations.
+type Lookup func(uint64) ([]byte, error)
+
+// Event preserves the separate sealed event interfaces. Queue is nil for new
+// evidence; callers must not pass nil through the queue planner's fold.
+type Event struct {
+	Queue      queue.Event
+	Dependency dependency.Event
+	Provenance pj.Event
+}
+
+// DecodeEvent dispatches by kind, then uses the owning strict decoder. A failed
+// new-kind decode never falls back to a permissive or opaque queue event.
+func DecodeEvent(raw []byte) (Event, error) {
+	var header struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(raw, &header); err != nil {
+		return Event{}, err
+	}
+	var e Event
+	var err error
+	switch header.Type {
+	case "change_provenance_observed", "landing_provenance_recorded":
+		e.Provenance, err = pj.DecodeEvent(raw)
+	case "dependency_journal_initialized", "change_dependencies_declared", "dependency_policy_applied", "dependency_declaration_acknowledged", "dependency_declaration_self_acknowledged", "dependency_observed":
+		e.Dependency, err = dependency.DecodeEvent(raw)
+	default:
+		e.Queue, err = queue.DecodeEvent(raw)
+	}
+	return e, err
+}
+
+// QueueEvent is for evidence-only scans. Authorization readers use Reader.Apply
+// to validate references and folds as well. New evidence has no queue effect.
+func QueueEvent(raw []byte) (queue.Event, error) {
+	e, err := DecodeEvent(raw)
+	return e.Queue, err
+}
+
+// Reader holds a composed replay, with no I/O other than a supplied exact-record
+// lookup. Missing external records fail closed, including across snapshot cuts.
+// An absent independently verified dependency binding quarantines that projection:
+// it can be folded for compatibility, but Dependencies never exposes it as valid.
+type Reader struct {
+	Queue        queue.State
+	Provenance   pj.State
+	dependencies dependency.State
+	expected     dependency.JournalInitialized
+	lookup       Lookup
+	lastID       uint64
+}
+
+// New creates a reader over an immutable queue seed and optional trusted binding.
+func New(seed queue.State, expected dependency.JournalInitialized, lookup Lookup) Reader {
+	return Reader{Queue: seed, expected: expected, lookup: lookup}
+}
+
+// Dependencies refuses to expose unverified namespace/incarnation evidence as a
+// satisfied dependency. Writers must supply independently verified startup facts.
+func (r Reader) Dependencies() (dependency.State, error) {
+	if err := r.dependencies.VerifyBinding(r.expected); err != nil {
+		return dependency.State{}, err
+	}
+	return r.dependencies, nil
+}
+
+// Apply is atomic on validation failure. Queue bytes and decisions are unchanged
+// by side evidence. IDs are global journal positions, not side-fold counters.
+func (r *Reader) Apply(id uint64, raw []byte) (Event, error) {
+	e, err := DecodeEvent(raw)
+	if err != nil {
+		return Event{}, err
+	}
+	if id == 0 || id <= r.lastID {
+		return Event{}, ErrReference
+	}
+	next := *r
+	switch {
+	case e.Queue != nil:
+		next.Queue = queue.Apply(r.Queue, e.Queue)
+	case e.Dependency != nil:
+		if init, ok := e.Dependency.(dependency.JournalInitialized); ok && r.expected != (dependency.JournalInitialized{}) {
+			if err := init.VerifyBinding(r.expected); err != nil {
+				return Event{}, err
+			}
+		}
+		next.dependencies, err = dependency.Apply(r.dependencies, id, e.Dependency)
+	case e.Provenance != nil:
+		if l, ok := e.Provenance.(pj.Landing); ok {
+			err = r.validateLanding(id, l)
+		}
+		if err == nil {
+			next.Provenance, err = pj.Apply(r.Provenance, id, e.Provenance)
+		}
+	}
+	if err != nil {
+		return Event{}, fmt.Errorf("event %d: %w", id, err)
+	}
+	next.lastID = id
+	*r = next
+	return e, nil
+}
+
+func (r Reader) target(ref, id uint64) (Event, error) {
+	if ref == 0 || ref >= id || r.lookup == nil {
+		return Event{}, ErrReference
+	}
+	raw, err := r.lookup(ref)
+	if err != nil {
+		return Event{}, fmt.Errorf("%w: position %d: %v", ErrReference, ref, err)
+	}
+	e, err := DecodeEvent(raw)
+	if err != nil {
+		return Event{}, fmt.Errorf("%w: position %d: %v", ErrReference, ref, err)
+	}
+	return e, nil
+}
+
+func matches(b queue.ApprovalBasis, req p.InventoryRequest) bool {
+	return string(b.ChangeID) == req.ChangeID && strconv.FormatUint(uint64(b.Revision), 10) == req.Revision && b.Head == req.Head
+}
+
+func (r Reader) validateLanding(id uint64, l pj.Landing) error {
+	target, err := r.target(l.DecisionID, id)
+	if err != nil {
+		return err
+	}
+	d, ok := target.Queue.(queue.LandingDecisionRecorded)
+	if !ok || d.BatchID != l.BatchID || d.AttemptID != l.AttemptID {
+		return ErrReference
+	}
+	// DecisionID anchors the attempt. Each member must additionally resolve an
+	// exact per-member decision, either that anchor or one of its layer references.
+	// This composes the existing contracts without adding fields to either event.
+	anchorMatched := false
+	targets := map[uint64]Event{l.DecisionID: target}
+	resolve := func(ref uint64) (Event, error) {
+		if e, ok := targets[ref]; ok {
+			return e, nil
+		}
+		e, err := r.target(ref, id)
+		if err == nil {
+			targets[ref] = e
+		}
+		return e, err
+	}
+	for _, m := range l.Members {
+		memberBound := decisionMatches(d, l, m.Request)
+		anchorMatched = anchorMatched || memberBound
+		for _, layer := range m.Layers {
+			for _, ref := range layer.References {
+				e, err := resolve(ref)
+				if err != nil {
+					return err
+				}
+				valid := false
+				switch v := e.Queue.(type) {
+				case queue.ApprovalEligibilityObserved:
+					valid = matches(v.Basis, m.Request)
+				case queue.ReviewStanceObserved:
+					valid = matches(v.Basis, m.Request)
+				case queue.ChangeAccountabilityObserved:
+					valid = matches(v.Basis, m.Request)
+				case queue.ChangeIntentObserved:
+					valid = matches(v.Basis, m.Request)
+				case queue.ApprovalReceiptRecorded:
+					valid = v.Accepted && matches(v.Basis, m.Request)
+				case queue.ChangeClassified:
+					inputs := v.Evidence.Classification.Inputs
+					valid = inputs.ChangeID == m.Request.ChangeID && strconv.FormatUint(inputs.Revision, 10) == m.Request.Revision && inputs.Head == m.Request.Head
+				case queue.ChecksCompleted:
+					valid = v.TestedSHA == d.TestedSHA
+				case queue.CheckProvenanceObserved:
+					valid = v.BatchID == l.BatchID && v.TestedSHA == d.TestedSHA
+				case queue.LandingDecisionRecorded:
+					valid = decisionMatches(v, l, m.Request)
+					memberBound = memberBound || valid
+				}
+				if v, ok := e.Provenance.(pj.Observation); ok {
+					valid = slices.Contains(m.ObservationIDs, ref) && reflect.DeepEqual(v.Request, m.Request)
+				}
+				// Dependency observations require a verified incarnation and a matching
+				// consumer. Unverified evidence is never allowed to certify a true layer.
+				if v, ok := e.Dependency.(dependency.Observed); ok {
+					_, bound := r.Dependencies()
+					valid = bound == nil && v.Namespace == r.expected.Namespace && v.ChangeID == m.Request.ChangeID && strconv.FormatUint(v.Revision, 10) == m.Request.Revision
+				}
+				if !valid {
+					return ErrReference
+				}
+			}
+		}
+		if !memberBound {
+			return ErrReference
+		}
+	}
+	if !anchorMatched {
+		return ErrReference
+	}
+	return nil
+}
+
+func decisionMatches(d queue.LandingDecisionRecorded, l pj.Landing, req p.InventoryRequest) bool {
+	if d.BatchID != l.BatchID || d.AttemptID != l.AttemptID {
+		return false
+	}
+	if d.Approval != nil {
+		return matches(d.Approval.Basis, req)
+	}
+	if d.Remedy != nil {
+		return string(d.Remedy.ChangeID) == req.ChangeID && strconv.FormatUint(uint64(d.Remedy.Revision), 10) == req.Revision && d.Remedy.Head == req.Head
+	}
+	return false
+}

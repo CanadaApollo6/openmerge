@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
+	"github.com/CanadaApollo6/openmerge/internal/journalreader"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/jackc/pgx/v5"
 )
@@ -31,7 +32,7 @@ func eventPage(ctx context.Context, tx pgx.Tx, q QueueID, after int64) ([]EventR
 		if err := row.Scan(&r.ID, &raw, &r.DedupeKey); err != nil {
 			return r, err
 		}
-		r.Event, err = queue.DecodeEvent(raw)
+		r.Event, err = journalreader.QueueEvent(raw)
 		return r, err
 	})
 }
@@ -41,7 +42,7 @@ func dedupeEvent(ctx context.Context, tx pgx.Tx, q QueueID, key string) (EventRe
 	var raw []byte
 	err := tx.QueryRow(ctx, `SELECT id, payload, dedupe_key FROM events WHERE queue_id=$1 AND dedupe_key=$2`, q, key).Scan(&r.ID, &raw, &r.DedupeKey)
 	if err == nil {
-		r.Event, err = queue.DecodeEvent(raw)
+		r.Event, err = journalreader.QueueEvent(raw)
 	}
 	return r, err
 }
@@ -204,7 +205,7 @@ func (s *Store) AcknowledgeOutsidePush(ctx context.Context, q QueueID, source in
 		if err := tx.QueryRow(ctx, `SELECT payload FROM events WHERE queue_id=$1 AND id=$2`, q, source).Scan(&raw); err != nil {
 			return fmt.Errorf("outside push source in queue %d: %w", q, err)
 		}
-		original, err := queue.DecodeEvent(raw)
+		original, err := journalreader.QueueEvent(raw)
 		if err != nil {
 			return err
 		}
@@ -237,7 +238,7 @@ func outsideWarningEvent(ctx context.Context, tx pgx.Tx, q QueueID, id int64) (E
 	var raw []byte
 	err := tx.QueryRow(ctx, `SELECT id,payload,dedupe_key FROM events WHERE queue_id=$1 AND id=$2`, q, id).Scan(&r.ID, &raw, &r.DedupeKey)
 	if err == nil {
-		r.Event, err = queue.DecodeEvent(raw)
+		r.Event, err = journalreader.QueueEvent(raw)
 	}
 	return r, err
 }

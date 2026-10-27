@@ -412,3 +412,9 @@ Proofs:
   basis/duplicate/order, two-alias sort and full-replay binding tests. Each
   associated guard was disabled locally and its focused test failed; the PR body
   records all 16 mutations. The original guards were restored before validation.
+
+The shared reader migration now composes this codec through
+`internal/journalreader` (Hold; see provenance's README). Production code still
+cannot encode dependency events or write v8 snapshots. Unverified namespace and
+incarnation projections remain quarantined, never satisfied dependencies; the
+future startup/writer integration must supply independently verified identity.

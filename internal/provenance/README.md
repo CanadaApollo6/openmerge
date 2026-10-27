@@ -398,10 +398,10 @@ compare the deployed Git binary's own commit reader where 2.55 and 2.56 differ.
 
 ## Slice 3a event contracts and snapshot decoder (Inert)
 
-`internal/provenance/journal` is a separate, unwired package. Its import guard
-rejects every production importer, including gitops; slices 1–2 retain their
-existing local reader. There are no append calls, SQL changes, production
-snapshot writes, or live replay changes. New events use an independent wire-v1
+`internal/provenance/journal` defines the separate pure 3a contracts. Slice 3c
+now permits the read-only composed reader at the production import boundary;
+slices 1–2 retain their existing local reader. There are no append calls, SQL
+changes or new production snapshot writes. New events use an independent wire-v1
 envelope, not additional fields in any existing queue event:
 
 - `change_provenance_observed` retains a bounded source-inventory chunk. Its
@@ -502,7 +502,7 @@ the complete existing dependency-v8 wrapper. Sharing v8 would change an already
 introduced strict schema and require editing dependency. Distinct outer v9
 preserves that boundary and needs no changes to `internal/dependency`.
 
-`journal.DecodeSnapshot` is an **explicit, unwired decoder only**. It delegates
+`journal.DecodeSnapshot` is a **read-only decoder** composed by slice 3c. It delegates
 base validation through a required pure `BaseDecoder`, returning the exact base
 bytes, base kind and folded provenance state. The callback receives the validated
 kind separately from the bytes and must dispatch on it, so future overlapping
@@ -559,3 +559,55 @@ No reader/writer activation or v1 audit-format change occurs in 3a.
   canonical snapshot payloads, base kind/version fences, detached base bytes,
   and the 4096-record boundary. Each requested guard is also proved by an
   isolated source mutation that makes its focused test fail.
+
+## Shared reader migration (slice 3c, Hold)
+
+`internal/journalreader` is now the single production composition boundary for
+queue, dependency and provenance codecs. The original 3a inert-import fences
+allow only this reader and store's read-only adapter; a separate AST guard rejects
+production new-event encoder calls and v8/v9 snapshot writes. Existing append
+APIs still accept only the sealed legacy `queue.Event` interface. The old queue
+and dependency decoders continue refusing v9 and the new provenance kinds.
+
+Store loads, reporting journals and outside-push cursors use the composed reader.
+Evidence-only operational/warning scans use its strict kind dispatcher and give
+side evidence no queue effect. Queue snapshots written by the existing cursor
+remain byte-identical v6/v7; side projections are rebuilt from immutable journal
+history when resuming a legacy cache. Replay pages close before exact-reference
+lookups, so pgx never performs a nested query on an actively streaming connection.
+There are no schema, index, public policy, evaluation or writer changes.
+
+Landing `DecisionID` resolves to an existing `landing_decision_recorded` in the
+same queue, bound to attempt, batch and member revision/head. Layer references
+resolve only to recognized member evidence, the exact decision, an exact member
+inventory chunk, or independently bound dependency evidence. Missing, wrong-kind,
+future and mismatched references refuse both live replay and snapshot loading.
+The legacy decision schema is per member: each member must resolve its exact
+decision through the attempt anchor or its layer references; the anchor must
+belong to one of those members. Multi-member evidence with an unbound member is
+refused.
+No invalid evidence becomes a complete/Human inventory or a satisfied dependency.
+
+Complete inventories also check the necessary head-membership invariant:
+retained originals, trusted exclusions, a supplied base or a retained best merge
+base must account for the head. Empty inventories whose base already contains
+the head remain valid. The schema has no graph edges; replay cannot prove ancestry,
+merge-base correctness or mapping/tree derivation from hashes. Those facts remain
+trusted local-producer evidence and require slice 4b's graph-verified acquisition;
+replay performs no Git or forge reads and invents no graph proof.
+
+The 4096-record cap is a typed operator-visible refusal, not automatic pruning.
+See [retention recovery](../../docs/operating.md#shared-reader-retention-recovery).
+Required export dependencies must not be lost to a speculative pruning policy.
+Audit v2 remains in the separate slice **3b** PR. Default legacy v1 exports and
+all frozen audit fixtures stay unchanged. This Hold implementation must wait for
+ADR 0009 period B; readers **and v2 export** must be deployed everywhere, older
+workers drained and a verified pre-emission backup taken before any writer slice.
+
+Focused guard tests added for the six #176 review gaps independently fail when
+removing declaration-digest binding, tested/landed batch binding, union coverage,
+marker exclusion, the equal-position layer-reference fence, or assembled commit
+sorting. Mixed-feature snapshot-plus-tail tests cover every cut, including partial
+chunks, both wrapper base kinds and #163 held requests. Store integration tests
+exercise actual journal load/reporting, partial-chunk cursor restart, v9 cursor
+loading without new-version writes and wrong-kind decision refusal.

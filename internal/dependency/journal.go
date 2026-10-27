@@ -10,8 +10,8 @@ import (
 	"strings"
 )
 
-// WireVersion identifies the inert dependency event schema. These contracts
-// are separate from queue.Event; production readers/emitters do not use them.
+// WireVersion identifies the dependency event schema. These contracts are
+// separate from queue.Event; production use is read-only through journalreader.
 const WireVersion = 1
 
 // Journal fold errors preserve the prior immutable state on rejection.

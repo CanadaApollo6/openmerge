@@ -78,7 +78,7 @@ func Apply(s State, id uint64, e Event) (State, error) {
 		return s, ErrBinding
 	}
 	if len(s.records) >= maxRecords || s.bytes+len(raw) > maxSnapshotBytes/2 {
-		return s, ErrLimit
+		return s, RetentionLimitError{Records: len(s.records) + 1, Bytes: s.bytes + len(raw)}
 	}
 	// Detach all caller-owned slices, including nested gate inputs and mappings.
 	e, err = DecodeEvent(raw)
@@ -221,6 +221,13 @@ func validateInventory(g group) error {
 			return ErrBinding
 		}
 		originals[c.ObjectID] = true
+	}
+	// No graph edges are persisted. Check the necessary endpoint membership that
+	// can be established from this schema, without inventing a Git read on replay.
+	if h.Complete && !originals[h.Request.Head] && !excluded[h.Request.Head] &&
+		h.Request.Head != h.Request.PinnedBase && h.Request.Head != h.Request.BuildBase &&
+		!slices.Contains(h.MergeBases, h.Request.Head) && !slices.Contains(h.BuildMergeBases, h.Request.Head) {
+		return ErrBinding
 	}
 	union := map[string]bool{}
 	for _, id := range append(slices.Clone(h.Stable), h.Additional...) {

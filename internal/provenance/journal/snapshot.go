@@ -10,15 +10,15 @@ import (
 // SnapshotVersion reserves v9, leaving dependency's explicit v8 unchanged.
 // A v9 BaseKind discriminates an unchanged queue snapshot from a dependency
 // wrapper. Kind-specific version allowlists must be updated for future readers.
-// Slice 3c can compose one reader for both via BaseDecoder, without introducing
-// a production dependency import or teaching old decoders to ignore evidence.
+// The shared journalreader composes both via BaseDecoder, without teaching
+// old decoders to ignore evidence.
 const SnapshotVersion = 9
 
 // BaseDecoder strictly validates an unchanged legacy/dependency snapshot. The
 // caller owns the concrete state and independently verified dependency identity.
 // Kind is "queue" or "dependency" and selects the decoder independently of its
 // version namespace. Unwrapped legacy input uses the frozen pre-v9 version map.
-// It must not perform I/O; readers must never resolve evidence during replay.
+// It must not perform I/O or acquire mutable external evidence during replay.
 type BaseDecoder func(kind string, raw []byte) error
 
 // Snapshot returns retained provenance and the exact base bytes. There is no
@@ -37,7 +37,7 @@ type snapshot struct {
 	Records  []Record        `json:"Records"`
 }
 
-// DecodeSnapshot is explicit and UNWIRED. It accepts legacy/v8 bytes through the
+// DecodeSnapshot accepts legacy/v8 bytes through the
 // supplied decoder and v9 through a strict retained-evidence fold. Nested v9
 // wrappers and unrecognized base versions are rejected before invoking callbacks.
 // V9 record payloads must already be canonical; replay preserves their exact bytes.
@@ -60,8 +60,11 @@ func DecodeSnapshot(raw []byte, decodeBase BaseDecoder) (Snapshot, error) {
 		if err := strictJSON(raw, &v); err != nil {
 			return Snapshot{}, err
 		}
-		if len(v.Records) == 0 || len(v.Records) > maxRecords {
+		if len(v.Records) == 0 {
 			return Snapshot{}, ErrMalformed
+		}
+		if len(v.Records) > maxRecords {
+			return Snapshot{}, RetentionLimitError{Records: len(v.Records), Bytes: len(raw)}
 		}
 		for _, r := range v.Records {
 			e, err := DecodeEvent(r.Payload)

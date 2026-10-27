@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/CanadaApollo6/openmerge/internal/journalreader"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/jackc/pgx/v5"
 )
@@ -80,7 +81,7 @@ func (s *Store) TakeNotification(ctx context.Context, q QueueID) (bool, error) {
 // EventRecord is one committed journal entry, ordered by ID within a queue.
 type EventRecord struct {
 	ID    int64
-	Event queue.Event
+	Event queue.Event // nil for strictly decoded provenance/dependency evidence
 	// DedupeKey preserves SQL NULL. EventsAfter does not load this field;
 	// journal and ledger readers load it. NULL/empty audit keys are orphans.
 	DedupeKey *string
@@ -101,7 +102,7 @@ func (s *Store) EventsAfter(ctx context.Context, q QueueID, after int64) ([]Even
 		if err := rows.Scan(&record.ID, &payload); err != nil {
 			return nil, err
 		}
-		record.Event, err = queue.DecodeEvent(payload)
+		record.Event, err = journalreader.QueueEvent(payload)
 		if err != nil {
 			return nil, err
 		}

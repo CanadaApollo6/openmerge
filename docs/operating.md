@@ -2557,3 +2557,43 @@ different owner. This routine does not establish independent custody.
 
 Keep frozen bundles and captured stdout/stderr private as described above.
 No repository, key, schedule or live service is created by this change.
+
+## Shared reader retention recovery
+
+The shared reader migration (ADR 0010 slice 3c / ADR 0011) is **Hold**. Deploy
+only after ADR 0009 period B drains. This change installs readers only: it cannot
+append provenance/dependency events or write v8/v9 snapshots. Audit v2 remains a
+separate ADR 0010 slice 3b PR. Before enabling any writer slice, deploy both the
+shared readers and v2 export support everywhere, drain every older worker and
+reader, verify legacy and new snapshot-plus-tail replay, and take and verify a
+whole-database pre-emission backup. This PR alone does not complete that rollout.
+
+Provenance retains at most **4096 records** and **32 MiB of canonical event
+payloads** per queue. A partial inventory chunk consumes one record. Replay
+returns a typed `journal.RetentionLimitError` (also `errors.Is(err, ErrLimit)`),
+including counts and this recovery link, before discarding any evidence or
+publishing a partially validated state. Oversized v9 record collections also
+return that typed error. Dependency's existing bounded active projections remain
+unchanged. Legacy journals do not acquire the provenance record bound.
+
+The reader deliberately does **not** prune. Required audit dependencies can
+outlive the latest generation, and slice 3b has not established the export closure
+and retention contract yet. Do not enable writers on the assumption that these
+4096 records will be compacted automatically.
+
+If this limit is encountered, stop new emission for the affected queue and keep
+its immutable journal and snapshots intact. Retain a verified whole-database
+backup. Deploy a compatible reader with a separately reviewed retention/export
+closure implementation (or a reviewed, resource-budgeted higher bound), then
+replay the retained journal and verify its results before resuming. Restarting,
+clearing a cache, deleting old events, or turning off policy cannot repair a full
+replay over this bound. Do not roll back to an older binary after emission;
+rollback past the boundary requires the verified pre-emission backup and
+reconciliation of subsequent external effects, as specified in ADRs 0010/0011.
+
+Dependency projections decoded without independently verified database identity
+and incarnation are quarantined. They can be replayed for compatibility but the
+shared reader's `Dependencies` accessor refuses them. A snapshot cannot supply
+its own trust binding. The future startup/writer integration must supply the
+operator-verified binding before dependency satisfaction is exposed; no live
+policy or satisfaction path is enabled here.
