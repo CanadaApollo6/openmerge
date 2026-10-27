@@ -34,21 +34,32 @@ exception or acknowledgement behavior in this package.
   lines in that body. It never accepts a list of commit messages or PR comments.
   `Depends-On:` is case-sensitive and must start a standalone prose line, with
   at most three leading spaces and exactly one non-whitespace reference. CRLF is
-  normalized. Fenced/indented code, block quotes and HTML comments are ignored;
-  unclosed fences/comments shield the remaining body. HTML comments are replaced
-  by whitespace, so an inline comment cannot concatenate a reference or key.
+  normalized. Goldmark v1.8.6 (pure Go, MIT, no transitive dependencies) parses
+  CommonMark. Only top-level paragraphs count: list items (including lazy
+  continuations), headings, fenced/indented code, block quotes, HTML blocks and
+  GFM table cells are excluded. Lines overlapping inline code or raw HTML
+  (including multiline comments) are excluded in full. Original source line
+  segments preserve escapes and markup; stripping them cannot manufacture a key
+  or reference. Literal comment markers in code spans or escaped text do not
+  start comments. Unclosed blocks follow CommonMark, rather than a separate
+  comment/fence state machine. Only the GFM Table extension is enabled because
+  it changes paragraph boundaries. Linkify, TaskList and Strikethrough do not
+  change which source lines qualify under these rules and remain disabled.
 - URI segments use RFC 3986 unreserved-only, uppercase percent encoding of UTF-8
   bytes. Encoded unreserved bytes, lowercase escapes, raw reserved characters,
   credentials, invalid UTF-8, controls, query/fragment syntax and extra segments
   are rejected. Spaces in an installation segment are encoded as `%20`. Origins
   are supplied canonical HTTPS origins, including a configured nondefault port.
+  Explicit default port `:443` and trailing-dot host spellings are rejected.
 - `Resolve` accepts only supplied binding records. The currently recognized URL
   alias shape is a GitHub HTTPS `/owner/repo/pull/positive-number` URL on the
   configured origin. It binds revision-less to exactly one stored queue key
   including base/lane. Unknown IDs, ambiguous aliases/bindings and unserved or
   foreign-organization repositories fail closed. Callers must retain this binding
   for a declaration; calling Resolve against a later registry is not a refresh
-  protocol. Persistence and binding/edit races belong to later slices.
+  protocol. At most 1024 raw inputs are accepted; overflow fails before any
+  binding scan, even if they would deduplicate. Persistence and binding/edit
+  races belong to later slices.
 - `Normalize` sorts by journal-scoped change ID and deduplicates resolved edges.
   Revision zero means revision-less; explicit pins are positive uint64 observation
   sequences without leading zeros, matching ADR 0007's revision type. Conflicting
@@ -60,8 +71,12 @@ exception or acknowledgement behavior in this package.
   decision or serialized cycle state. It visits only the requested root's closure.
   Unknown discovery is blocking. Traversal counts the root at depth zero, allows
   256 distinct nodes / 512 distinct directed edges / depth 16, and checks each
-  traversed edge's bilateral consent. Shared nodes reached through a longer path
-  are rechecked for depth. Edge order and map order cannot select a cycle winner.
+  traversed edge's bilateral consent. Served repositories are indexed once per
+  evaluation, and endpoint queue/policy validation is cached by node for that
+  evaluation only. Shared nodes reached through a longer path are rechecked for
+  depth, with at most 17 expansions per node; equal/shorter paths do not expand
+  again. Self-edges produce `dependency-cycle` before the same-repository consent
+  check. Edge order and map order cannot select a cycle winner.
   A supplied confirmed, on-base landing matching an incoming optional pin is
   terminal; current consent is still required. The source's later declaration
   need not be complete and cannot replace that landing's historical decision.
@@ -72,19 +87,32 @@ exception or acknowledgement behavior in this package.
 
 - `TestCanonicalURIGolden`, `TestCanonicalURIRejectsMalformedAndForeign`:
   fixed canonical URI/escaping vectors, optional pins, malformed and foreign scope.
-- `TestAuthoritativeIntentBoundaries`, `TestMalformedRecognizedIntentFailsClosed`:
-  body/trailer and Markdown boundary fixtures, CRLF, fail-closed recognized lines.
+- `TestAuthoritativeIntentBoundaries`, `TestMalformedRecognizedIntentFailsClosed`,
+  `TestIntentCommonMarkCorpus`: body/trailer and 39 CommonMark/GFM boundary cases,
+  including inline/escaped comment markers, list fences, lazy quotes, nested
+  lists, setext headings, HTML blocks, multiline code spans, CRLF and tabs.
 - `TestRevisionlessAliasesOptionalPinsAndDedupe`,
   `TestResolutionRejectsUnservedAmbiguousAndForeign`: resolution and conflicts.
 - `TestCycleDiagnosticsDerivedAndDeterministic`,
   `TestIncompleteAndInvalidGraphsBlock`, `TestBilateralGrants`,
   `TestMatchingLandingIsTerminalButRetainsConsent`: bounded pure graph contracts.
 - `TestDirectEdgeLimitAfterDedupe`, `TestGraphNodeLimit`, `TestGraphEdgeLimit`,
-  `TestGraphDepthLimitAndSharedLongPath`: exact boundaries and overflow diagnostics.
+  `TestGraphDepthLimitAndSharedLongPath`, `TestGraphLadderExpansionBound`: exact
+  boundaries and overflow diagnostics; a 64-node / 244-edge / 16-layer ladder
+  expands exactly 64 times. The test stops at expansion 65 if memoization breaks.
+- `TestResolveInputCapBeforeBindingWork`,
+  `TestOriginsRejectAlternateCanonicalSpellings`: raw input cap and origin syntax.
+- `BenchmarkEvaluateLadder1024Served`: the ladder with 1024 served repositories
+  and full grant lists on every node, exercising scoped-validation caching.
 - `TestCandidatePolicySchemaAgreement`, `TestPublicConfigRejectsDependencyKeys`:
   candidate/schema agreement and public rejection.
 - `TestLegacyConfigParsingAndDigestsByteIdentical`: frozen origin/main vectors
   for parsed JSON bytes, warnings, errors, both cleanup digest variants and
   depth 1/4 configs. The public loader/schema and all deployed contracts are
   untouched; existing `internal/config` tests retain their legacy digest vectors.
-- `FuzzParseIntent`: parser seeds and successful canonical round-trip invariants.
+- `FuzzParseIntent`: corpus seeds, successful canonical round trips, and an
+  independent full-AST walk asserting selected source lines never overlap code,
+  quote, comment/raw HTML or list nodes.
+- `FuzzParseReference`: accepted input equals its canonical spelling.
+- `FuzzParsePolicyCandidate`: successful policies validate and round-trip through
+  YAML without changing mode or grants.

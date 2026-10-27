@@ -27,32 +27,45 @@ type Registry struct {
 	Bindings     []Binding
 }
 
-func (r Registry) served(repo string) bool {
-	for _, candidate := range r.Repositories {
-		if candidate == repo {
-			return true
-		}
-	}
-	return false
+// registryIndex belongs to one operation; Registry remains an immutable snapshot.
+type registryIndex struct {
+	Registry
+	served map[string]bool
 }
 
-func (r Registry) validateRepo(repo string) error {
+func (r Registry) index() registryIndex {
+	index := registryIndex{Registry: r, served: make(map[string]bool, len(r.Repositories))}
+	for _, repo := range r.Repositories {
+		index.served[repo] = true
+	}
+	return index
+}
+
+func (r registryIndex) validateRepo(repo string) error {
 	u, err := repositoryURL(repo)
 	if err != nil {
 		return err
 	}
-	if r.Scope.ForgeInstance != "github:https://"+u.Host || !name(r.Organization) || !strings.HasPrefix(u.Path, "/"+r.Organization+"/") || !r.served(repo) {
+	if r.Scope.ForgeInstance != "github:https://"+u.Host || !name(r.Organization) || !strings.HasPrefix(u.Path, "/"+r.Organization+"/") || !r.served[repo] {
 		return ErrOutOfScope
 	}
 	return nil
 }
 
+// MaxInputs bounds resolution work before binding scans, separately from the
+// distinct-edge limit. Duplicate declarations are allowed within this raw cap.
+const MaxInputs = 1024
+
 // Resolve binds inputs only against supplied facts; no network lookup is possible.
 // A foreign canonical namespace is rejected before inspecting any binding.
 func Resolve(inputs []Input, registry Registry) ([]Reference, error) {
+	if len(inputs) > MaxInputs {
+		return nil, ErrLimit
+	}
 	if err := registry.Scope.Validate(); err != nil {
 		return nil, err
 	}
+	index := registry.index()
 	var refs []Reference
 	for _, input := range inputs {
 		alias := input.Alias != ""
@@ -64,7 +77,7 @@ func Resolve(inputs []Input, registry Registry) ([]Reference, error) {
 			if err != nil {
 				return nil, err
 			}
-			if err := registry.validateRepo(repo); err != nil {
+			if err := index.validateRepo(repo); err != nil {
 				return nil, err
 			}
 		} else {
@@ -106,7 +119,7 @@ func Resolve(inputs []Input, registry Registry) ([]Reference, error) {
 		if found.Reference.Revision != 0 || found.Queue.Base == "" {
 			return nil, ErrUnresolved
 		}
-		if err := registry.validateRepo(found.Queue.Repository); err != nil {
+		if err := index.validateRepo(found.Queue.Repository); err != nil {
 			return nil, err
 		}
 		if alias {

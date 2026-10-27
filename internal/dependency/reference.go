@@ -61,6 +61,9 @@ func originURL(raw string) (*url.URL, error) {
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || strings.HasSuffix(u.Host, ":") || u.Host != strings.ToLower(u.Host) || u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" || !cleanText(raw) || u.String() != raw || strings.Contains(raw, "#") {
 		return nil, ErrMalformed
 	}
+	if strings.HasSuffix(u.Hostname(), ".") || u.Port() == "443" {
+		return nil, ErrMalformed
+	}
 	if port := u.Port(); port != "" {
 		number, err := strconv.ParseUint(port, 10, 16)
 		if err != nil || number == 0 || strconv.FormatUint(number, 10) != port {

@@ -1,0 +1,225 @@
+[
+  {
+    "name": "literal comment in code span",
+    "body": "Document the `<!--` syntax.\n\nDepends-On: https://github.com/acme/api/pull/42",
+    "aliases": [
+      "https://github.com/acme/api/pull/42"
+    ]
+  },
+  {
+    "name": "escaped comment opener",
+    "body": "Document the \\<!-- syntax.\n\nDepends-On: https://github.com/acme/api/pull/42",
+    "aliases": [
+      "https://github.com/acme/api/pull/42"
+    ]
+  },
+  {
+    "name": "list fence",
+    "body": "- ```text\n  Depends-On: invalid\n  ```\n\nDepends-On: https://github.com/acme/api/pull/42",
+    "aliases": [
+      "https://github.com/acme/api/pull/42"
+    ]
+  },
+  {
+    "name": "lazy quote",
+    "body": "> Example declaration:\nDepends-On: https://github.com/acme/api/pull/42",
+    "aliases": []
+  },
+  {
+    "name": "lazy nested quote",
+    "body": "> > Example declaration:\nDepends-On: https://github.com/acme/api/pull/42",
+    "aliases": []
+  },
+  {
+    "name": "quote ends at blank",
+    "body": "> Example declaration:\n\nDepends-On: https://github.com/acme/api/pull/42",
+    "aliases": [
+      "https://github.com/acme/api/pull/42"
+    ]
+  },
+  {
+    "name": "nested list",
+    "body": "- outer\n  - inner\n\n    Depends-On: https://github.com/acme/api/pull/42",
+    "aliases": []
+  },
+  {
+    "name": "list paragraph",
+    "body": "- example\n\n  Depends-On: https://github.com/acme/api/pull/42",
+    "aliases": []
+  },
+  {
+    "name": "lazy list",
+    "body": "- example\nDepends-On: https://github.com/acme/api/pull/42",
+    "aliases": []
+  },
+  {
+    "name": "list ends at blank",
+    "body": "- example\n\nDepends-On: https://github.com/acme/api/pull/42",
+    "aliases": [
+      "https://github.com/acme/api/pull/42"
+    ]
+  },
+  {
+    "name": "setext heading",
+    "body": "Depends-On: https://github.com/acme/api/pull/42\n---\n",
+    "aliases": []
+  },
+  {
+    "name": "setext multiline heading",
+    "body": "Example\nDepends-On: https://github.com/acme/api/pull/42\n===\n",
+    "aliases": []
+  },
+  {
+    "name": "atx heading",
+    "body": "# Depends-On: https://github.com/acme/api/pull/42",
+    "aliases": []
+  },
+  {
+    "name": "html block",
+    "body": "<div>\nDepends-On: https://github.com/acme/api/pull/42\n</div>\n",
+    "aliases": []
+  },
+  {
+    "name": "html block ends at blank",
+    "body": "<div>\nDepends-On: https://github.com/acme/api/pull/42\n</div>\n\nDepends-On: https://github.com/acme/api/pull/42",
+    "aliases": [
+      "https://github.com/acme/api/pull/42"
+    ]
+  },
+  {
+    "name": "html script",
+    "body": "<script>\nDepends-On: https://github.com/acme/api/pull/42\n</script>",
+    "aliases": []
+  },
+  {
+    "name": "html processing instruction",
+    "body": "<?example\nDepends-On: https://github.com/acme/api/pull/42\n?>",
+    "aliases": []
+  },
+  {
+    "name": "html declaration",
+    "body": "<!EXAMPLE\nDepends-On: https://github.com/acme/api/pull/42\n>",
+    "aliases": []
+  },
+  {
+    "name": "html cdata",
+    "body": "<![CDATA[\nDepends-On: https://github.com/acme/api/pull/42\n]]>",
+    "aliases": []
+  },
+  {
+    "name": "html custom block",
+    "body": "<custom-element>\nDepends-On: https://github.com/acme/api/pull/42\n</custom-element>",
+    "aliases": []
+  },
+  {
+    "name": "block comment",
+    "body": "<!--\nDepends-On: https://github.com/acme/api/pull/42\n-->",
+    "aliases": []
+  },
+  {
+    "name": "unclosed block comment",
+    "body": "<!--\nDepends-On: https://github.com/acme/api/pull/42",
+    "aliases": []
+  },
+  {
+    "name": "inline comment",
+    "body": "Example <!--\nDepends-On: https://github.com/acme/api/pull/42\n-->\n\nDepends-On: https://github.com/acme/api/pull/42",
+    "aliases": [
+      "https://github.com/acme/api/pull/42"
+    ]
+  },
+  {
+    "name": "comment cannot synthesize declaration",
+    "body": "Depends-<!-- comment -->On: https://github.com/acme/api/pull/42",
+    "aliases": []
+  },
+  {
+    "name": "comment shares declaration line",
+    "body": "Depends-On: https://github.com/acme/api/pull/42 <!-- comment -->",
+    "aliases": []
+  },
+  {
+    "name": "code span",
+    "body": "`Depends-On: https://github.com/acme/api/pull/42`",
+    "aliases": []
+  },
+  {
+    "name": "multiline code span",
+    "body": "Example `\nDepends-On: https://github.com/acme/api/pull/42\n`\n\nDepends-On: https://github.com/acme/api/pull/42",
+    "aliases": [
+      "https://github.com/acme/api/pull/42"
+    ]
+  },
+  {
+    "name": "unmatched code marker is literal",
+    "body": "Example `\nDepends-On: https://github.com/acme/api/pull/42",
+    "aliases": [
+      "https://github.com/acme/api/pull/42"
+    ]
+  },
+  {
+    "name": "escaped declaration",
+    "body": "\\Depends-On: https://github.com/acme/api/pull/42",
+    "aliases": []
+  },
+  {
+    "name": "indented code",
+    "body": "    Depends-On: https://github.com/acme/api/pull/42",
+    "aliases": []
+  },
+  {
+    "name": "tab code",
+    "body": "\tDepends-On: https://github.com/acme/api/pull/42",
+    "aliases": []
+  },
+  {
+    "name": "space tab code",
+    "body": " \tDepends-On: https://github.com/acme/api/pull/42",
+    "aliases": []
+  },
+  {
+    "name": "four space lazy prose continuation",
+    "body": "Example\n    Depends-On: https://github.com/acme/api/pull/42",
+    "aliases": []
+  },
+  {
+    "name": "three spaces",
+    "body": "   Depends-On: https://github.com/acme/api/pull/42",
+    "aliases": [
+      "https://github.com/acme/api/pull/42"
+    ]
+  },
+  {
+    "name": "tab separates value",
+    "body": "Depends-On:\thttps://github.com/acme/api/pull/42",
+    "aliases": [
+      "https://github.com/acme/api/pull/42"
+    ]
+  },
+  {
+    "name": "crlf",
+    "body": "Example\r\n\r\n   Depends-On: https://github.com/acme/api/pull/42\r\n",
+    "aliases": [
+      "https://github.com/acme/api/pull/42"
+    ]
+  },
+  {
+    "name": "gfm table",
+    "body": "Depends-On: https://github.com/acme/api/pull/42 |\n--- |\nexample |",
+    "aliases": []
+  },
+  {
+    "name": "fenced tilde",
+    "body": "~~~text\nDepends-On: https://github.com/acme/api/pull/42\n~~~\n\nDepends-On: https://github.com/acme/api/pull/42",
+    "aliases": [
+      "https://github.com/acme/api/pull/42"
+    ]
+  },
+  {
+    "name": "fenced backtick metadata",
+    "body": "```html <!-- literal\nDepends-On: https://github.com/acme/api/pull/42\n```\n\nDepends-On: https://github.com/acme/api/pull/42",
+    "aliases": [
+      "https://github.com/acme/api/pull/42"
+    ]
+  }
+]

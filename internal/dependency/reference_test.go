@@ -118,6 +118,7 @@ func TestResolutionRejectsUnservedAmbiguousAndForeign(t *testing.T) {
 		{"ambiguous alias", Input{Alias: "https://github.com/acme/api/pull/42"}, func(r *Registry) { r.Bindings = append(r.Bindings, r.Bindings[0]) }, ErrUnresolved},
 		{"foreign binding", Input{Alias: "https://github.com/acme/api/pull/42"}, func(r *Registry) { r.Bindings[0].Reference.Scope.Installation = "456" }, ErrOutOfScope},
 		{"wrong queue binding", Input{Alias: "https://github.com/acme/api/pull/42"}, func(r *Registry) { r.Bindings[0].Queue.Repository = r.Repositories[1] }, ErrUnresolved},
+		{"pinned binding", Input{Reference: testRef(1, 0)}, func(r *Registry) { r.Bindings[0].Reference.Revision = 7 }, ErrUnresolved},
 		{"missing base", Input{Reference: testRef(1, 0)}, func(r *Registry) { r.Bindings[0].Queue.Base = "" }, ErrUnresolved},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -152,7 +153,11 @@ func FuzzParseIntent(f *testing.F) {
 	for _, seed := range []string{"", "Depends-On: " + raw, "```\nDepends-On: invalid\n```", "<!--\r\nDepends-On: bad\r\n-->", "Depends-On: https://github.com/acme/api/pull/42"} {
 		f.Add(seed)
 	}
+	for _, tc := range intentCorpus(f) {
+		f.Add(tc.Body)
+	}
 	f.Fuzz(func(t *testing.T, body string) {
+		assertIntentProseLines(t, body)
 		inputs, err := ParseIntent(body, testScope())
 		if err != nil {
 			return
@@ -169,6 +174,58 @@ func FuzzParseIntent(f *testing.F) {
 			if err != nil || got != input.Reference {
 				t.Fatalf("roundtrip: %v", err)
 			}
+		}
+	})
+}
+
+func TestResolveInputCapBeforeBindingWork(t *testing.T) {
+	registry := registryFixture()
+	inputs := make([]Input, MaxInputs)
+	for i := range inputs {
+		inputs[i] = Input{Reference: testRef(1, 0)}
+	}
+	if refs, err := Resolve(inputs, registry); err != nil || len(refs) != 1 {
+		t.Fatalf("at cap: %v %v", refs, err)
+	}
+	// Invalid inputs would fail as malformed if even the first were resolved.
+	// ErrLimit proves the raw-count check precedes all per-input/binding work.
+	for _, count := range []int{MaxInputs + 1, 20000} {
+		if refs, err := Resolve(make([]Input, count), registry); !errors.Is(err, ErrLimit) || refs != nil {
+			t.Fatalf("count %d: %v %v", count, refs, err)
+		}
+	}
+}
+
+func TestOriginsRejectAlternateCanonicalSpellings(t *testing.T) {
+	for _, origin := range []string{"https://github.com:443", "https://github.com.", "https://github.com.:8443"} {
+		t.Run(origin, func(t *testing.T) {
+			scope := testScope()
+			scope.ForgeInstance = "github:" + origin
+			if err := scope.Validate(); !errors.Is(err, ErrMalformed) {
+				t.Fatalf("scope: %v", err)
+			}
+			if _, err := repositoryURL(origin + "/acme/api"); !errors.Is(err, ErrMalformed) {
+				t.Fatalf("repository: %v", err)
+			}
+			raw := strings.Replace(canonical(t, testRef(1, 0)), EscapeSegment(testScope().ForgeInstance), EscapeSegment(scope.ForgeInstance), 1)
+			if _, err := ParseReference(raw, testScope()); !errors.Is(err, ErrMalformed) {
+				t.Fatalf("reference: %v", err)
+			}
+		})
+	}
+}
+
+func FuzzParseReference(f *testing.F) {
+	for _, seed := range []string{"", canonical(f, testRef(1, 0)), canonical(f, testRef(2, 7)), canonical(f, testRef(3, 0)) + "@01"} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, raw string) {
+		ref, err := ParseReference(raw, testScope())
+		if err != nil {
+			return
+		}
+		if got := canonical(t, ref); got != raw {
+			t.Fatalf("accepted %q != canonical %q", raw, got)
 		}
 	})
 }

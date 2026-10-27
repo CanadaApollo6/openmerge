@@ -107,10 +107,14 @@ func ParsePolicyCandidate(data []byte) (Policy, error) {
 // ValidatePolicyScope resolves every candidate grant against supplied served facts.
 // A syntactically valid URL alone never grants access to an unserved repository.
 func ValidatePolicyScope(p Policy, registry Registry) error {
-	if err := registry.Scope.Validate(); err != nil {
+	return registry.index().validatePolicyScope(p)
+}
+
+func (r registryIndex) validatePolicyScope(p Policy) error {
+	if err := r.Scope.Validate(); err != nil {
 		return err
 	}
-	if !name(registry.Organization) {
+	if !name(r.Organization) {
 		return ErrOutOfScope
 	}
 	if err := p.Validate(); err != nil {
@@ -118,7 +122,7 @@ func ValidatePolicyScope(p Policy, registry Registry) error {
 	}
 	for _, list := range [][]string{p.AllowFrom, p.AllowTo} {
 		for _, repo := range list {
-			if err := registry.validateRepo(repo); err != nil {
+			if err := r.validateRepo(repo); err != nil {
 				return err
 			}
 		}
@@ -133,22 +137,37 @@ func BilateralGrant(registry Registry, consumer QueueKey, consumerPolicy *Policy
 	if err := registry.Scope.Validate(); err != nil {
 		return err
 	}
-	for _, key := range []QueueKey{consumer, source} {
-		if key.Base == "" {
-			return ErrUnresolved
-		}
-		if err := registry.validateRepo(key.Repository); err != nil {
-			return err
-		}
+	if err := bilateralGrant(consumer, consumerPolicy, consumerStrict, source, sourcePolicy, sourceStrict); err != nil {
+		return err
 	}
-	if strings.EqualFold(consumer.Repository, source.Repository) || !consumerStrict || !sourceStrict || consumerPolicy == nil || sourcePolicy == nil {
+	index := registry.index()
+	if err := index.validateGrantEndpoint(consumer, consumerPolicy); err != nil {
+		return err
+	}
+	if err := index.validateGrantEndpoint(source, sourcePolicy); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r registryIndex) validateGrantEndpoint(key QueueKey, policy *Policy) error {
+	if key.Base == "" {
+		return ErrUnresolved
+	}
+	if err := r.validateRepo(key.Repository); err != nil {
+		return err
+	}
+	if policy == nil {
 		return ErrOutOfScope
 	}
-	if err := ValidatePolicyScope(*consumerPolicy, registry); err != nil {
-		return err
-	}
-	if err := ValidatePolicyScope(*sourcePolicy, registry); err != nil {
-		return err
+	return r.validatePolicyScope(*policy)
+}
+
+// bilateralGrant checks consent only; callers separately validate queue/policy
+// scope. Evaluate caches that validation by node instead of reparsing grants.
+func bilateralGrant(consumer QueueKey, consumerPolicy *Policy, consumerStrict bool, source QueueKey, sourcePolicy *Policy, sourceStrict bool) error {
+	if strings.EqualFold(consumer.Repository, source.Repository) || !consumerStrict || !sourceStrict || consumerPolicy == nil || sourcePolicy == nil {
+		return ErrOutOfScope
 	}
 	if !slices.Contains(consumerPolicy.AllowFrom, source.Repository) || !slices.Contains(sourcePolicy.AllowTo, consumer.Repository) {
 		return ErrOutOfScope

@@ -63,6 +63,11 @@ func (p Projection) Valid() bool { return len(p.Diagnostics) == 0 }
 // Evaluate derives cycle/scope/grant/limit diagnostics without admitting edits,
 // mutating facts, serializing concurrent declarations or performing external I/O.
 func (g Graph) Evaluate(root string) Projection {
+	return g.evaluate(root, nil)
+}
+
+// onExpand is an internal observation hook for deterministic traversal-cost tests.
+func (g Graph) evaluate(root string, onExpand func(string)) Projection {
 	p := Projection{}
 	fail := func(code string, path []string) {
 		p.Diagnostics = append(p.Diagnostics, Diagnostic{code, slices.Clone(path)})
@@ -70,6 +75,16 @@ func (g Graph) Evaluate(root string) Projection {
 	if err := g.Registry.Scope.Validate(); err != nil {
 		fail("dependency-out-of-scope", []string{root})
 		return p
+	}
+	registry := g.Registry.index()
+	policyErrors := map[string]error{}
+	validateEndpoint := func(id string, node Node) error {
+		if err, checked := policyErrors[id]; checked {
+			return err
+		}
+		err := registry.validateGrantEndpoint(node.Queue, node.Policy)
+		policyErrors[id] = err
+		return err
 	}
 	seenNodes := map[string]bool{}
 	seenEdges := map[[2]string]bool{}
@@ -105,7 +120,7 @@ func (g Graph) Evaluate(root string) Projection {
 			fail("dependency-unresolved", path)
 			return
 		}
-		if err := g.Registry.validateRepo(node.Queue.Repository); err != nil || node.Queue.Base == "" {
+		if err := registry.validateRepo(node.Queue.Repository); err != nil || node.Queue.Base == "" {
 			fail("dependency-out-of-scope", path)
 			return
 		}
@@ -124,6 +139,9 @@ func (g Graph) Evaluate(root string) Projection {
 			return
 		}
 		expandedDepth[id] = depth
+		if onExpand != nil {
+			onExpand(id)
+		}
 		edges, err := Normalize(node.Edges, g.Registry.Scope)
 		if err != nil {
 			code := "dependency-unresolved"
@@ -156,7 +174,13 @@ func (g Graph) Evaluate(root string) Projection {
 				fail("dependency-unresolved", edgePath)
 				continue
 			}
-			if err := BilateralGrant(g.Registry, node.Queue, node.Policy, node.Strict, source.Queue, source.Policy, source.Strict); err != nil {
+			// Self-dependencies are cycles even though same-repository grants are
+			// otherwise forbidden. Report the structural cause before consent.
+			if ref.ChangeID == id {
+				fail("dependency-cycle", edgePath)
+				continue
+			}
+			if validateEndpoint(id, node) != nil || validateEndpoint(ref.ChangeID, source) != nil || bilateralGrant(node.Queue, node.Policy, node.Strict, source.Queue, source.Policy, source.Strict) != nil {
 				fail("dependency-out-of-scope", edgePath)
 				continue
 			}

@@ -54,6 +54,16 @@ func TestBilateralGrants(t *testing.T) {
 			n.Policy = nil
 			g.Nodes[n.Reference.ChangeID] = n
 		}, false},
+		{"consumer not strict", func(g *Graph) {
+			n := g.Nodes[testRef(0, 0).ChangeID]
+			n.Strict = false
+			g.Nodes[n.Reference.ChangeID] = n
+		}, false},
+		{"source disabled", func(g *Graph) {
+			n := g.Nodes[testRef(1, 0).ChangeID]
+			n.Policy = nil
+			g.Nodes[n.Reference.ChangeID] = n
+		}, false},
 		{"post merge", func(g *Graph) {
 			n := g.Nodes[testRef(1, 0).ChangeID]
 			n.Strict = false
@@ -75,6 +85,10 @@ func TestBilateralGrants(t *testing.T) {
 			g := graphFixture(3)
 			connect(&g, 0, 1)
 			tc.change(&g)
+			consumer, source := g.Nodes[testRef(0, 0).ChangeID], g.Nodes[testRef(1, 0).ChangeID]
+			if err := BilateralGrant(g.Registry, consumer.Queue, consumer.Policy, consumer.Strict, source.Queue, source.Policy, source.Strict); (err == nil) != tc.allow {
+				t.Fatalf("BilateralGrant: %v; allow %v", err, tc.allow)
+			}
 			p := evaluate(g)
 			if p.Valid() != tc.allow {
 				t.Fatalf("%+v", p)
@@ -120,8 +134,8 @@ func TestCycleDiagnosticsDerivedAndDeterministic(t *testing.T) {
 	}
 	self := graphFixture(1)
 	connect(&self, 0, 0)
-	if p := evaluate(self); p.Valid() {
-		t.Fatal("self edge accepted")
+	if p := evaluate(self); len(p.Diagnostics) != 1 || p.Diagnostics[0].Code != "dependency-cycle" || !reflect.DeepEqual(p.Diagnostics[0].Path, []string{testRef(0, 0).ChangeID, testRef(0, 0).ChangeID}) {
+		t.Fatalf("self edge must diagnose cycle: %+v", p)
 	}
 }
 
@@ -139,6 +153,11 @@ func TestIncompleteAndInvalidGraphsBlock(t *testing.T) {
 		{"foreign", func(g *Graph) {
 			n := g.Nodes[testRef(1, 0).ChangeID]
 			n.Reference.Scope.Installation = "other"
+			g.Nodes[n.Reference.ChangeID] = n
+		}},
+		{"pinned node identity", func(g *Graph) {
+			n := g.Nodes[testRef(1, 0).ChangeID]
+			n.Reference.Revision = 7
 			g.Nodes[n.Reference.ChangeID] = n
 		}},
 		{"wrong id", func(g *Graph) {
@@ -281,5 +300,55 @@ func TestGraphDepthLimitAndSharedLongPath(t *testing.T) {
 	}
 	if p := evaluate(g); !hasCode(p, "dependency-limit-depth") {
 		t.Fatalf("shared deep path hidden: %+v", p)
+	}
+}
+
+// Sixteen width-four layers, with the root also reaching its three peers in
+// layer zero and one shortcut to layer two: 64 reachable nodes, 244 edges.
+// Sorted DFS visits the longest paths first; equal-depth paths must not expand
+// their common suffix again. Fail at expansion 65 so a broken memoization guard
+// is caught immediately rather than traversing exponentially many paths.
+func ladderFixture() Graph {
+	const width, layers = 4, 16
+	g := graphFixture(width * layers)
+	connect(&g, 0, 1, 2, 3, 8)
+	for layer := 0; layer < layers-1; layer++ {
+		for from := layer * width; from < (layer+1)*width; from++ {
+			for to := (layer + 1) * width; to < (layer+2)*width; to++ {
+				connect(&g, from, to)
+			}
+		}
+	}
+	return g
+}
+
+func TestGraphLadderExpansionBound(t *testing.T) {
+	g := ladderFixture()
+	expansions := 0
+	p := g.evaluate(testRef(0, 0).ChangeID, func(string) {
+		expansions++
+		if expansions > 64 {
+			t.Fatal("equal/shorter path expanded a shared suffix again")
+		}
+	})
+	if !p.Valid() || p.Nodes != 64 || p.Edges != 244 || p.Depth != 16 || expansions != 64 {
+		t.Fatalf("expansions %d; projection %+v", expansions, p)
+	}
+}
+
+func BenchmarkEvaluateLadder1024Served(b *testing.B) {
+	g := ladderFixture()
+	for i := len(g.Registry.Repositories); i < 1024; i++ {
+		g.Registry.Repositories = append(g.Registry.Repositories, fmt.Sprintf("https://github.com/acme/r%d", i))
+	}
+	for _, n := range g.Nodes {
+		n.Policy.AllowFrom = slices.Clone(g.Registry.Repositories)
+		n.Policy.AllowTo = slices.Clone(g.Registry.Repositories)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		if p := evaluate(g); !p.Valid() {
+			b.Fatal(p)
+		}
 	}
 }

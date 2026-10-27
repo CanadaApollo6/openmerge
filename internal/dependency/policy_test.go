@@ -3,6 +3,7 @@ package dependency
 import (
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -97,4 +98,28 @@ func TestPublicConfigRejectsDependencyKeys(t *testing.T) {
 			t.Fatalf("legacy digest %s != %s", got, tc.want)
 		}
 	}
+}
+
+func FuzzParsePolicyCandidate(f *testing.F) {
+	for _, seed := range []string{"", "mode: ordered", "mode: ordered\nallow_from: [https://github.com/acme/api]", "mode: ordered\nmode: ordered", "mode: ordered\nallow_from: &x []\nallow_to: *x", "!!map {mode: ordered}"} {
+		f.Add([]byte(seed))
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		policy, err := ParsePolicyCandidate(data)
+		if err != nil {
+			return
+		}
+		if err := policy.Validate(); err != nil {
+			t.Fatalf("accepted invalid policy: %v", err)
+		}
+		// Successful parsing is stable through canonical YAML serialization.
+		raw, err := yaml.Marshal(policy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reparsed, err := ParsePolicyCandidate(raw)
+		if err != nil || policy.Mode != reparsed.Mode || !slices.Equal(policy.AllowFrom, reparsed.AllowFrom) || !slices.Equal(policy.AllowTo, reparsed.AllowTo) {
+			t.Fatalf("roundtrip: %+v %v", reparsed, err)
+		}
+	})
 }
