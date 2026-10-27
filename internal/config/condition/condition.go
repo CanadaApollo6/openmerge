@@ -112,6 +112,7 @@ type Expression struct {
 	kind     expressionKind
 	children []Expression
 	name     string
+	typ      valueKind
 	op       string
 	value    string
 	negative bool
@@ -136,12 +137,27 @@ func Not(child Expression) Expression { return Expression{kind: not, children: [
 // Parse compiles a single [-][#]attribute [operator value] condition.
 // Values are the remainder of the string, without another layer of quoting.
 func Parse(text string) (Expression, error) {
+	return parse(text, nil)
+}
+
+// ParseCandidate compiles an unwired extension without changing the public
+// grammar or frozen evidence vocabulary. Extension values supply types only;
+// existing attributes cannot be overridden.
+func ParseCandidate(text string, extension Snapshot) (Expression, error) {
+	return parse(text, extension)
+}
+
+func parse(text string, extension Snapshot) (Expression, error) {
 	m := attributePrefix.FindStringSubmatch(strings.TrimSpace(text))
 	if m == nil {
 		return Expression{}, fmt.Errorf("expected [-][#]attribute [operator value]")
 	}
 	e := Expression{kind: atom, negative: m[1] != "", length: m[2] != "", name: m[3]}
 	typ := attributeKind(e.name)
+	if typ == missingValue {
+		typ = extension[e.name].kind
+	}
+	e.typ = typ
 	if typ == missingValue {
 		return Expression{}, fmt.Errorf("unknown attribute %q%s", e.name, Suggestion(e.name, attributeNames()))
 	}
@@ -226,7 +242,7 @@ func (e Expression) String() string {
 	text := prefix + e.name
 	if e.op != "" {
 		value := e.value
-		if !e.length && attributeKind(e.name) != boolValue {
+		if !e.length && e.typ != boolValue {
 			value = strconv.Quote(value)
 		}
 		text += " " + e.op + " " + value
@@ -367,7 +383,7 @@ func (e Expression) evaluate(pr PR) evaluation {
 				evaluated.evidence.Actual = len(value.list)
 			}
 		}
-		if value.kind != attributeKind(e.name) || value.checks && e.checkUnknown(value) {
+		if value.kind != e.typ || value.checks && e.checkUnknown(value) {
 			evaluated.result = unknown
 		} else if e.matches(value) != e.negative {
 			evaluated.result = met
