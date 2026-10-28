@@ -668,6 +668,11 @@ func EncodeEvent(value Event) (string, []byte, error) {
 			return "", nil, err
 		}
 		return encodeWire("batch_started", wireBatchStarted{BatchID: v.BatchID, BaseSHA: v.BaseSHA, PRs: encodeBatchPRs(v.PRs), At: v.At})
+	case DependencyCompositionsInvalidated:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("dependency_compositions_invalidated", v)
 	case DependencyWaitsWithheld:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -1056,6 +1061,12 @@ func DecodeEvent(payload []byte) (Event, error) {
 			return nil, err
 		}
 		return event, nil
+	case "dependency_compositions_invalidated":
+		v, err := readWireData[DependencyCompositionsInvalidated](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		return v, v.Validate()
 	case "dependency_waits_withheld":
 		v, err := readWireData[wireDependencyWaitsWithheld](envelope.Data)
 		if err != nil {

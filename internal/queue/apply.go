@@ -247,6 +247,8 @@ func apply(s State, e Event) State {
 		s.applyChainedBuilt(e)
 	case BatchesInvalidated:
 		s.applyInvalidation(e)
+	case DependencyCompositionsInvalidated:
+		s.invalidateDependencyCompositions(e)
 	case DependencyWaitsWithheld:
 		s.withholdDependencyWaits(e)
 	case BatchStarted:

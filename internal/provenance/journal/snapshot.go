@@ -152,7 +152,7 @@ func DecodeSnapshot(raw []byte, decodeBase BaseDecoder, validate ...func(uint64,
 	// future queue and dependency versions can overlap without ambiguity.
 	if baseKind == "" {
 		baseKind = "queue"
-		if baseHeader.Version == 8 {
+		if baseHeader.Version == 8 || baseHeader.Version == 10 {
 			baseKind = "dependency"
 		}
 	}
@@ -200,7 +200,7 @@ func supportedBase(kind string, version int) bool {
 	case "queue":
 		return slices.Contains([]int{2, 3, 4, 5, 6, 7}, version)
 	case "dependency":
-		return version == 8
+		return version == 8 || version == 10
 	default:
 		return false
 	}

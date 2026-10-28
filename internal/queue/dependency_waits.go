@@ -10,10 +10,10 @@ import (
 // DependencyWait is a planner-only ADR 0011 Stage A overlay derived from
 // recorded dependency facts by an activated caller. It is never journaled or
 // snapshotted, and Apply never consults it: the fold stays byte-identical.
-// Head pins the admitted entry head. EligibleAt is when the recorded admission
-// last became satisfied: it is stable while admission stays continuously
-// satisfied (unchanged evidence may be re-recorded) and restarts only on a
-// waiting-to-eligible transition. A waiting change's batch max_wait clock is
+// Head pins the admitted entry head. EligibleAt is the equivalent eligible-clock origin, after subtracting prior
+// eligible intervals from the latest resumption: it is stable while admission stays continuously
+// satisfied (unchanged evidence may be re-recorded) and preserves elapsed eligible time across
+// waiting-to-eligible transitions. A waiting change's batch max_wait clock is
 // suspended until then.
 type DependencyWait struct {
 	Head       string
@@ -45,7 +45,7 @@ func (s State) DependencyGated(pr BatchPR) bool {
 // dependencyClock resumes a change's batch max_wait clock from its eligibility,
 // so waiting time is not charged against the remaining formation window.
 func (s State) dependencyClock(entry Entry) time.Time {
-	if w, ok := s.dependencyWaits[entry.PR]; ok && w.Head == entry.HeadSHA && w.EligibleAt.After(entry.EnqueuedAt) {
+	if w, ok := s.dependencyWaits[entry.PR]; ok && w.Head == entry.HeadSHA && !w.EligibleAt.IsZero() {
 		return w.EligibleAt
 	}
 	return entry.EnqueuedAt

@@ -271,7 +271,25 @@ func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, ded
 	}
 	var watermark int64
 	var stale bool
-	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+	formation := false
+	for _, event := range events {
+		switch event.(type) {
+		case queue.BatchStarted, queue.ChainedBatchStarted:
+			formation = true
+		}
+	}
+	if !formation {
+		ctx = withoutDependencyFormationClock(ctx, q)
+	}
+	clockCfg := queue.Config{}
+	if execution != nil {
+		clockCfg = execution.cfg
+	}
+	ctx, err := s.prepareDependencyClocks(ctx, q, clockCfg)
+	if err != nil {
+		return 0, err
+	}
+	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if err := s.lockQueue(ctx, tx, q); err != nil {
 			return err
 		}
@@ -366,6 +384,10 @@ func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, ded
 					return err
 				}
 			}
+			event, err := dependencyInvalidation(ctx, tx, q, event)
+			if err != nil {
+				return err
+			}
 			name, payload, err := queue.EncodeEvent(event)
 			if err != nil {
 				return err
@@ -377,6 +399,11 @@ func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, ded
 			if err := tx.QueryRow(ctx, `INSERT INTO events(queue_id, type, payload, dedupe_key)
 				VALUES ($1, $2, $3::jsonb, $4) RETURNING id`, q, name, string(payload), key).Scan(&watermark); err != nil {
 				return err
+			}
+			if through, err := s.appendDependencyCompositionTx(ctx, tx, q, event, uint64(watermark)); err != nil {
+				return err
+			} else if through != 0 {
+				watermark = through
 			}
 		}
 		return nil
@@ -545,7 +572,11 @@ type PlannedAction struct {
 // It returns unclaimed work, quarantining invalid rows for operators.
 func (s *Store) Plan(ctx context.Context, q QueueID, cfg queue.Config, now time.Time) ([]PlannedAction, error) {
 	var result []PlannedAction
-	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+	ctx, err := s.prepareDependencyClocks(ctx, q, cfg)
+	if err != nil {
+		return nil, err
+	}
+	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if err := s.lockQueue(ctx, tx, q); err != nil {
 			return err
 		}

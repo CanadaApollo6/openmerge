@@ -162,7 +162,7 @@ func TestDependencyWorkerGateStartAndRecoveryBeforeAdmission(t *testing.T) {
 			}
 		}
 	}
-	if got := strings.Join(kinds, ","); !strings.HasSuffix(got, "dependency_observed,landing_started,dependency_observed,dependency_decision_recorded") {
+	if got := strings.Join(kinds, ","); !strings.HasSuffix(got, "dependency_observed,dependency_composition_recorded,landing_started,dependency_observed,dependency_decision_recorded") {
 		t.Fatal("start was not atomic with its companion:", got)
 	}
 	for i, step := range trace {

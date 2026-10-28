@@ -169,7 +169,7 @@ func TestSnapshotBaseKindVersionBindings(t *testing.T) {
 	h, _ := fixture(t)
 	s := apply(t, State{}, 3, h)
 	for _, kind := range []string{"queue", "dependency", "future", ""} {
-		for version := 1; version <= 10; version++ {
+		for version := 1; version <= 11; version++ {
 			t.Run(fmt.Sprintf("%s/%d", kind, version), func(t *testing.T) {
 				v := snapshot{SnapshotVersion, kind, json.RawMessage(fmt.Sprintf(`{"Version":%d}`, version)), 3, s.Records()}
 				raw, err := json.Marshal(v)
@@ -184,7 +184,7 @@ func TestSnapshotBaseKindVersionBindings(t *testing.T) {
 					}
 					return nil
 				})
-				want := kind == "queue" && version >= 2 && version <= 7 || kind == "dependency" && version == 8
+				want := kind == "queue" && version >= 2 && version <= 7 || kind == "dependency" && (version == 8 || version == 10)
 				if (err == nil) != want || called != want {
 					t.Fatalf("kind/version callback fence: want %v, called %v, err %v", want, called, err)
 				}

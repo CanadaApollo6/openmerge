@@ -115,3 +115,71 @@ func (s State) validateRequestSet(requests []ObservationRequest) error {
 	}
 	return nil
 }
+
+// RebuildReverseScope combines recorded queue projections in one serving scope.
+// Its input is an explicit served/enrolled set, never forge-wide discovery.
+// The caller supplies a consistent read boundary and rebuilds after restart.
+func RebuildReverseScope(states []State, expected JournalInitialized) (ReverseIndex, error) {
+	if len(states) == 0 || len(states) > MaxNodes {
+		return ReverseIndex{}, ErrLimit
+	}
+	index := ReverseIndex{scope: expected.scope(), consumers: map[string][]string{}}
+	for _, s := range states {
+		part, err := RebuildReverse(s, expected)
+		if err != nil {
+			return ReverseIndex{}, err
+		}
+		for source, consumers := range part.consumers {
+			index.consumers[source] = unionIDs(index.consumers[source], consumers)
+		}
+	}
+	return index, nil
+}
+
+// Cascade wakes the bounded reverse closure. Waking is not invalidation:
+// consumers re-evaluate their own direct evidence, so a still-present confirmed
+// landing is terminal even if that source's latest declaration changed. Missed
+// wakes are repaired by polling; this cache never authorizes work.
+func (i ReverseIndex) Cascade(source Reference) ([]string, error) {
+	direct, err := i.Wake(source, i.watermark)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{source.ChangeID: true}
+	out := []string{}
+	type node struct {
+		change string
+		depth  int
+	}
+	pending := []node{}
+	for _, change := range direct {
+		pending = append(pending, node{change, 1})
+	}
+	edges := len(direct)
+	for len(pending) > 0 {
+		n := pending[0]
+		pending = pending[1:]
+		change := n.change
+		if seen[change] {
+			continue
+		}
+		if n.depth > MaxDepth {
+			return nil, ErrLimit
+		}
+		seen[change] = true
+		if len(seen) > MaxNodes {
+			return nil, ErrLimit
+		}
+		out = append(out, change)
+		next := i.consumers[change]
+		edges += len(next)
+		if edges > MaxEdges {
+			return nil, ErrLimit
+		}
+		for _, change := range next {
+			pending = append(pending, node{change, n.depth + 1})
+		}
+	}
+	slices.Sort(out)
+	return out, nil
+}

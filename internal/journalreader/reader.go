@@ -46,7 +46,7 @@ func DecodeEvent(raw []byte) (Event, error) {
 	switch header.Type {
 	case "change_provenance_observed", "landing_provenance_recorded":
 		e.Provenance, err = pj.DecodeEvent(raw)
-	case "dependency_journal_initialized", "change_dependencies_declared", "dependency_policy_applied", "dependency_declaration_acknowledged", "dependency_declaration_self_acknowledged", "dependency_observed", "dependency_decision_recorded":
+	case "dependency_journal_initialized", "change_dependencies_declared", "dependency_policy_applied", "dependency_declaration_acknowledged", "dependency_declaration_self_acknowledged", "dependency_observed", "dependency_decision_recorded", "dependency_composition_recorded":
 		e.Dependency, err = dependency.DecodeEvent(raw)
 	default:
 		e.Queue, err = queue.DecodeEvent(raw)
@@ -108,9 +108,33 @@ func (r *Reader) Apply(id uint64, raw []byte) (_ Event, applyErr error) {
 	next := *r
 	switch {
 	case e.Queue != nil:
+		if invalid, ok := e.Queue.(queue.DependencyCompositionsInvalidated); ok {
+			pending := r.Queue.DependencyInvalidationTargets()
+			if !slices.Equal(pending, invalid.BatchIDs) {
+				return Event{}, ErrReference
+			}
+			for i, batch := range invalid.BatchIDs {
+				_, ref, ok := r.dependencies.Composition(batch)
+				if !ok || ref != invalid.CompositionIDs[i] || r.dependencies.CompositionCause(batch) != invalid.CauseEventIDs[i] {
+					return Event{}, ErrReference
+				}
+			}
+		}
 		next.Queue = queue.Apply(r.Queue, e.Queue)
+		if invalid, ok := e.Queue.(queue.DependencyCompositionsInvalidated); ok {
+			for _, batch := range invalid.BatchIDs {
+				if next.Queue.Batch(batch) != nil {
+					return Event{}, ErrReference
+				}
+			}
+		}
 		next.Provenance = retireTerminal(r.Provenance, id, e.Queue, r.Queue, next.Queue)
 	case e.Dependency != nil:
+		if c, ok := e.Dependency.(dependency.CompositionRecorded); ok {
+			if err := r.validateDependencyComposition(id, c); err != nil {
+				return Event{}, err
+			}
+		}
 		if d, ok := e.Dependency.(dependency.DecisionRecorded); ok {
 			if err := r.validateDependencyDecision(id, d); err != nil {
 				return Event{}, err
@@ -138,6 +162,25 @@ func (r *Reader) Apply(id uint64, raw []byte) (_ Event, applyErr error) {
 	}
 	if err != nil {
 		return Event{}, err
+	}
+	// Side facts latch invalidation immediately, including if later observations
+	// restore eligibility before a worker next polls. A landing is never retired.
+	if next.dependencies.HasCompositions() {
+		batches := []string{}
+		for _, b := range next.Queue.Batches() {
+			batches = append(batches, b.ID)
+			if e.Dependency != nil {
+				if c, _, ok := next.dependencies.Composition(b.ID); ok && !next.dependencies.CompositionValid(c) {
+					next.Queue = next.Queue.WithDependencyInvalidation(b.ID)
+				}
+			}
+		}
+		for _, b := range next.Queue.Batches() {
+			if e.Dependency != nil && b.InvalidationReason == "dependency-changed" {
+				next.dependencies = next.dependencies.LatchCompositionCause(b.ID)
+			}
+		}
+		next.dependencies = next.dependencies.RetainCompositions(batches)
 	}
 	next.composed = next.composed || e.Queue == nil
 	next.lastID = id
@@ -337,6 +380,40 @@ func (r Reader) validateDependencyDecision(id uint64, d dependency.DecisionRecor
 	}
 	for _, observation := range d.Admission.ObservationIDs {
 		if observation <= d.StartEventID || observation >= id {
+			return ErrReference
+		}
+	}
+	return nil
+}
+
+func (r Reader) validateDependencyComposition(id uint64, c dependency.CompositionRecorded) error {
+	target, err := r.target(c.StartEventID, id)
+	if err != nil {
+		return err
+	}
+	b := r.Queue.Batch(c.BatchID)
+	if b == nil || b.Phase != queue.Building || b.BaseSHA != c.BaseSHA || len(b.PRs) != len(c.Members) {
+		return ErrReference
+	}
+	switch start := target.Queue.(type) {
+	case queue.BatchStarted:
+		if start.BatchID != b.ID || start.BaseSHA != b.BaseSHA || !slices.Equal(start.PRs, b.PRs) || b.Speculative {
+			return ErrReference
+		}
+	case queue.ChainedBatchStarted:
+		if start.BatchID != b.ID || start.BaseSHA != b.BaseSHA || !slices.Equal(start.PRs, b.PRs) || !b.Speculative || start.Position != b.ChainPosition || start.ParentBatchID != b.ParentBatchID {
+			return ErrReference
+		}
+	default:
+		return ErrReference
+	}
+	bindings := r.Queue.BatchRevisions(b.ID)
+	for i, m := range c.Members {
+		if r.changeID == nil || len(bindings) != len(b.PRs) {
+			return ErrReference
+		}
+		change, err := r.changeID(b.PRs[i].PR)
+		if err != nil || string(change) != m.ChangeID || m.Alias.Number != uint64(b.PRs[i].PR) || m.Head != b.PRs[i].HeadSHA || m.Revision != uint64(bindings[i].Revision) {
 			return ErrReference
 		}
 	}

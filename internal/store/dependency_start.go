@@ -20,6 +20,15 @@ import (
 // still rejects dependency configuration, and only the private serve seam may
 // install this context value (journalreader writer guard).
 type dependencyActivationKey struct{}
+type dependencySkipFormationClockKey struct{}
+type dependencyClockPreparationKey struct{}
+type dependencyClockPreparation struct {
+	queue    QueueID
+	through  uint64
+	entries  []queue.Entry
+	clocks   map[int]time.Time
+	computed bool
+}
 
 // dependencyLocks maps each locked direct-source key to its stored queue.
 type dependencyLocks = map[dependency.QueueKey]QueueID
@@ -63,9 +72,8 @@ func WithDependencyActivation(ctx context.Context, q QueueID, binding dependency
 }
 
 // withDependencyWaits derives the planner overlay from recorded facts in the
-// same replay, plus when each admission's consumed rows became satisfied (see
-// satisfiedSince). A wrong or absent binding fails the load closed; nothing is
-// inferred.
+// same replay, plus accumulated eligible intervals from recorded history.
+// A wrong or absent binding fails the load closed; nothing is inferred.
 func withDependencyWaits(ctx context.Context, db journalQuery, q QueueID, r journalreader.Reader) (queue.State, error) {
 	a, ok := ctx.Value(dependencyActivationKey{}).(dependencyActivation)
 	if !ok || a.queue != q {
@@ -80,45 +88,34 @@ func withDependencyWaits(ctx context.Context, db journalQuery, q QueueID, r jour
 		return queue.State{}, err
 	}
 	waits := map[int]queue.DependencyWait{}
-	admitted := map[int][]uint64{}
-	heads := map[int]string{}
-	var ids []int64
-	var horizon time.Time
+	admitted := false
 	for _, entry := range r.Queue.Entries {
-		change, revision, ok := changeRevision(key, r.Queue, entry.PR, entry.HeadSHA)
-		if !ok {
-			continue // absent from the overlay: gated
-		}
-		admission := deps.Admission(string(change), revision)
-		if admission.Code != "" {
-			waits[entry.PR] = queue.DependencyWait{Head: entry.HeadSHA, Waiting: true}
-			continue
-		}
-		admitted[entry.PR], heads[entry.PR] = admission.Events, entry.HeadSHA
-		for _, id := range admission.Events {
-			ids = append(ids, int64(id))
-		}
-		if horizon.IsZero() || entry.EnqueuedAt.Before(horizon) {
-			horizon = entry.EnqueuedAt
-		}
+		change, revision, known := changeRevision(key, r.Queue, entry.PR, entry.HeadSHA)
+		waiting := !known || deps.Admission(string(change), revision).Code != ""
+		waits[entry.PR] = queue.DependencyWait{Head: entry.HeadSHA, Waiting: waiting}
+		admitted = admitted || !waiting && r.Queue.BatchForPR(entry.PR) == nil
 	}
-	since, err := satisfiedSince(ctx, db, q, ids, horizon)
-	if err != nil {
-		return queue.State{}, err
-	}
-	for pr, events := range admitted {
-		var eligible time.Time
-		for _, id := range events {
-			at, ok := since[id]
-			if !ok {
-				return queue.State{}, journalreader.ErrReference
+	if admitted && ctx.Value(dependencySkipFormationClockKey{}) == nil {
+		var clocks map[int]time.Time
+		if prepared, ok := ctx.Value(dependencyClockPreparationKey{}).(dependencyClockPreparation); ok {
+			if !prepared.computed || prepared.queue != q || prepared.through != deps.Through() || !sameDependencyClockEntries(prepared.entries, r.Queue.Entries) {
+				return queue.State{}, ErrStale
 			}
-			if at.After(eligible) {
-				eligible = at
+			clocks = prepared.clocks
+		} else {
+			clocks, err = dependencyEligibleClocks(ctx, db, q, r.Queue, key)
+			if err != nil {
+				return queue.State{}, err
 			}
 		}
-		waits[pr] = queue.DependencyWait{Head: heads[pr], EligibleAt: eligible}
+		for pr, w := range waits {
+			if !w.Waiting {
+				w.EligibleAt = clocks[pr]
+				waits[pr] = w
+			}
+		}
 	}
+
 	return r.Queue.WithDependencyWaits(waits), nil
 }
 
@@ -156,46 +153,91 @@ func insertWithheld(ctx context.Context, tx pgx.Tx, q QueueID, withheld *queue.D
 	return err
 }
 
-// satisfiedSince maps each consumed row to the recorded_at that began its
-// unchanged run: a landed observation whose expected_prior chain is landed for
-// the same declaration and source, or a policy whose prior_event_id chain has
-// the same digest, was satisfied since the oldest such predecessor. Re-recording
-// unchanged evidence therefore never restarts batch max_wait; any other change
-// (a different result, digest or declaration, an acknowledgement) is a
-// waiting-to-eligible transition, which does. Declarations are never re-recorded
-// unchanged (the fold refuses them). The walk stops once it passes horizon, the
-// oldest admitted entry's enqueue time, since an earlier start cannot change any
-// planner clock. One statement; primary-key steps only.
-func satisfiedSince(ctx context.Context, db journalQuery, q QueueID, ids []int64, horizon time.Time) (map[uint64]time.Time, error) {
-	since := map[uint64]time.Time{}
-	if len(ids) == 0 {
-		return since, nil
-	}
-	// Kind-neutral by construction: only observations carry expected_prior and
-	// only policy companions carry prior_event_id; every other consumed row
-	// (declaration, acknowledgement) has neither and ends its own run. A step
-	// must keep the head's kind and its declaration/source/result/digest.
-	const prior = `COALESCE(e.payload->'data'->>'expected_prior', e.payload->'data'->>'prior_event_id')::bigint`
-	const same = `jsonb_build_array(e.payload->'data'->'declaration', e.payload->'data'->'source', e.payload->'data'->'result', e.payload->'data'->'digest')`
-	rows, err := db.Query(ctx, `WITH RECURSIVE run(head, kind, prior, same, at) AS (
-		SELECT e.id, e.type, `+prior+`, `+same+`, e.recorded_at FROM events e WHERE e.queue_id=$1 AND e.id = ANY($2)
-		UNION ALL
-		SELECT run.head, e.type, `+prior+`, run.same, e.recorded_at FROM run JOIN events e ON e.queue_id=$1 AND e.id=run.prior
-		WHERE run.at > $3 AND e.type=run.kind AND `+same+` = run.same
-	) SELECT head, min(at) FROM run GROUP BY head`, q, ids, horizon)
+// dependencyEligibleClocks accumulates eligible intervals, rather than restarting
+// max_wait after a source rewind. This activated-only bounded history read is
+// independent of disposable cursors, so restarts preserve the remaining budget.
+// Queue-only loads take none of these reads. Hitting the explicit acquisition
+// bound fails closed; it never returns a partial, permissive clock.
+func dependencyEligibleClocks(ctx context.Context, db journalQuery, q QueueID, state queue.State, key QueueKey) (map[int]time.Time, error) {
+	const historyLimit = 32768
+	rows, err := db.Query(ctx, `SELECT id,payload,recorded_at FROM events WHERE queue_id=$1 AND type=ANY($2) ORDER BY id LIMIT $3`, q, dependency.ClockEventKinds(), historyLimit+1)
 	if err != nil {
 		return nil, err
 	}
+	type record struct {
+		id  uint64
+		raw []byte
+		at  time.Time
+	}
 	defer rows.Close()
+	type clock struct {
+		start    time.Time
+		elapsed  time.Duration
+		change   queue.ChangeID
+		revision uint64
+	}
+	clocks := map[int]clock{}
+	for _, e := range state.Entries {
+		change, revision, ok := changeRevision(key, state, e.PR, e.HeadSHA)
+		if ok {
+			clocks[e.PR] = clock{change: change, revision: revision}
+		}
+	}
+	var deps dependency.State
+	count, bytes := 0, 0
+	var lastAt time.Time
 	for rows.Next() {
-		var id int64
-		var at time.Time
-		if err := rows.Scan(&id, &at); err != nil {
+		var r record
+		if err := rows.Scan(&r.id, &r.raw, &r.at); err != nil {
 			return nil, err
 		}
-		since[uint64(id)] = at
+		count++
+		bytes += len(r.raw)
+		if count > historyLimit || bytes > 32<<20 {
+			return nil, dependency.ErrLimit
+		}
+		if r.at.Before(lastAt) {
+			r.at = lastAt
+		}
+		lastAt = r.at
+		event, err := dependency.DecodeEvent(r.raw)
+		if err != nil {
+			return nil, err
+		}
+		deps, err = dependency.Apply(deps, r.id, event)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range state.Entries {
+			c, ok := clocks[entry.PR]
+			if !ok {
+				continue
+			}
+			at := r.at
+			if at.Before(entry.EnqueuedAt) {
+				at = entry.EnqueuedAt
+			}
+			eligible := deps.Admission(string(c.change), c.revision).Code == ""
+			if eligible && c.start.IsZero() {
+				c.start = at
+			}
+			if !eligible && !c.start.IsZero() {
+				c.elapsed += max(time.Duration(0), at.Sub(c.start))
+				c.start = time.Time{}
+			}
+			clocks[entry.PR] = c
+		}
 	}
-	return since, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := map[int]time.Time{}
+	for pr, c := range clocks {
+		if !c.start.IsZero() {
+			out[pr] = c.start.Add(-c.elapsed)
+		}
+	}
+	return out, nil
 }
 
 func storedKey(ctx context.Context, db journalQuery, q QueueID) (QueueKey, error) {
@@ -243,6 +285,9 @@ type DependencyMemberStart struct {
 // commits fresh eligibility, decisions, unchanged LandingStarted, landing-start
 // observations and one decision companion per member in ONE transaction.
 func (s *Store) StartDependencyLanding(ctx context.Context, claim ClaimedAction, cfg queue.Config, policy cp.Policy, fresh []queue.ApprovalEligibilityObserved, decisions []queue.LandingDecisionRecorded, start queue.LandingStarted, evidence DependencyStart, checks ...queue.LandingChecksRecorded) error {
+	// Formation clocks cannot affect authorization of an already-built Land.
+	// Do not scan clock history under B plus its direct-source locks.
+	ctx = context.WithValue(ctx, dependencySkipFormationClockKey{}, true)
 	return retryLandingDecision(s.startLandingTransaction(ctx, claim, cfg, policy, fresh, decisions, start, s.authorizeStart, nil, nil, &evidence, checks...))
 }
 
@@ -387,6 +432,11 @@ func (v DependencyStart) validate(ctx context.Context, tx pgx.Tx, q QueueID, loc
 	}
 	batch := state.Batch(land.BatchID)
 	bindings := state.BatchRevisions(land.BatchID)
+	composition, _, composed := deps.Composition(land.BatchID)
+	if !composed {
+		return nil, ErrStale
+	}
+
 	if batch == nil || batch.Phase != queue.Testing || len(v.Members) != len(land.PRs) || len(bindings) != len(land.PRs) {
 		return nil, ErrStale
 	}
@@ -451,6 +501,9 @@ func (v DependencyStart) validate(ctx context.Context, tx pgx.Tx, q QueueID, loc
 		if a := simulated.Admission(string(changes[i]), uint64(bindings[i].Revision)); a.Code != "" {
 			return nil, fmt.Errorf("%w: %s", dependency.ErrNotAdmitted, a.Code)
 		}
+	}
+	if !simulated.CompositionValid(composition) || batch.InvalidationReason != "" {
+		return nil, fmt.Errorf("%w: dependency-changed", ErrStale)
 	}
 	return func(decisionIDs []uint64, startID uint64) (SideAppend, error) {
 		if startID == 0 || decisions && len(decisionIDs) != len(v.Members) || !decisions && len(decisionIDs) != 0 {
@@ -552,4 +605,212 @@ func (v DependencyStart) settlement(ctx context.Context, tx pgx.Tx, id QueueID, 
 		}
 	}
 	return fmt.Errorf("%w: dependency-unverified", ErrStale)
+}
+
+// dependencyComposition prepares a companion from this transaction's admitted
+// batch and recorded dependency facts. It performs no source locks or I/O.
+func dependencyComposition(ctx context.Context, tx pgx.Tx, q QueueID, event queue.Event, startID uint64) (*SideAppend, error) {
+	activation, ok := ctx.Value(dependencyActivationKey{}).(dependencyActivation)
+	if !ok || activation.queue != q {
+		return nil, nil
+	}
+	var batchID string
+	switch e := event.(type) {
+	case queue.BatchStarted:
+		batchID = e.BatchID
+	case queue.ChainedBatchStarted:
+		batchID = e.BatchID
+	default:
+		return nil, nil
+	}
+	current, err := foldSource(ctx, tx, q)
+	if err != nil {
+		return nil, err
+	}
+	deps, err := current.reader.BoundDependencies(activation.binding)
+	if err != nil {
+		return nil, err
+	}
+	b := current.reader.Queue.Batch(batchID)
+	if b == nil {
+		return nil, ErrStale
+	}
+	key, err := storedKey(ctx, tx, q)
+	if err != nil {
+		return nil, err
+	}
+	c := dependency.CompositionRecorded{Namespace: activation.binding.Namespace, BatchID: b.ID, BaseSHA: b.BaseSHA, StartEventID: startID, Members: []dependency.CompositionMember{}}
+	for _, pr := range b.PRs {
+		change, revision, known := changeRevision(key, current.reader.Queue, pr.PR, pr.HeadSHA)
+		if !known {
+			return nil, ErrStale
+		}
+		m, err := deps.CompositionMember(string(change), revision, pr.HeadSHA)
+		if err != nil {
+			return nil, err
+		}
+		c.Members = append(c.Members, m)
+	}
+	return &SideAppend{buildStartID: startID, Count: 1, DedupeKey: "dependency/composition/" + batchID, Binding: activation.binding, Build: func([]uint64) ([]journalreader.Event, error) { return []journalreader.Event{{Dependency: c}}, nil }}, nil
+}
+
+// dependencyInvalidation replaces only the activated dependency discard. The
+// exact planned suffix is revalidated under B's lock before any insert.
+func dependencyInvalidation(ctx context.Context, tx pgx.Tx, q QueueID, event queue.Event) (queue.Event, error) {
+	if _, supplied := event.(queue.DependencyCompositionsInvalidated); supplied {
+		return nil, ErrStale
+	}
+	e, ok := event.(queue.BatchesInvalidated)
+	if !ok || e.Reason != "dependency-changed" {
+		return event, nil
+	}
+	activation, ok := ctx.Value(dependencyActivationKey{}).(dependencyActivation)
+	if !ok || activation.queue != q {
+		return nil, ErrStale
+	}
+	current, err := foldSource(ctx, tx, q)
+	if err != nil {
+		return nil, err
+	}
+	deps, err := current.reader.BoundDependencies(activation.binding)
+	if err != nil {
+		return nil, err
+	}
+	expected := current.reader.Queue.DependencyInvalidationTargets()
+	if !slices.Equal(e.BatchIDs, expected) {
+		return nil, ErrStale
+	}
+	out := queue.DependencyCompositionsInvalidated{BatchIDs: slices.Clone(e.BatchIDs), CompositionIDs: []uint64{}, CauseEventIDs: []uint64{}, Reason: e.Reason}
+	for _, batch := range e.BatchIDs {
+		_, id, ok := deps.Composition(batch)
+		if !ok {
+			return nil, ErrStale
+		}
+		out.CompositionIDs = append(out.CompositionIDs, id)
+		out.CauseEventIDs = append(out.CauseEventIDs, deps.CompositionCause(batch))
+	}
+	if err := out.Validate(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// DependencyCascade rebuilds the reverse scheduling aid from an explicit set of
+// enrolled queues at one read boundary. No cache absence is used as evidence.
+// It takes no queue locks, emits no events and never enqueues a source. The
+// private activation caller may wake these consumers; ordinary polling remains
+// the repair path. A wake only schedules a fresh direct-edge reconciliation.
+func (s *Store) DependencyCascade(ctx context.Context, queues []QueueID, binding dependency.JournalInitialized, source dependency.Reference) ([]QueueID, error) {
+	if len(queues) == 0 || len(queues) > dependency.MaxNodes {
+		return nil, dependency.ErrLimit
+	}
+	var out []QueueID
+	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
+		states := []dependency.State{}
+		consumers := map[string]QueueID{}
+		for _, q := range queues {
+			current, err := foldSource(ctx, tx, q)
+			if err != nil {
+				return err
+			}
+			deps, err := current.reader.BoundDependencies(binding)
+			if err != nil {
+				return err
+			}
+			states = append(states, deps)
+			// Only command-admitted entries may schedule graph work.
+			key, err := storedKey(ctx, tx, q)
+			if err != nil {
+				return err
+			}
+			for _, entry := range current.reader.Queue.Entries {
+				change, _, known := changeRevision(key, current.reader.Queue, entry.PR, entry.HeadSHA)
+				if known {
+					consumers[string(change)] = q
+				}
+			}
+		}
+		reverse, err := dependency.RebuildReverseScope(states, binding)
+		if err != nil {
+			return err
+		}
+		changes, err := reverse.Cascade(source)
+		if err != nil {
+			return err
+		}
+		for _, change := range changes {
+			if q, ok := consumers[change]; ok && !slices.Contains(out, q) {
+				out = append(out, q)
+			}
+		}
+		slices.Sort(out)
+		return nil
+	})
+	return out, err
+}
+
+func sameDependencyClockEntries(a, b []queue.Entry) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i, e := range a {
+		other := b[i]
+		if e.PR != other.PR || e.AdmissionID != other.AdmissionID || e.HeadSHA != other.HeadSHA || !e.EnqueuedAt.Equal(other.EnqueuedAt) {
+			return false
+		}
+	}
+	return true
+}
+
+// prepareDependencyClocks performs history verification before any advisory or
+// action-row lock. The locked load compares the exact side position and entry
+// identities and requires a computed clock for any eligible unbatched entry.
+// Drift retries rather than rescanning history while holding locks.
+func (s *Store) prepareDependencyClocks(ctx context.Context, q QueueID, cfg queue.Config) (context.Context, error) {
+	if cfg.BatchMaxSize <= 1 || cfg.BatchMaxWait <= 0 {
+		return withoutDependencyFormationClock(ctx, q), nil
+	}
+	activation, ok := ctx.Value(dependencyActivationKey{}).(dependencyActivation)
+	if !ok || activation.queue != q || ctx.Value(dependencySkipFormationClockKey{}) != nil {
+		return ctx, nil
+	}
+	var prepared dependencyClockPreparation
+	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
+		current, err := foldSource(ctx, tx, q)
+		if err != nil {
+			return err
+		}
+		deps, err := current.reader.BoundDependencies(activation.binding)
+		if err != nil {
+			return err
+		}
+		key, err := storedKey(ctx, tx, q)
+		if err != nil {
+			return err
+		}
+		prepared = dependencyClockPreparation{queue: q, through: deps.Through(), entries: slices.Clone(current.reader.Queue.Entries), clocks: map[int]time.Time{}}
+		for _, e := range prepared.entries {
+			change, revision, known := changeRevision(key, current.reader.Queue, e.PR, e.HeadSHA)
+			if known && current.reader.Queue.BatchForPR(e.PR) == nil && deps.Admission(string(change), revision).Code == "" {
+				prepared.computed = true
+				prepared.clocks, err = dependencyEligibleClocks(ctx, tx, q, current.reader.Queue, key)
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return ctx, err
+	}
+	return context.WithValue(ctx, dependencyClockPreparationKey{}, prepared), nil
+}
+
+// withoutDependencyFormationClock keeps non-build actions on recorded gates
+// without acquiring formation-clock history that cannot affect their authority.
+func withoutDependencyFormationClock(ctx context.Context, q QueueID) context.Context {
+	a, ok := ctx.Value(dependencyActivationKey{}).(dependencyActivation)
+	if !ok || a.queue != q {
+		return ctx
+	}
+	return context.WithValue(ctx, dependencySkipFormationClockKey{}, true)
 }
