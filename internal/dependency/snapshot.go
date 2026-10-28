@@ -101,7 +101,7 @@ func DecodeSnapshot(raw []byte, expected JournalInitialized) (queue.State, State
 				return queue.State{}, State{}, ErrConflict
 			}
 			b := q.Batch(c.Event.BatchID)
-			if b == nil || b.BaseSHA != c.Event.BaseSHA || len(b.PRs) != len(c.Event.Members) || (c.InvalidatedBy!=0)!=(b.InvalidationReason=="dependency-changed") {
+			if b == nil || b.BaseSHA != c.Event.BaseSHA || len(b.PRs) != len(c.Event.Members) || (c.InvalidatedBy != 0) != (b.InvalidationReason == "dependency-changed") {
 				return queue.State{}, State{}, ErrStale
 			}
 			for j, m := range c.Event.Members {
