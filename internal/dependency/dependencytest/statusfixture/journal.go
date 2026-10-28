@@ -2,7 +2,7 @@ package statusfixture
 
 import (
 	"github.com/CanadaApollo6/openmerge/internal/dependency"
- "github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest"
+	"github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 	"strings"

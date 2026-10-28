@@ -10,7 +10,7 @@ import (
 
 	"github.com/CanadaApollo6/openmerge/internal/dependency"
 	"github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest"
- "github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest/statusfixture"
+	"github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest/statusfixture"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/journalreader"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
