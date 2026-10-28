@@ -99,6 +99,7 @@ func TestDependencyRealGitReviewPushOrderedLanding(t *testing.T) {
 			appendEvents(t, s, f.a.id, queue.Dequeued{PR: d.PR, AdmissionID: d.AdmissionID, Reason: d.Reason, BatchID: d.BatchID})
 		}
 	}
+	assertWaiting()
 	appendEvents(t, s, f.a.id, queue.EnqueueRequested{PR: 42, At: now}, queue.BatchStarted{BatchID: "b1", BaseSHA: base, PRs: []queue.BatchPR{{PR: 42, HeadSHA: next}}, At: now}, queue.TestRefBuilt{BatchID: "b1", TestedSHA: next, Method: queue.Merge, At: now}, queue.ChecksCompleted{TestedSHA: next, Success: true}, queue.LandingStarted{BatchID: "b1", AttemptID: "source", FenceToken: "fence-acme/api", At: now})
 	writerGit(t, sourceDir, "", "update-ref", "refs/heads/main", next, base)
 	f.settlement = uint64(appendEvents(t, s, f.a.id, queue.Landed{BatchID: "b1", NewBaseSHA: next, NewFence: "settled"}))

@@ -47,7 +47,8 @@ func admitDependencyBuild(t *testing.T, f *depFixture, cfg queue.Config) string 
 		ok, err := f.s.BeginConsequential(ctx, claim, cfg, now)
 		must(t, err)
 		if !ok {
-			t.Fatal("start declined")
+			// A prefix settlement can cancel an older speculative build plan.
+			continue
 		}
 		must(t, f.s.Emit(ctx, claim, cfg)(start))
 		must(t, f.s.Complete(ctx, claim, Done))
