@@ -121,7 +121,13 @@ func (r *Reader) Apply(id uint64, raw []byte) (_ Event, applyErr error) {
 			}
 		}
 		next.Queue = queue.Apply(r.Queue, e.Queue)
-  if invalid,ok:=e.Queue.(queue.DependencyCompositionsInvalidated); ok { for _,batch:=range invalid.BatchIDs { if next.Queue.Batch(batch)!=nil { return Event{},ErrReference } } }
+		if invalid, ok := e.Queue.(queue.DependencyCompositionsInvalidated); ok {
+			for _, batch := range invalid.BatchIDs {
+				if next.Queue.Batch(batch) != nil {
+					return Event{}, ErrReference
+				}
+			}
+		}
 		next.Provenance = retireTerminal(r.Provenance, id, e.Queue, r.Queue, next.Queue)
 	case e.Dependency != nil:
 		if c, ok := e.Dependency.(dependency.CompositionRecorded); ok {

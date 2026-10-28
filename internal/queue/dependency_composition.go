@@ -52,17 +52,21 @@ func (s *State) invalidateDependencyCompositions(e DependencyCompositionsInvalid
 	}
 	// A raw queue-only fold still accepts the exact event emitted by the store;
 	// the composed reader additionally verifies every immutable companion ID.
- candidate:=s.WithDependencyInvalidation(e.BatchIDs[0])
- if !slices.Equal(candidate.DependencyInvalidationTargets(),e.BatchIDs) { return }
- *s=candidate
- s.applyInvalidation(BatchesInvalidated{BatchIDs:e.BatchIDs,Reason:e.Reason})
+	candidate := s.WithDependencyInvalidation(e.BatchIDs[0])
+	if !slices.Equal(candidate.DependencyInvalidationTargets(), e.BatchIDs) {
+		return
+	}
+	*s = candidate
+	s.applyInvalidation(BatchesInvalidated{BatchIDs: e.BatchIDs, Reason: e.Reason})
 }
 
 // DependencyInvalidationTargets returns the exact next reason segment, which
 // may precede a suffix already invalidated for another reason. Both the store
 // and composed reader use the same selection as the pure planner/fold.
 func (s State) DependencyInvalidationTargets() []string {
- a,ok:=s.pendingInvalidation()
- if !ok || a.Reason!="dependency-changed" { return nil }
- return a.BatchIDs
+	a, ok := s.pendingInvalidation()
+	if !ok || a.Reason != "dependency-changed" {
+		return nil
+	}
+	return a.BatchIDs
 }
