@@ -23,10 +23,11 @@ type dependencyActivationKey struct{}
 type dependencySkipFormationClockKey struct{}
 type dependencyClockPreparationKey struct{}
 type dependencyClockPreparation struct {
-	queue   QueueID
-	through uint64
-	entries []queue.Entry
-	clocks  map[int]time.Time
+	queue    QueueID
+	through  uint64
+	entries  []queue.Entry
+	clocks   map[int]time.Time
+	computed bool
 }
 
 // dependencyLocks maps each locked direct-source key to its stored queue.
@@ -97,7 +98,7 @@ func withDependencyWaits(ctx context.Context, db journalQuery, q QueueID, r jour
 	if admitted && ctx.Value(dependencySkipFormationClockKey{}) == nil {
 		var clocks map[int]time.Time
 		if prepared, ok := ctx.Value(dependencyClockPreparationKey{}).(dependencyClockPreparation); ok {
-			if prepared.queue != q || prepared.through != deps.Through() || !sameDependencyClockEntries(prepared.entries, r.Queue.Entries) {
+			if !prepared.computed || prepared.queue != q || prepared.through != deps.Through() || !sameDependencyClockEntries(prepared.entries, r.Queue.Entries) {
 				return queue.State{}, ErrStale
 			}
 			clocks = prepared.clocks
@@ -432,7 +433,7 @@ func (v DependencyStart) validate(ctx context.Context, tx pgx.Tx, q QueueID, loc
 	batch := state.Batch(land.BatchID)
 	bindings := state.BatchRevisions(land.BatchID)
 	composition, _, composed := deps.Composition(land.BatchID)
-	if !composed || !deps.CompositionValid(composition) || batch != nil && batch.InvalidationReason != "" {
+	if !composed {
 		return nil, ErrStale
 	}
 
@@ -500,6 +501,9 @@ func (v DependencyStart) validate(ctx context.Context, tx pgx.Tx, q QueueID, loc
 		if a := simulated.Admission(string(changes[i]), uint64(bindings[i].Revision)); a.Code != "" {
 			return nil, fmt.Errorf("%w: %s", dependency.ErrNotAdmitted, a.Code)
 		}
+	}
+	if !simulated.CompositionValid(composition) || batch.InvalidationReason != "" {
+		return nil, fmt.Errorf("%w: dependency-changed", ErrStale)
 	}
 	return func(decisionIDs []uint64, startID uint64) (SideAppend, error) {
 		if startID == 0 || decisions && len(decisionIDs) != len(v.Members) || !decisions && len(decisionIDs) != 0 {
@@ -653,6 +657,9 @@ func dependencyComposition(ctx context.Context, tx pgx.Tx, q QueueID, event queu
 // dependencyInvalidation replaces only the activated dependency discard. The
 // exact planned suffix is revalidated under B's lock before any insert.
 func dependencyInvalidation(ctx context.Context, tx pgx.Tx, q QueueID, event queue.Event) (queue.Event, error) {
+	if _, supplied := event.(queue.DependencyCompositionsInvalidated); supplied {
+		return nil, ErrStale
+	}
 	e, ok := event.(queue.BatchesInvalidated)
 	if !ok || e.Reason != "dependency-changed" {
 		return event, nil
@@ -684,12 +691,6 @@ func dependencyInvalidation(ctx context.Context, tx pgx.Tx, q QueueID, event que
 	}
 	if err := out.Validate(); err != nil {
 		return nil, err
-	}
-	folded := queue.Apply(current.reader.Queue, out)
-	for _, batch := range out.BatchIDs {
-		if folded.Batch(batch) != nil {
-			return nil, ErrStale
-		}
 	}
 	return out, nil
 }
@@ -763,8 +764,12 @@ func sameDependencyClockEntries(a, b []queue.Entry) bool {
 
 // prepareDependencyClocks performs history verification before any advisory or
 // action-row lock. The locked load compares the exact side position and entry
-// identities; drift retries rather than rescanning history while holding locks.
-func (s *Store) prepareDependencyClocks(ctx context.Context, q QueueID) (context.Context, error) {
+// identities and requires a computed clock for any eligible unbatched entry.
+// Drift retries rather than rescanning history while holding locks.
+func (s *Store) prepareDependencyClocks(ctx context.Context, q QueueID, cfg queue.Config) (context.Context, error) {
+	if cfg.BatchMaxSize <= 1 || cfg.BatchMaxWait <= 0 {
+		return withoutDependencyFormationClock(ctx, q), nil
+	}
 	activation, ok := ctx.Value(dependencyActivationKey{}).(dependencyActivation)
 	if !ok || activation.queue != q || ctx.Value(dependencySkipFormationClockKey{}) != nil {
 		return ctx, nil
@@ -787,6 +792,7 @@ func (s *Store) prepareDependencyClocks(ctx context.Context, q QueueID) (context
 		for _, e := range prepared.entries {
 			change, revision, known := changeRevision(key, current.reader.Queue, e.PR, e.HeadSHA)
 			if known && current.reader.Queue.BatchForPR(e.PR) == nil && deps.Admission(string(change), revision).Code == "" {
+				prepared.computed = true
 				prepared.clocks, err = dependencyEligibleClocks(ctx, tx, q, current.reader.Queue, key)
 				return err
 			}

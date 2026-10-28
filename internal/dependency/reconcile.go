@@ -159,12 +159,12 @@ func (i ReverseIndex) Cascade(source Reference) ([]string, error) {
 	for len(pending) > 0 {
 		n := pending[0]
 		pending = pending[1:]
-		if n.depth > MaxDepth {
-			return nil, ErrLimit
-		}
 		change := n.change
 		if seen[change] {
 			continue
+		}
+		if n.depth > MaxDepth {
+			return nil, ErrLimit
 		}
 		seen[change] = true
 		if len(seen) > MaxNodes {

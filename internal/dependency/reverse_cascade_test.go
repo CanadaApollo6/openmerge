@@ -46,3 +46,19 @@ func TestReverseCascadeScopeRebuildBoundsAndCycles(t *testing.T) {
 		t.Fatal("unknown queue silently omitted", err)
 	}
 }
+
+func TestReverseCascadeExactDepthCycle(t *testing.T) {
+	source := journalTestFixture(t).ref(1, 0)
+	index := ReverseIndex{scope: source.Scope, consumers: map[string][]string{}}
+	previous := source.ChangeID
+	for n := 1; n <= MaxDepth; n++ {
+		next := fmt.Sprint(n)
+		index.consumers[previous] = []string{next}
+		previous = next
+	}
+	index.consumers[previous] = []string{"1"}
+	got, err := index.Cascade(source)
+	if err != nil || len(got) != MaxDepth {
+		t.Fatal(got, err)
+	}
+}

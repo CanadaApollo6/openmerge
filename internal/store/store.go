@@ -281,7 +281,11 @@ func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, ded
 	if !formation {
 		ctx = withoutDependencyFormationClock(ctx, q)
 	}
-	ctx, err := s.prepareDependencyClocks(ctx, q)
+	clockCfg := queue.Config{}
+	if execution != nil {
+		clockCfg = execution.cfg
+	}
+	ctx, err := s.prepareDependencyClocks(ctx, q, clockCfg)
 	if err != nil {
 		return 0, err
 	}
@@ -568,7 +572,7 @@ type PlannedAction struct {
 // It returns unclaimed work, quarantining invalid rows for operators.
 func (s *Store) Plan(ctx context.Context, q QueueID, cfg queue.Config, now time.Time) ([]PlannedAction, error) {
 	var result []PlannedAction
-	ctx, err := s.prepareDependencyClocks(ctx, q)
+	ctx, err := s.prepareDependencyClocks(ctx, q, cfg)
 	if err != nil {
 		return nil, err
 	}

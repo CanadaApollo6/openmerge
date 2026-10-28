@@ -150,7 +150,7 @@ func (s *Store) BeginConsequential(ctx context.Context, a ClaimedAction, cfg que
 	default:
 		ctx = withoutDependencyFormationClock(ctx, a.QueueID)
 	}
-	ctx, err := s.prepareDependencyClocks(ctx, a.QueueID)
+	ctx, err := s.prepareDependencyClocks(ctx, a.QueueID, cfg)
 	if err != nil {
 		return false, err
 	}
