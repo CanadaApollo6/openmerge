@@ -129,3 +129,10 @@ func DependencyCheckStatus(q *Queue, e *Entry, previous forge.Status) forge.Stat
 	r := deriveWaitingReason(q, *e, false)
 	return forge.Status{State: forge.Queued, Reason: string(r.Code), Summary: WaitingSummary(r)}
 }
+
+// RequireDependencyDecisionScope withholds retained positions that could expose
+// private history. Authorized paging keeps its existing response contract.
+func RequireDependencyDecisionScope(j store.Journal) error {
+ if j.DependencyRedacted {return errors.New("dependency evidence unavailable")}
+ return nil
+}

@@ -28,9 +28,14 @@ func (s dependencyRenderSource) Journals(_ context.Context, _ []store.QueueKey) 
 	return []store.Journal{s.journal}, nil
 }
 
+func (s dependencyRenderSource) ChangeDecisions(_ context.Context,_ store.QueueKey,_ queue.ChangeID,_ uint64,_ int64,_ int)([]store.DecisionRecord,int64,bool,error){
+ if err:=RequireDependencyDecisionScope(s.journal);err!=nil{return nil,0,false,err}
+ return nil,int64(len(s.journal.Events)),true,nil
+}
+
 func TestDependencyPrivacyGoldensNoRenderingFetch(t *testing.T) {
 	states := []string{"missing", "dependency-unresolved", "dependency-waiting", "dependency-closed", "dependency-stale", "dependency-landed", "dependency-unavailable", "dependency-out-of-scope", "dependency-source-retargeted", "dependency-not-on-base", "dependency-unverified"}
-	var wantAPI, wantCheck []byte
+	var wantAPI, wantCheck, wantDecisions []byte
 	for i, state := range states {
 		t.Run(state, func(t *testing.T) {
 			j, binding, ref, grant := statusfixture.StatusJournal(t, state, i+1)
@@ -71,11 +76,19 @@ func TestDependencyPrivacyGoldensNoRenderingFetch(t *testing.T) {
 				if e.WaitingReason.Code != WaitingDependencies || e.WaitingReason.Text != "Dependency cannot be verified" || len(e.Dependency.Details) != 0 || e.Dependency.URL != "" {
 					t.Fatal(e.WaitingReason)
 				}
+    id,err:=j.Key.ChangeID(2);if err!=nil{t.Fatal(err)}
+    page:=httptest.NewRecorder()
+    h.ServeHTTP(page,httptest.NewRequest("GET",changePath(j.Key,string(id))+"/decisions?limit=1&after=0",nil))
+    if page.Code!=503{t.Fatal("unscoped decision pagination exposed retained positions",page.Code,page.Body)}
+    if wantDecisions==nil{wantDecisions=bytes.Clone(page.Body.Bytes())}
+    if !bytes.Equal(wantDecisions,page.Body.Bytes()){t.Fatal("decision error disclosed source state",page.Body)}
+
 			}
 		})
 	}
 	reportingGolden(t, "dependency-private-api.json", wantAPI)
 	reportingGolden(t, "dependency-private-check.json", wantCheck)
+ reportingGolden(t,"dependency-private-decisions.json",wantDecisions)
 }
 
 func TestDependencyAuthorizedDiagnosticsAndPrecedence(t *testing.T) {
@@ -93,6 +106,12 @@ func TestDependencyAuthorizedDiagnosticsAndPrecedence(t *testing.T) {
 		if code == "dependency-landed" && e.WaitingReason.Code == WaitingDependencies {
 			t.Fatal("verified dependencies still block")
 		}
+  id,err:=j.Key.ChangeID(2);if err!=nil{t.Fatal(err)}
+  page:=httptest.NewRecorder()
+  Handler(dependencyRenderSource{journal:j},[]store.QueueKey{j.Key},"",nil).ServeHTTP(page,httptest.NewRequest("GET",changePath(j.Key,string(id))+"/decisions?limit=1&after=0",nil))
+  var retained DecisionsResponse
+  if page.Code!=200 || json.Unmarshal(page.Body.Bytes(),&retained)!=nil || retained.NextCursor!=int64(len(j.Events)){t.Fatal("authorized decision paging changed",page.Code,page.Body)}
+
 		for _, tc := range []struct {
 			status, gate string
 			code         WaitingCode

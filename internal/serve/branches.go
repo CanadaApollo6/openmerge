@@ -491,5 +491,6 @@ func (e *repositoryReadError) Unwrap() error { return e.err }
 
 // ChangeDecisions exposes only retained, queue-scoped historical evidence.
 func (s *Server) ChangeDecisions(ctx context.Context, key store.QueueKey, id queue.ChangeID, revision uint64, after int64, limit int) ([]store.DecisionRecord, int64, bool, error) {
-	return s.store.ChangeDecisions(ctx, key, id, revision, after, limit)
+	if err:=s.dependencyDecisionScope(ctx,key);err!=nil{return nil,0,false,err}
+ return s.store.ChangeDecisions(ctx, key, id, revision, after, limit)
 }

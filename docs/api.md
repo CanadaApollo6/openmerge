@@ -726,4 +726,6 @@ their existing precedence. Dependency presentation does not grant landing author
 
 This is slice **5-1**. Scoped audit export, completed self-acknowledgement evidence,
 the opt-in multi-writer warning, wait-age display and additional evidence pagination
-remain slice **5-2**. The existing `events=1..100` limit is unchanged.
+remain slice **5-2**. The existing `events=1..100` limit is unchanged. Retained decision paging returns
+the existing generic 503 response when dependency scope is redacted, before
+querying decision pages or exposing cursor positions. Authorized paging stays unchanged.
