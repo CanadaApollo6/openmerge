@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	p "github.com/CanadaApollo6/openmerge/internal/provenance"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -162,6 +163,37 @@ func TestConfiguredReserveAccountsForActiveInventory(t *testing.T) {
 	s = retainedSnapshot(t, s)
 	if len(s.groups) != 0 || s.fenceBytes > maxFenceTableBytes {
 		t.Fatal("admitted inventory cannot retire safely")
+	}
+}
+
+func TestRetirementReserveEntryCap(t *testing.T) {
+	// Only map cardinality matters to this guard. Avoid replaying, encoding or
+	// compressing millions of fences; the reduced checkpoint below tests that
+	// active evidence transfers to real fences on retirement.
+	s := State{
+		retired: make(map[string]uint64, maxFenceEntries-2),
+		groups:  map[string]group{"active": {ids: []uint64{1}}},
+		landings: map[string]Landing{
+			"first": {AttemptID: "first"},
+		},
+		// Isolate entry accounting from byte charging and fence packing, as in
+		// testRetirementReserveBoundaries's expanded-byte boundary fixture.
+		fenceBytes:  1,
+		packedAt:    1,
+		packedTable: []byte{1},
+	}
+	for i := range maxFenceEntries - 2 {
+		s.retired[strconv.Itoa(i)] = 1
+	}
+	// Recovery has no admission high-water threshold, but must still reserve
+	// one fence per active generation and attempt at the exact hard ceiling.
+	before := CapacityGauge{ProjectedBytes: maxSnapshotBytes}
+	if err := s.PreflightRecovery(before); err != nil {
+		t.Fatal("retirement reserve refused exact entry ceiling", err)
+	}
+	s.landings["second"] = Landing{AttemptID: "second"}
+	if err := s.PreflightRecovery(before); !errors.Is(err, ErrLimit) || !strings.Contains(err.Error(), "queue retirement reserve") {
+		t.Fatal("retirement reserve admitted one entry beyond ceiling", err)
 	}
 }
 

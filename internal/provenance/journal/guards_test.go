@@ -307,6 +307,40 @@ func TestRetainedRecordCap(t *testing.T) {
 	}
 }
 
+func TestSnapshotReaderRecordCap(t *testing.T) {
+	// Stop after the count guard, before record replay. The reduced checkpoint
+	// in testRetainedRecordCapShort independently exercises the retained fold.
+	stop := errors.New("base decoder reached")
+	for _, delta := range []int{-1, 0, 1} {
+		t.Run(fmt.Sprintf("cap%+d", delta), func(t *testing.T) {
+			count := maxRecords + delta
+			v := snapshot{Version: SnapshotVersion, BaseKind: "queue", Base: []byte(`{"Version":6}`), LastID: uint64(count), Records: make([]Record, count)}
+			for i := range v.Records {
+				v.Records[i] = Record{ID: uint64(i + 1), Payload: json.RawMessage(`{}`)}
+			}
+			raw, err := json.Marshal(v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			called := false
+			_, err = DecodeSnapshot(raw, func(string, []byte) error {
+				called = true
+				return stop
+			})
+			if delta <= 0 {
+				if !called || !errors.Is(err, stop) {
+					t.Fatalf("reader refused %d records before base decoding: %v", count, err)
+				}
+			} else {
+				var limit RetentionLimitError
+				if called || !errors.As(err, &limit) || limit.Records != count {
+					t.Fatalf("reader must reject %d records before base decoding: %v", count, err)
+				}
+			}
+		})
+	}
+}
+
 func TestLandingDeclarationDigestBoundToInventory(t *testing.T) {
 	h, _ := fixture(t)
 	s := apply(t, State{}, 3, h)
