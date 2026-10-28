@@ -333,6 +333,23 @@ func TestAuthorityDowngradeGate(t *testing.T) {
 	}
 }
 
+func TestAuthorityDowngradeRejectsDependencyWaitsWithheld(t *testing.T) {
+	s := newStore(t)
+	id := ensureQueue(t, s, "")
+	appendEvents(t, s, id, queue.DependencyWaitsWithheld{PRs: []queue.BatchPR{{PR: 2, HeadSHA: "head"}}})
+
+	var kind string
+	must(t, s.pool.QueryRow(t.Context(), `SELECT type FROM events WHERE queue_id=$1 ORDER BY id DESC LIMIT 1`, id).Scan(&kind))
+	if kind != "dependency_waits_withheld" {
+		t.Fatalf("stored event kind = %q", kind)
+	}
+
+	reader := &JournalReader{store: s, timeout: time.Minute}
+	if err := reader.CheckAuthorityDowngrade(t.Context()); !errors.Is(err, ErrAuthorityDowngradeRefused) {
+		t.Fatalf("dependency waits withheld downgrade: %v", err)
+	}
+}
+
 // Frozen DecodeEvent type set from addec7d^, before ADR 0008 PR 1.
 // Compare against the decoder itself so a new type cannot evade the gate merely
 // by omitting a fixture. Baseline types may also acquire incompatible fields;
