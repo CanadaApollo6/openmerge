@@ -47,7 +47,8 @@ func admitDependencyBuild(t *testing.T, f *depFixture, cfg queue.Config) string 
 		ok, err := f.s.BeginConsequential(ctx, claim, cfg, now)
 		must(t, err)
 		if !ok {
-			t.Fatal("start declined")
+			// A prefix settlement can cancel an older speculative build plan.
+			continue
 		}
 		must(t, f.s.Emit(ctx, claim, cfg)(start))
 		must(t, f.s.Complete(ctx, claim, Done))
@@ -57,7 +58,18 @@ func admitDependencyBuild(t *testing.T, f *depFixture, cfg queue.Config) string 
 	return ""
 }
 
-func assertCompositionReplay(t *testing.T, f *depFixture) {
+func assertCompositionReplay(t *testing.T, f *depFixture, configs ...queue.Config) {
+	t.Helper()
+	cfg := depCfg
+	if len(configs) > 0 {
+		cfg = configs[0]
+	}
+	assertCompositionReplayAfter(t, f, cfg, 0)
+}
+
+// The ordering matrix starts its cut sweep at its completed four-batch setup;
+// earlier initialization and admission cuts retain their full 4b-1 coverage.
+func assertCompositionReplayAfter(t *testing.T, f *depFixture, cfg queue.Config, firstCut uint64) {
 	t.Helper()
 	type record struct {
 		id  uint64
@@ -92,7 +104,7 @@ func assertCompositionReplay(t *testing.T, f *depFixture) {
 	for _, r := range records {
 		_, err := full.Apply(r.id, r.raw)
 		must(t, err)
-		plans = append(plans, queue.Plan(depCfg, full.Queue, now))
+		plans = append(plans, queue.Plan(cfg, full.Queue, now))
 	}
 	want, err := full.CursorSnapshot()
 	must(t, err)
@@ -100,6 +112,9 @@ func assertCompositionReplay(t *testing.T, f *depFixture) {
 	for cut, r := range records {
 		_, err := prefix.Apply(r.id, r.raw)
 		must(t, err)
+		if r.id < firstCut {
+			continue
+		}
 		raw, err := prefix.CursorSnapshot()
 		must(t, err)
 		resumed := fresh()
@@ -107,13 +122,13 @@ func assertCompositionReplay(t *testing.T, f *depFixture) {
 		for offset, tail := range records[cut+1:] {
 			_, err := resumed.Apply(tail.id, tail.raw)
 			must(t, err)
-			if !reflect.DeepEqual(queue.Plan(depCfg, resumed.Queue, now), plans[cut+offset+1]) {
+			if !reflect.DeepEqual(queue.Plan(cfg, resumed.Queue, now), plans[cut+offset+1]) {
 				t.Fatalf("next actions differ at cut %d revision %d", cut, tail.id)
 			}
 		}
 		got, err := resumed.CursorSnapshot()
 		must(t, err)
-		if !bytes.Equal(got, want) || !reflect.DeepEqual(queue.Plan(depCfg, resumed.Queue, now), queue.Plan(depCfg, full.Queue, now)) {
+		if !bytes.Equal(got, want) || !reflect.DeepEqual(queue.Plan(cfg, resumed.Queue, now), queue.Plan(cfg, full.Queue, now)) {
 			t.Fatalf("snapshot/tail diverged at cut %d", cut)
 		}
 	}
