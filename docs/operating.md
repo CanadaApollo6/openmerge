@@ -2565,21 +2565,48 @@ deploy only after ADR 0009 period B drains. No production path calls the new
 `Store.AppendSide` API. Before enabling any writer, deploy these readers and
 [audit v2 (#181)](https://github.com/CanadaApollo6/openmerge/pull/181) everywhere,
 drain incompatible readers/workers, verify snapshot-plus-tail replay, and verify
-a whole-database pre-emission backup. Writer authority, landing-start fencing,
-namespace initialization/recovery and owner opt-in remain later slices.
+a whole-database pre-emission backup. Public activation, dependency namespace
+initialization/recovery and owner opt-in remain gated.
+
+**Slice 4b activation boundary (Hold):** the private provenance pass can now
+co-commit fresh per-member inventory/T evidence with decisions, check evidence
+and `LandingStarted` in the shared transaction. The public loader continues to
+reject `provenance.requirements`; public queues install no pass and emit no side
+evidence. Approval policy alone never activates provenance. The internal/test
+installer supplies stable already-acquired local objects and trusted composer
+observations; it must also use the existing 4a publication filter. This is not a
+public policy switch.
+
+Activated workers run `RecoverProvenance` before new work and immediately after
+an accepted `Landed`. It calls `RecoverLanded` using retained immutable tested
+inventories/mappings, accepted decisions and the actual outcome, with no network
+or current-ref reads. Supported outcomes are the exact T composition or the
+unmodified fast-forward terminal head. It refuses an unexpected changed result.
+A superseded historical inventory uses a new recovery generation with the exact
+current predecessor; only that attempt's consumed inventories may accompany L.
+All #188 reserve/cap checks remain enforced. A permanent refusal stops the
+activated worker before admission; follow the recovery procedure below rather
+than clearing evidence or disabling policy to make it proceed.
+
+Deployment remains after ADR 0009 period B, compatible 3c readers/audit v2 on every
+worker, the older-worker drain, a verified pre-emission backup and explicit
+slice-5 owner opt-in. **High-volume activation remains blocked on a structural
+fence bound or explicit lifetime/rollover policy.** Keep the existing capacity
+gauge and 70% alert. The [4b proof map](research/adr-0010-4b-evidence.md) includes
+the isolated real Postgres backup/restore downgrade rehearsal.
 
 **Writer prerequisites delivered under Hold for ADR 0010 slice 4b and ADR 0011
 slices 4a/4b (production integration remains disabled):**
 
 - **Shared transaction.** `appendSideTx` accepts the existing queue-locked
-  transaction. The unwired `startLandingWithSide` seam supplies exact inserted
+  transaction. The `startLandingWithSide` foundation seam supplies exact inserted
   decision IDs and commits decisions, companions, v9 cursor upgrade, dedupe
   manifest and append checkpoint together. A failure after decision insertion
   rolls everything back. The ordinary production start supplies no companion
   builder. Acquire the queue advisory before action/observation locks or event
   INSERTs; FK `KEY SHARE` on queues is part of this order. Never call the public
   wrapper in a second transaction while holding the first transaction's lock.
-- **Landed recovery.** The unwired `RecoverLanded` helper checks an immutable
+- **Landed recovery.** The `RecoverLanded` helper checks an immutable
   `Landed` row against the immediately preceding queue state, rejecting stale
   outcomes and mismatched attempts/decisions. It validates exact historical batch
   membership, revisions and heads, every member's complete accepted decision
@@ -2594,8 +2621,8 @@ slices 4a/4b (production integration remains disabled):**
   compares complete canonical bundles on retry. The caller must reconstruct the
   actual landed composition from immutable inputs: a `Landed` row alone cannot
   supply source-to-build mappings. Recovery appends the missing companion once,
-  allowing tested evidence to retire. Future startup/recovery wiring must invoke
-  it before starting new work; no production caller is enabled here.
+  allowing tested evidence to retire. The activated coordinator invokes it
+  before starting new work; public activation remains disabled.
   A recovery bundle may contain only the landed companion and inventory chunks
   consumed by its exact member generations. Reconstructed inventories must match
   the historical tested inventory after rebinding the generation and exact
@@ -2678,7 +2705,7 @@ with the queue/attempt/outcome IDs, exact error, reader version and a protected
 copy of the original journal and checkpoint. Validate a reviewed compatible
 reader/retention fix or restore on that copy before resuming emission. Never
 delete pending markers, alter original events or invent a successful companion
-to release capacity. These helpers remain unwired under Hold.
+to release capacity. Public activation of these helpers remains disabled under Hold.
 
 ### Retention decision and audit closure
 
@@ -2845,7 +2872,10 @@ kind names; it does not catch string concatenation, `.sql` files or `_test.go`
 files. Only `journalreader/snapshot.go` may compose v8/v9 for derived audit
 cursors. `store/side_append.go` is the sole allowlisted production adapter for encoding
 and inserting side events, and the guard rejects production references to its
-entry points (including function-value captures). Transaction-local append is
-allowlisted only in the adapter and landing-start seam; production starts must
-pass a literal nil companion builder, and production recovery calls are forbidden. Review every future persistence
-path independently.
+unsanctioned entry points (including function-value captures).
+Transaction-local append is
+allowlisted only in the adapter and landing-start seam. Ordinary starts must
+pass a literal nil companion builder. The private activated gate is the only
+sanctioned start caller, and the activated startup/result coordinator is the
+only recovery caller. Function-value captures and ungated callers are refused.
+Review every future persistence path independently.

@@ -41,6 +41,11 @@ func (s *Server) trustGate(ctx context.Context, w *worker, prs []queue.BatchPR) 
 }
 
 func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedAction) (result error) {
+	if w.provenance != nil {
+		if err := s.store.RecoverProvenance(ctx, w.id); err != nil {
+			return err
+		}
+	}
 	completion := store.Done
 	// Completion survives shutdown cancellation. Uncertain writes are retried via
 	// their durable idempotency keys or resolved through the landing fence.
@@ -107,6 +112,11 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 			}
 			completion = store.Cancelled
 			return nil
+		}
+	}
+	if w.provenance != nil {
+		if w.stageA == nil || w.provenance.policy.Digest != w.stageA.policy.Digest {
+			return errors.New("provenance activation policy changed")
 		}
 	}
 	disableDeleteHeadBranch := s.options.DisableDeleteHeadBranch
@@ -281,6 +291,13 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		}
 		if err := emit(event); err != nil {
 			return err
+		}
+		if w.provenance != nil {
+			if _, landed := event.(queue.Landed); landed {
+				if err := s.store.RecoverProvenance(actionCtx, w.id); err != nil {
+					return err
+				}
+			}
 		}
 		s.logCommitted(actionCtx, w)
 		return nil

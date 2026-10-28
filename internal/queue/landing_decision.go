@@ -207,10 +207,24 @@ func classificationDecisionDigest(e ChangeClassified) string {
 // PrepareLandingDecision consumes PR 6's bundle. It does not read the forge.
 // The caller checks tested commit trailers before entering the store operation.
 func (s State) PrepareLandingDecision(policy cp.Policy, fresh ApprovalEligibilityObserved, start LandingStarted, land Land) (LandingDecisionRecorded, error) {
+	return s.prepareLandingDecision(policy, fresh, start, land, "")
+}
+
+// PrepareProvenanceLandingDecision binds the declaration-and-rule digest supplied
+// by the activated provenance evaluator, without extending the decision schema.
+func (s State) PrepareProvenanceLandingDecision(policy cp.Policy, fresh ApprovalEligibilityObserved, start LandingStarted, land Land, declarations string) (LandingDecisionRecorded, error) {
+	if !digestHex(declarations) {
+		return LandingDecisionRecorded{}, fmt.Errorf("invalid declaration digest")
+	}
+	return s.prepareLandingDecision(policy, fresh, start, land, declarations)
+}
+
+func (s State) prepareLandingDecision(policy cp.Policy, fresh ApprovalEligibilityObserved, start LandingStarted, land Land, declarations string) (LandingDecisionRecorded, error) {
 	fact, err := s.RecordedBrief(policy, fresh.Basis)
 	if err != nil {
 		return LandingDecisionRecorded{}, err
 	}
+	fact.DeclarationDigest = declarations
 	identity, err := brief.Identity(fact)
 	if err != nil {
 		return LandingDecisionRecorded{}, err
@@ -276,6 +290,24 @@ func (s State) PrepareLandingDecision(policy cp.Policy, fresh ApprovalEligibilit
 // ValidateLandingDecisions rederives every member under the caller's queue lock.
 // It validates all evidence and admission budgets before any journal insert.
 func (s State) ValidateLandingDecisions(policy cp.Policy, land Land, start LandingStarted, fresh []ApprovalEligibilityObserved, decisions []LandingDecisionRecorded) error {
+	return s.validateLandingDecisions(policy, land, start, fresh, decisions, nil)
+}
+
+// ValidateProvenanceLandingDecisions rederives decisions with the digests computed
+// from the transaction's exact provenance generations. Legacy callers use none.
+func (s State) ValidateProvenanceLandingDecisions(policy cp.Policy, land Land, start LandingStarted, fresh []ApprovalEligibilityObserved, decisions []LandingDecisionRecorded, declarations []string) error {
+	if len(declarations) != len(land.PRs) {
+		return fmt.Errorf("incomplete declaration bindings")
+	}
+	for _, d := range declarations {
+		if !digestHex(d) {
+			return fmt.Errorf("invalid declaration digest")
+		}
+	}
+	return s.validateLandingDecisions(policy, land, start, fresh, decisions, declarations)
+}
+
+func (s State) validateLandingDecisions(policy cp.Policy, land Land, start LandingStarted, fresh []ApprovalEligibilityObserved, decisions []LandingDecisionRecorded, declarations []string) error {
 	if !policy.Enabled() || len(land.PRs) == 0 || len(fresh) != len(land.PRs) || len(decisions) != len(land.PRs) || land.BatchID != start.BatchID {
 		return fmt.Errorf("incomplete landing decisions")
 	}
@@ -293,7 +325,11 @@ func (s State) ValidateLandingDecisions(policy cp.Policy, land Land, start Landi
 			return fmt.Errorf("stale landing member %s", b.ChangeID)
 		}
 		seen[b.ChangeID] = true
-		expected, err := s.PrepareLandingDecision(policy, f, start, land)
+		declaration := ""
+		if declarations != nil {
+			declaration = declarations[i]
+		}
+		expected, err := s.prepareLandingDecision(policy, f, start, land, declaration)
 		if err != nil {
 			return err
 		}

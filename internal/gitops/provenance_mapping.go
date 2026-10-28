@@ -15,7 +15,9 @@ import (
 // objects. It does not infer mappings from contributor replay trailers, classify
 // generated committers, publish refs, or mutate the original inventory.
 func MapProvenanceBuild(ctx context.Context, gitDir, _ string, inventory provenance.Inventory, build provenance.BuildObservation, limits provenance.InventoryLimits) provenance.BuildMapping {
-	result := provenance.BuildMapping{Request: inventory.Request, PolicyID: inventory.PolicyID, Build: build}
+	result := provenance.BuildMapping{Request: inventory.Request, PolicyID: inventory.PolicyID, Build: build, Commits: []provenance.CommitMapping{}}
+	result.Build.Replays = append([]provenance.CommitMapping{}, build.Replays...)
+	slices.SortFunc(result.Build.Replays, func(a, b provenance.CommitMapping) int { return strings.Compare(a.Original, b.Original) })
 	fail := func(outcome provenance.ReadOutcome, resource string) provenance.BuildMapping {
 		result.Diagnostic = provenance.Diagnostic{Outcome: outcome, Resource: resource}
 		result.Commits = nil

@@ -66,6 +66,8 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 			"internal/dependency/snapshot.go":       true,
 		}
 		allowedStarts := disabledCompanionStarts(file, rel)
+		activated := activatedProvenanceCalls(file, rel)
+		transactions := sanctionedLandingTransactions(file, rel)
 		ast.Inspect(file, func(n ast.Node) bool {
 			// Include function-value captures, not just direct calls.
 			if sel, ok := n.(*ast.SelectorExpr); ok {
@@ -75,7 +77,17 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 						t.Errorf("production side append caller in %s", path)
 					}
 				case "RecoverLanded":
-					t.Errorf("production landed recovery caller in %s", path)
+					if rel != "internal/store/side_append.go" {
+						t.Errorf("production landed recovery caller in %s", path)
+					}
+				case "RecoverProvenance", "StartProvenanceLanding":
+					if !activated[sel] {
+						t.Errorf("ungated provenance writer caller/capture in %s", path)
+					}
+				case "startLandingTransaction":
+					if !transactions[sel] {
+						t.Errorf("production transaction start caller/capture in %s", path)
+					}
 				case "appendSideTx":
 					if rel != "internal/store/side_append.go" && rel != "internal/store/landing_start.go" {
 						t.Errorf("production transaction append caller in %s", path)
@@ -169,4 +181,89 @@ func TestCompanionStartHoldGuard(t *testing.T) {
 			t.Fatalf("guard mismatch for %s in %s", tc.source, tc.path)
 		}
 	}
+}
+
+// Only direct calls inside the private queue activation branch may enter the
+// sanctioned writer or startup recovery. Function captures remain forbidden.
+func activatedProvenanceCalls(file *ast.File, rel string) map[*ast.SelectorExpr]bool {
+	out := map[*ast.SelectorExpr]bool{}
+	if rel != "internal/serve/serve.go" && rel != "internal/serve/worker.go" && rel != "internal/serve/stage_a_gate.go" {
+		return out
+	}
+	ast.Inspect(file, func(n ast.Node) bool {
+		branch, ok := n.(*ast.IfStmt)
+		if !ok {
+			return true
+		}
+		condition, ok := branch.Cond.(*ast.BinaryExpr)
+		if !ok || condition.Op != token.NEQ {
+			return true
+		}
+		sel, ok := condition.X.(*ast.SelectorExpr)
+		nilValue, nilOK := condition.Y.(*ast.Ident)
+		if !ok || sel.Sel.Name != "provenance" || !nilOK || nilValue.Name != "nil" {
+			return true
+		}
+		ast.Inspect(branch.Body, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok {
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+					out[sel] = true
+				}
+			}
+			return true
+		})
+		return true
+	})
+	return out
+}
+
+func TestActivatedProvenanceWriterGuard(t *testing.T) {
+	for _, tc := range []struct {
+		source, path string
+		want         bool
+	}{
+		{`if w.provenance != nil { s.store.RecoverProvenance(ctx,w.id) }`, "internal/serve/serve.go", true},
+		{`if w.provenance != nil { s.store.StartProvenanceLanding() }`, "internal/serve/stage_a_gate.go", true},
+		{`s.store.RecoverProvenance(ctx,w.id)`, "internal/serve/serve.go", false},
+		{`if w.provenance == nil { s.store.RecoverProvenance(ctx,w.id) }`, "internal/serve/serve.go", false},
+		{`if w.provenance != nil { _ = s.store.RecoverProvenance }`, "internal/serve/worker.go", false},
+		{`if w.provenance != nil { s.store.StartProvenanceLanding() }`, "cmd/openmerge/main.go", false},
+	} {
+		file, err := parser.ParseFile(token.NewFileSet(), "guard.go", "package serve; func f(){"+tc.source+"}", 0)
+		must(t, err)
+		if (len(activatedProvenanceCalls(file, tc.path)) > 0) != tc.want {
+			t.Fatal(tc.source)
+		}
+	}
+}
+
+func sanctionedLandingTransactions(file *ast.File, rel string) map[*ast.SelectorExpr]bool {
+	allowed := map[*ast.SelectorExpr]bool{}
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		legacy := rel == "internal/store/landing_start.go" && fn.Name.Name == "startLandingWithSide"
+		active := rel == "internal/store/side_append.go" && fn.Name.Name == "StartProvenanceLanding"
+		if !legacy && !active {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || len(call.Args) < 10 {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "startLandingTransaction" {
+				return true
+			}
+			arg, nilOK := call.Args[9].(*ast.Ident)
+			if active || nilOK && arg.Name == "nil" {
+				allowed[sel] = true
+			}
+			return true
+		})
+	}
+	return allowed
 }
