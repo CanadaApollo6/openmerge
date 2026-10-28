@@ -413,12 +413,12 @@ func (s *Server) status(ctx context.Context, w *worker, pr int, head string, sta
 	if err != nil {
 		return err
 	}
-	if w.dependencies!=nil && w.ledgerCache!=nil {
-  q:=&w.ledgerCache.projection
-  status=checkstatus.DependencyCheckStatus(q,q.LedgerEntry(pr),status)
- }
- status.Summary += summary
- if w.stageA != nil {
+	if w.dependencies != nil && w.ledgerCache != nil {
+		q := &w.ledgerCache.projection
+		status = checkstatus.DependencyCheckStatus(q, q.LedgerEntry(pr), status)
+	}
+	status.Summary += summary
+	if w.stageA != nil {
 		detail, err := s.stageACheckSummary(ctx, w, pr)
 		if err != nil {
 			return err

@@ -3,10 +3,10 @@ package dependency
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"reflect"
 	"strings"
 	"testing"
- "github.com/CanadaApollo6/openmerge/internal/queue"
 )
 
 func diagnosticFixture(t *testing.T) (State, DiagnosticRecorded) {
@@ -58,28 +58,30 @@ func TestDiagnosticTypedCodesAndGuards(t *testing.T) {
 				t.Fatal("valid code rejected")
 			}
 			x.Evidence.Observation.Result = "landed"
-			if result == "landed" { x.Evidence.Observation.Result = "waiting" }
+			if result == "landed" {
+				x.Evidence.Observation.Result = "waiting"
+			}
 			if x.Validate() == nil {
 				t.Fatal("code/result mismatch accepted")
 			}
 		})
 	}
 	for name, mutate := range map[string]func(*DiagnosticRecorded){
-		"namespace": func(x *DiagnosticRecorded) { x.Namespace = "bad" },
-		"observation id": func(x *DiagnosticRecorded) { x.ObservationEventID = 0 },
-		"source": func(x *DiagnosticRecorded) { x.Source.Number = 0 },
-		"forge": func(x *DiagnosticRecorded) { x.Source.ForgeInstance = "github:https://other.example" },
-		"installation": func(x *DiagnosticRecorded) { x.Source.Installation = "other" },
-		"stage": func(x *DiagnosticRecorded) { x.Evidence.Stage = "other" },
-		"declaration": func(x *DiagnosticRecorded) { x.Evidence.Declaration.EventID++ },
-		"code": func(x *DiagnosticRecorded) { x.Evidence.Code = "dependency-secret" },
-		"grant repo": func(x *DiagnosticRecorded) { x.Evidence.Grant.RepositoryID = "other" },
-		"grant identity": func(x *DiagnosticRecorded) { x.Evidence.Grant.ReturnedID = "other" },
+		"namespace":       func(x *DiagnosticRecorded) { x.Namespace = "bad" },
+		"observation id":  func(x *DiagnosticRecorded) { x.ObservationEventID = 0 },
+		"source":          func(x *DiagnosticRecorded) { x.Source.Number = 0 },
+		"forge":           func(x *DiagnosticRecorded) { x.Source.ForgeInstance = "github:https://other.example" },
+		"installation":    func(x *DiagnosticRecorded) { x.Source.Installation = "other" },
+		"stage":           func(x *DiagnosticRecorded) { x.Evidence.Stage = "other" },
+		"declaration":     func(x *DiagnosticRecorded) { x.Evidence.Declaration.EventID++ },
+		"code":            func(x *DiagnosticRecorded) { x.Evidence.Code = "dependency-secret" },
+		"grant repo":      func(x *DiagnosticRecorded) { x.Evidence.Grant.RepositoryID = "other" },
+		"grant identity":  func(x *DiagnosticRecorded) { x.Evidence.Grant.ReturnedID = "other" },
 		"grant freshness": func(x *DiagnosticRecorded) { x.Evidence.Grant.Fresh = false },
-		"grant allowed": func(x *DiagnosticRecorded) { x.Evidence.Grant.Allowed = false },
-		"grant subject": func(x *DiagnosticRecorded) { x.Evidence.Grant.SubjectID = "" },
-		"grant returned": func(x *DiagnosticRecorded) { x.Evidence.Grant.ReturnedID = "" },
-		"grant read": func(x *DiagnosticRecorded) { x.Evidence.Grant.ReadID = "" },
+		"grant allowed":   func(x *DiagnosticRecorded) { x.Evidence.Grant.Allowed = false },
+		"grant subject":   func(x *DiagnosticRecorded) { x.Evidence.Grant.SubjectID = "" },
+		"grant returned":  func(x *DiagnosticRecorded) { x.Evidence.Grant.ReturnedID = "" },
+		"grant read":      func(x *DiagnosticRecorded) { x.Evidence.Grant.ReadID = "" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			x := e
@@ -112,7 +114,13 @@ func TestDiagnosticTypedCodesAndGuards(t *testing.T) {
 
 func TestDiagnosticProjectionRejectsInvalidContext(t *testing.T) {
 	s, e := diagnosticFixture(t)
-	for name, state := range map[string]State{"uninitialized": {}, "foreign": func() State { v := s; i := *v.initialization; i.Namespace = "omj1_" + strings.Repeat("b", 64); v.initialization = &i; return v }()} {
+	for name, state := range map[string]State{"uninitialized": {}, "foreign": func() State {
+		v := s
+		i := *v.initialization
+		i.Namespace = "omj1_" + strings.Repeat("b", 64)
+		v.initialization = &i
+		return v
+	}()} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := (DiagnosticProjection{}).Apply(state, s.lastID+1, e); err == nil {
 				t.Fatal("invalid projection context accepted")
@@ -156,16 +164,32 @@ func TestDiagnosticFullJournalProjectionAndRedaction(t *testing.T) {
 }
 
 func TestDiagnosticPreservesAdmissionAndSnapshotTail(t *testing.T) {
- s,e:=diagnosticFixture(t)
- before:=s.Admission(e.Evidence.Observation.ChangeID,e.Evidence.Observation.Revision)
- next:=applyJournal(t,s,e)
- if !reflect.DeepEqual(before,next.Admission(e.Evidence.Observation.ChangeID,e.Evidence.Observation.Revision)){t.Fatal("presentation companion changed admission")}
- raw,err:=EncodeSnapshot(queue.State{},next);if err!=nil{t.Fatal(err)}
- _,restored,err:=DecodeSnapshot(raw,*s.initialization);if err!=nil{t.Fatal(err)}
- observation:=e.Evidence.Observation
- observation.ExpectedPrior=e.ObservationEventID
- observation.ReadSequence++
- full,err:=Apply(next,next.lastID+1,observation);if err!=nil{t.Fatal(err)}
- tail,err:=Apply(restored,next.lastID+1,observation);if err!=nil{t.Fatal(err)}
- if !reflect.DeepEqual(full,tail){t.Fatal("diagnostic changed snapshot tail semantics")}
+	s, e := diagnosticFixture(t)
+	before := s.Admission(e.Evidence.Observation.ChangeID, e.Evidence.Observation.Revision)
+	next := applyJournal(t, s, e)
+	if !reflect.DeepEqual(before, next.Admission(e.Evidence.Observation.ChangeID, e.Evidence.Observation.Revision)) {
+		t.Fatal("presentation companion changed admission")
+	}
+	raw, err := EncodeSnapshot(queue.State{}, next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, restored, err := DecodeSnapshot(raw, *s.initialization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation := e.Evidence.Observation
+	observation.ExpectedPrior = e.ObservationEventID
+	observation.ReadSequence++
+	full, err := Apply(next, next.lastID+1, observation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tail, err := Apply(restored, next.lastID+1, observation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(full, tail) {
+		t.Fatal("diagnostic changed snapshot tail semantics")
+	}
 }

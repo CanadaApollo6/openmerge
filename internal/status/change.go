@@ -182,9 +182,11 @@ func changeRoute(r *http.Request, keys []store.QueueKey) (changeRequest, bool, e
 // selectChangeRevision stops at the last committed event of the requested
 // revision. It never attributes later accountability or stances to old heads.
 func selectChangeRevision(j store.Journal, id string, revision uint64) (store.Journal, int, bool) {
- // Current diagnostics cannot describe an older exact revision. Preserve the
- // activated privacy boundary while withholding current dependency details.
- if revision!=0 && j.DependencyStatus!=nil {j.DependencyStatus=map[int]store.DependencyStatus{}}
+	// Current diagnostics cannot describe an older exact revision. Preserve the
+	// activated privacy boundary while withholding current dependency details.
+	if revision != 0 && j.DependencyStatus != nil {
+		j.DependencyStatus = map[int]store.DependencyStatus{}
+	}
 	s := j.Seed
 	target, end := 0, -1
 	seen := map[int]bool{}

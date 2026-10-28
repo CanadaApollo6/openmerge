@@ -62,7 +62,7 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 			"internal/provenance/journal/events.go": true,
 			"internal/provenance/journal/codec.go":  true,
 			"internal/dependency/codec.go":          true,
- "internal/dependency/diagnostic.go": true,
+			"internal/dependency/diagnostic.go":     true,
 			"internal/dependency/projection.go":     true,
 			"internal/dependency/snapshot.go":       true,
 			"internal/dependency/decision.go":       true,

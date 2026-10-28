@@ -51,8 +51,8 @@ type Queue struct {
 	LastWindowFailure *queue.WindowFailure       `json:"last_window_failure,omitempty"`
 	Window            int                        `json:"window,omitempty"`
 	BatchSize         int                        `json:"batch_size,omitempty"`
-	dependencies map[int]store.DependencyStatus
- hasAuthorityPin   bool
+	dependencies      map[int]store.DependencyStatus
+	hasAuthorityPin   bool
 	sanitizer         *diagnostic.Sanitizer
 	state             queue.State
 	policyPins        []briefPolicyPin
@@ -113,25 +113,25 @@ type BatchPR struct {
 // Entry uses position zero for PRs outside the queue; admission is the latest
 // successful admission, retained on a terminal PR detail response.
 type Entry struct {
-	dependencyWaiting bool
- dependencyRedacted bool
- Dependency *WaitingReason `json:"dependency,omitempty"`
- WaitingReason     WaitingReason `json:"waiting_reason"`
-	Landing           *LandingView  `json:"landing,omitempty"`
-	Change            *ChangeReport `json:"change,omitempty"`
-	Gate              string        `json:"gate,omitempty"`
-	RunLedger         []Run         `json:"run_ledger,omitempty"`
-	BatchID           string        `json:"batch_id,omitempty"`
-	BatchPosition     uint64        `json:"batch_position,omitempty"`
-	BatchesAhead      *int          `json:"batches_ahead"`
-	Position          int           `json:"position"`
-	PR                int           `json:"pr"`
-	HeadSHA           string        `json:"head_sha"`
-	AdmittedAt        *time.Time    `json:"admitted_at"`
-	Status            string        `json:"status"`
-	Reason            string        `json:"reason"`
-	LastDequeueReason string        `json:"last_dequeue_reason"`
-	Detail            string        `json:"detail,omitempty"`
+	dependencyWaiting  bool
+	dependencyRedacted bool
+	Dependency         *WaitingReason `json:"dependency,omitempty"`
+	WaitingReason      WaitingReason  `json:"waiting_reason"`
+	Landing            *LandingView   `json:"landing,omitempty"`
+	Change             *ChangeReport  `json:"change,omitempty"`
+	Gate               string         `json:"gate,omitempty"`
+	RunLedger          []Run          `json:"run_ledger,omitempty"`
+	BatchID            string         `json:"batch_id,omitempty"`
+	BatchPosition      uint64         `json:"batch_position,omitempty"`
+	BatchesAhead       *int           `json:"batches_ahead"`
+	Position           int            `json:"position"`
+	PR                 int            `json:"pr"`
+	HeadSHA            string         `json:"head_sha"`
+	AdmittedAt         *time.Time     `json:"admitted_at"`
+	Status             string         `json:"status"`
+	Reason             string         `json:"reason"`
+	LastDequeueReason  string         `json:"last_dequeue_reason"`
+	Detail             string         `json:"detail,omitempty"`
 }
 
 // Why links a current-state explanation to recent committed evidence.
@@ -175,15 +175,23 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	var watermark int64
 	visit := func(record store.JournalEvent, before, after queue.State) {
 		s = after
- originalID:=record.ID
+		originalID := record.ID
 		// Dependency side evidence is filtered before explanation pagination.
-  // Withhold original row references when their gaps disclose private writes.
-  if j.DependencyStatus != nil {
-   if record.Event == nil { return }
-   if _, privateClock := record.Event.(queue.DependencyWaitsWithheld); privateClock { return }
-   if _, privateInvalidation := record.Event.(queue.DependencyCompositionsInvalidated); privateInvalidation { return }
-   if j.DependencyRedacted {record.ID=0}
-  }
+		// Withhold original row references when their gaps disclose private writes.
+		if j.DependencyStatus != nil {
+			if record.Event == nil {
+				return
+			}
+			if _, privateClock := record.Event.(queue.DependencyWaitsWithheld); privateClock {
+				return
+			}
+			if _, privateInvalidation := record.Event.(queue.DependencyCompositionsInvalidated); privateInvalidation {
+				return
+			}
+			if j.DependencyRedacted {
+				record.ID = 0
+			}
+		}
 
 		if e, ok := record.Event.(queue.ConfigApplied); ok && e.Commit == after.ConfigCommit && e.Digest == after.ConfigDigest {
 			configPin = e
@@ -210,7 +218,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 				outsidePushes = outsidePushes[len(outsidePushes)-queue.OutsidePushLimit:]
 			}
 		}
-  watermark = record.ID
+		watermark = record.ID
 		n := directPR(record.Event)
 		if n > 0 {
 			e := known[n]
@@ -280,7 +288,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			e.PR, e.HeadSHA, e.AdmittedAt = admitted.PR, admitted.HeadSHA, &admitted.EnqueuedAt
 			known[e.PR] = e
 		}
-		if pr > 0 && !privateDependencyEvidence(j,record.Event) && (inheritedPause[originalID] || affects(record.Event, pr, before, s, tested)) {
+		if pr > 0 && !privateDependencyEvidence(j, record.Event) && (inheritedPause[originalID] || affects(record.Event, pr, before, s, tested)) {
 			kind, _, _ := queue.EncodeEvent(record.Event)
 			evidence := Event{ID: record.ID, Type: kind, At: record.RecordedAt.UTC(), Summary: sanitizer.Sanitize(eventSummary(record.Event, before, s))}
 			evidence.Runs, evidence.RerunState = retryEvidence(record.Event, before, s, sanitizer)
@@ -347,9 +355,11 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			q.Authority.Elements[i].Element = sanitizer.Sanitize(q.Authority.Elements[i].Element)
 		}
 	}
-	if j.DependencyStatus!=nil && !j.DependencyRedacted && len(j.Events)>0 {q.Watermark=j.Events[len(j.Events)-1].ID}
- q.dependencies = j.DependencyStatus
- q.state = s
+	if j.DependencyStatus != nil && !j.DependencyRedacted && len(j.Events) > 0 {
+		q.Watermark = j.Events[len(j.Events)-1].ID
+	}
+	q.dependencies = j.DependencyStatus
+	q.state = s
 	q.runLedger = ledger
 	q.sanitizer = sanitizer
 	q.known = known
@@ -369,7 +379,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 		}
 	}
 	q.Invalidations = slices.Clone(s.Invalidations)
- maskDependencyBatches(&q,j)
+	maskDependencyBatches(&q, j)
 	for i, admitted := range s.Entries {
 		e := known[admitted.PR]
 		e.HeadSHA = admitted.HeadSHA
@@ -421,7 +431,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	e.RunLedger = ledger[pr]
 	e.Gate = holdingGate(&q, e, queue.Config{}, time.Time{})
 	attachDependency(&q, &e)
-		e.WaitingReason = DeriveWaitingReason(&q, e)
+	e.WaitingReason = DeriveWaitingReason(&q, e)
 	summary := fmt.Sprintf("PR #%d: %s", pr, e.Status)
 	if e.Reason != "" {
 		summary += " (" + e.Reason + ")"
