@@ -141,16 +141,24 @@ func (s State) RetainCompositions(batches []string) State {
 	if s.compositions == nil {
 		return s
 	}
- missing:=false
- for id:=range s.compositions { missing=missing || !slices.Contains(batches,id) }
- if !missing { return s }
- s=s.clone()
- for id:=range s.compositions { if !slices.Contains(batches,id) { delete(s.compositions,id) } }
- return s
+	missing := false
+	for id := range s.compositions {
+		missing = missing || !slices.Contains(batches, id)
+	}
+	if !missing {
+		return s
+	}
+	s = s.clone()
+	for id := range s.compositions {
+		if !slices.Contains(batches, id) {
+			delete(s.compositions, id)
+		}
+	}
+	return s
 }
 
 // Through returns the last consumed side position for cheap preparation fences.
 func (s State) Through() uint64 { return s.lastID }
 
 // HasCompositions lets legacy and terminal-only readers skip composition work.
-func (s State) HasCompositions() bool { return len(s.compositions)!=0 }
+func (s State) HasCompositions() bool { return len(s.compositions) != 0 }

@@ -149,7 +149,7 @@ func TestCompositionSnapshotRejectsForgedWrapperAndFutureCause(t *testing.T) {
 	if _, _, err := DecodeSnapshot(raw, f.init); err != nil {
 		t.Fatal("valid composition snapshot", err)
 	}
-		for name, mutate := range map[string]func(*compositionSnapshot){
+	for name, mutate := range map[string]func(*compositionSnapshot){
 		"old version":              func(v *compositionSnapshot) { v.Version = SnapshotVersion },
 		"future cause":             func(v *compositionSnapshot) { v.Compositions[0].InvalidatedBy = v.LastID + 1 },
 		"cause before composition": func(v *compositionSnapshot) { v.Compositions[0].InvalidatedBy = 1 },

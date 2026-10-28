@@ -85,13 +85,17 @@ func DecodeSnapshot(raw []byte, expected JournalInitialized) (queue.State, State
 		if err := strictJSON(raw, &v); err != nil {
 			return queue.State{}, State{}, err
 		}
-		q,err:=queue.DecodeSnapshot(v.Queue)
-  if err!=nil { return queue.State{},State{},err }
-  base:=snapshot{SnapshotVersion,v.Queue,v.Initialization,v.LastID,v.LastHash,v.Declarations,v.Policies,v.Observations}
-  state,err:=base.state(expected)
-  if err!=nil { return queue.State{},State{},err }
-  s:=state
-  if len(v.Compositions)>32 {
+		q, err := queue.DecodeSnapshot(v.Queue)
+		if err != nil {
+			return queue.State{}, State{}, err
+		}
+		base := snapshot{SnapshotVersion, v.Queue, v.Initialization, v.LastID, v.LastHash, v.Declarations, v.Policies, v.Observations}
+		state, err := base.state(expected)
+		if err != nil {
+			return queue.State{}, State{}, err
+		}
+		s := state
+		if len(v.Compositions) > 32 {
 			return queue.State{}, State{}, ErrMalformed
 		}
 		s.compositions = map[string]compositionProjection{}
@@ -234,13 +238,13 @@ const CompositionSnapshotVersion = 10
 
 type compositionSnapshot struct {
 	Version        int                     `json:"Version"`
-	Queue json.RawMessage `json:"Queue"`
+	Queue          json.RawMessage         `json:"Queue"`
 	Initialization JournalInitialized      `json:"Initialization"`
 	LastID         uint64                  `json:"LastID"`
- LastHash string `json:"LastHash"`
- Declarations []declarationProjection `json:"Declarations"`
- Policies []policyProjection `json:"Policies"`
- Observations []observationProjection `json:"Observations"`
+	LastHash       string                  `json:"LastHash"`
+	Declarations   []declarationProjection `json:"Declarations"`
+	Policies       []policyProjection      `json:"Policies"`
+	Observations   []observationProjection `json:"Observations"`
 	Compositions   []compositionProjection `json:"Compositions"`
 }
 
@@ -251,8 +255,10 @@ func EncodeSnapshot(q queue.State, s State) ([]byte, error) {
 		return base, err
 	}
 	var legacy snapshot
- if err:=json.Unmarshal(base,&legacy); err!=nil { return nil,err }
- v:=compositionSnapshot{CompositionSnapshotVersion,legacy.Queue,legacy.Initialization,legacy.LastID,legacy.LastHash,legacy.Declarations,legacy.Policies,legacy.Observations,[]compositionProjection{}}
+	if err := json.Unmarshal(base, &legacy); err != nil {
+		return nil, err
+	}
+	v := compositionSnapshot{CompositionSnapshotVersion, legacy.Queue, legacy.Initialization, legacy.LastID, legacy.LastHash, legacy.Declarations, legacy.Policies, legacy.Observations, []compositionProjection{}}
 	for _, c := range s.compositions {
 		v.Compositions = append(v.Compositions, compositionProjection{EventID: c.EventID, Event: cloneComposition(c.Event), InvalidatedBy: c.InvalidatedBy})
 	}

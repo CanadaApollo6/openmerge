@@ -92,7 +92,7 @@ func withDependencyWaits(ctx context.Context, db journalQuery, q QueueID, r jour
 		change, revision, known := changeRevision(key, r.Queue, entry.PR, entry.HeadSHA)
 		waiting := !known || deps.Admission(string(change), revision).Code != ""
 		waits[entry.PR] = queue.DependencyWait{Head: entry.HeadSHA, Waiting: waiting}
-		admitted = admitted || !waiting && r.Queue.BatchForPR(entry.PR)==nil
+		admitted = admitted || !waiting && r.Queue.BatchForPR(entry.PR) == nil
 	}
 	if admitted && ctx.Value(dependencySkipFormationClockKey{}) == nil {
 		var clocks map[int]time.Time
@@ -786,7 +786,7 @@ func (s *Store) prepareDependencyClocks(ctx context.Context, q QueueID) (context
 		prepared = dependencyClockPreparation{queue: q, through: deps.Through(), entries: slices.Clone(current.reader.Queue.Entries), clocks: map[int]time.Time{}}
 		for _, e := range prepared.entries {
 			change, revision, known := changeRevision(key, current.reader.Queue, e.PR, e.HeadSHA)
-			if known && current.reader.Queue.BatchForPR(e.PR)==nil && deps.Admission(string(change), revision).Code == "" {
+			if known && current.reader.Queue.BatchForPR(e.PR) == nil && deps.Admission(string(change), revision).Code == "" {
 				prepared.clocks, err = dependencyEligibleClocks(ctx, tx, q, current.reader.Queue, key)
 				return err
 			}
@@ -801,8 +801,10 @@ func (s *Store) prepareDependencyClocks(ctx context.Context, q QueueID) (context
 
 // withoutDependencyFormationClock keeps non-build actions on recorded gates
 // without acquiring formation-clock history that cannot affect their authority.
-func withoutDependencyFormationClock(ctx context.Context,q QueueID) context.Context {
- a,ok:=ctx.Value(dependencyActivationKey{}).(dependencyActivation)
- if !ok || a.queue!=q { return ctx }
- return context.WithValue(ctx,dependencySkipFormationClockKey{},true)
+func withoutDependencyFormationClock(ctx context.Context, q QueueID) context.Context {
+	a, ok := ctx.Value(dependencyActivationKey{}).(dependencyActivation)
+	if !ok || a.queue != q {
+		return ctx
+	}
+	return context.WithValue(ctx, dependencySkipFormationClockKey{}, true)
 }

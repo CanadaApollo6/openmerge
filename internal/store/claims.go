@@ -145,7 +145,11 @@ func (s *Store) BeginConsequential(ctx context.Context, a ClaimedAction, cfg que
 	var proceed bool
 	var decodeErr error
 	var deferred bool
- switch a.Action.(type) { case queue.BuildTestRef,queue.BuildChainedTestRef: default: ctx=withoutDependencyFormationClock(ctx,a.QueueID) }
+	switch a.Action.(type) {
+	case queue.BuildTestRef, queue.BuildChainedTestRef:
+	default:
+		ctx = withoutDependencyFormationClock(ctx, a.QueueID)
+	}
 	ctx, err := s.prepareDependencyClocks(ctx, a.QueueID)
 	if err != nil {
 		return false, err
