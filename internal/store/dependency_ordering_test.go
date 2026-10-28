@@ -169,9 +169,10 @@ func TestDependencyOrderingRestartLateResultsAndCancellation(t *testing.T) {
 					t.Fatal("late result revived batch", id)
 				}
 			}
-			if mode == "supported" {
+			switch mode {
+			case "supported":
 				assertCompositionReplayAfter(t, f, cfg, replayFrom)
-			} else if mode == "depth-one" {
+			case "depth-one":
 				assertCompositionReplay(t, f, cfg)
 			}
 			if mode == "supported" {
