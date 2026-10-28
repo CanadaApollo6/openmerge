@@ -121,6 +121,9 @@ type wireBatchStarted struct {
 	PRs     []wireBatchPR `json:"prs"`
 	At      time.Time     `json:"at"`
 }
+type wireDependencyWaitsWithheld struct {
+	PRs []wireBatchPR `json:"prs"`
+}
 type wireRebaseCompositionObserved struct {
 	BatchID string        `json:"batch_id"`
 	PRs     []wireBatchPR `json:"prs"`
@@ -665,6 +668,11 @@ func EncodeEvent(value Event) (string, []byte, error) {
 			return "", nil, err
 		}
 		return encodeWire("batch_started", wireBatchStarted{BatchID: v.BatchID, BaseSHA: v.BaseSHA, PRs: encodeBatchPRs(v.PRs), At: v.At})
+	case DependencyWaitsWithheld:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("dependency_waits_withheld", wireDependencyWaitsWithheld{encodeBatchPRs(v.PRs)})
 	case RebaseCompositionObserved:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -1048,6 +1056,13 @@ func DecodeEvent(payload []byte) (Event, error) {
 			return nil, err
 		}
 		return event, nil
+	case "dependency_waits_withheld":
+		v, err := readWireData[wireDependencyWaitsWithheld](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := DependencyWaitsWithheld{decodeBatchPRs(v.PRs)}
+		return event, event.Validate()
 	case "rebase_composition_observed":
 		v, err := readWireData[wireRebaseCompositionObserved](envelope.Data)
 		if err != nil {

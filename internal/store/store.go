@@ -496,7 +496,9 @@ func (s *Store) authorizeStart(ctx context.Context, tx pgx.Tx, execution emissio
 		}
 	}
 	if stored.Key == stored.Action.Key() && queue.CanStart(execution.cfg, state, stored.Action, event) {
-		return false, nil
+		if withheld, ok := dependencyWithheld(state, event); ok {
+			return false, insertWithheld(ctx, tx, claim.QueueID, withheld)
+		}
 	}
 	_, err = tx.Exec(ctx, `UPDATE actions SET status = 'cancelled', attempt_id = NULL,
 		lease_until = NULL, updated_at = $2 WHERE id = $1`, record.id, at)
@@ -521,7 +523,11 @@ func load(ctx context.Context, tx pgx.Tx, q QueueID) (queue.State, int64, error)
 		return state, 0, err
 	}
 	r, watermark, err := replayJournal(ctx, tx, q, state, 0, false)
-	return r.Queue, watermark, err
+	if err != nil {
+		return r.Queue, watermark, err
+	}
+	state, err = withDependencyWaits(ctx, tx, q, r)
+	return state, watermark, err
 }
 
 // PlannedAction pins an intended effect to its historical event watermark.

@@ -46,7 +46,7 @@ func DecodeEvent(raw []byte) (Event, error) {
 	switch header.Type {
 	case "change_provenance_observed", "landing_provenance_recorded":
 		e.Provenance, err = pj.DecodeEvent(raw)
-	case "dependency_journal_initialized", "change_dependencies_declared", "dependency_policy_applied", "dependency_declaration_acknowledged", "dependency_declaration_self_acknowledged", "dependency_observed":
+	case "dependency_journal_initialized", "change_dependencies_declared", "dependency_policy_applied", "dependency_declaration_acknowledged", "dependency_declaration_self_acknowledged", "dependency_observed", "dependency_decision_recorded":
 		e.Dependency, err = dependency.DecodeEvent(raw)
 	default:
 		e.Queue, err = queue.DecodeEvent(raw)
@@ -71,6 +71,7 @@ type Reader struct {
 	dependencies dependency.State
 	expected     dependency.JournalInitialized
 	lookup       Lookup
+	changeID     ChangeIdentity
 	lastID       uint64
 	composed     bool // Persisted by the cursor snapshot format, never its envelope.
 }
@@ -110,6 +111,11 @@ func (r *Reader) Apply(id uint64, raw []byte) (_ Event, applyErr error) {
 		next.Queue = queue.Apply(r.Queue, e.Queue)
 		next.Provenance = retireTerminal(r.Provenance, id, e.Queue, r.Queue, next.Queue)
 	case e.Dependency != nil:
+		if d, ok := e.Dependency.(dependency.DecisionRecorded); ok {
+			if err := r.validateDependencyDecision(id, d); err != nil {
+				return Event{}, err
+			}
+		}
 		if init, ok := e.Dependency.(dependency.JournalInitialized); ok && r.expected != (dependency.JournalInitialized{}) {
 			if err := init.VerifyBinding(r.expected); err != nil {
 				return Event{}, err
@@ -257,8 +263,82 @@ func decisionMatches(d queue.LandingDecisionRecorded, l pj.Landing, req p.Invent
 // WithLookup replaces the immutable lookup with a transaction-local candidate overlay.
 func (r *Reader) WithLookup(lookup Lookup) { r.lookup = lookup }
 
+// ChangeIdentity derives a PR's ADR 0007 ChangeID from the journal's stored
+// canonical queue key, never from a discovery alias or a companion's claim.
+type ChangeIdentity func(pr int) (queue.ChangeID, error)
+
+// WithChangeIdentity installs the canonical deriver. Without it, dependency
+// decision companions fail closed: their consumer member cannot be bound.
+func (r *Reader) WithChangeIdentity(derive ChangeIdentity) { r.changeID = derive }
+
 // VerifyDependencyBinding checks a writer-supplied independent identity without
 // changing the reader's trust configuration or exposing satisfaction.
 func (r Reader) VerifyDependencyBinding(binding dependency.JournalInitialized) error {
 	return r.dependencies.VerifyBinding(binding)
+}
+
+// BoundDependencies verifies a writer-supplied, independently verified binding
+// and returns the projection for admission. It never trusts the snapshot's own
+// initialization, and does not change the reader's quarantine for other callers.
+func (r Reader) BoundDependencies(binding dependency.JournalInitialized) (dependency.State, error) {
+	if err := r.dependencies.VerifyBinding(binding); err != nil {
+		return dependency.State{}, err
+	}
+	return r.dependencies, nil
+}
+
+// validateDependencyDecision binds a member companion to its exact durable start
+// in this queue. Observations must be recorded after that start, inside the same
+// start transaction; a decision, when the attempt has one, must be this member's.
+// Source settlements live in other queues and are revalidated by the store under
+// their queue locks; this reader cannot and does not dereference them.
+func (r Reader) validateDependencyDecision(id uint64, d dependency.DecisionRecorded) error {
+	start, err := r.target(d.StartEventID, id)
+	if err != nil {
+		return err
+	}
+	s, ok := start.Queue.(queue.LandingStarted)
+	b := r.Queue.Batch(d.BatchID)
+	if !ok || s.BatchID != d.BatchID || s.AttemptID != d.AttemptID || b == nil || b.Phase != queue.Landing || b.LandingAttempt.ID != d.AttemptID || b.TestedSHA != d.TestedSHA || b.LandingCommit() != d.LandedSHA || uint64(len(b.PRs)) != d.Members {
+		return ErrReference
+	}
+	pin := b.PRs[d.Member]
+	bindings := r.Queue.BatchRevisions(d.BatchID)
+	revision, known := r.Queue.PRRevision(pin.PR)
+	if r.changeID == nil || d.Alias.Number != uint64(pin.PR) {
+		return ErrReference
+	}
+	// Legacy revision observations carry no ChangeID: bind the member to the
+	// stored canonical queue key's derivation, exactly as the store did under the
+	// start lock, and to any recorded ChangeID as well. Never accept another.
+	derived, err := r.changeID(pin.PR)
+	if err != nil || string(derived) != d.ChangeID || !known || len(bindings) != len(b.PRs) || revision.ChangeID != "" && revision.ChangeID != derived || uint64(bindings[d.Member].Revision) != d.Revision || pin.HeadSHA != d.Head || bindings[d.Member].HeadSHA != d.Head {
+		return ErrReference
+	}
+	req := p.InventoryRequest{ChangeID: d.ChangeID, Revision: strconv.FormatUint(d.Revision, 10), Head: d.Head}
+	var expected *queue.LandingDecisionRecorded
+	for _, decision := range r.Queue.LandingDecisions() {
+		if decision.BatchID == d.BatchID && decision.AttemptID == d.AttemptID && decisionMatches(decision, pj.Landing{BatchID: d.BatchID, AttemptID: d.AttemptID}, req) {
+			expected = &decision
+		}
+	}
+	if (expected == nil) != (d.DecisionID == 0) {
+		return ErrReference
+	}
+	if expected != nil {
+		target, err := r.target(d.DecisionID, id)
+		if err != nil {
+			return err
+		}
+		decision, ok := target.Queue.(queue.LandingDecisionRecorded)
+		if !ok || !reflect.DeepEqual(decision, *expected) || decision.TestedSHA != d.TestedSHA || decision.LandedSHA != d.LandedSHA {
+			return ErrReference
+		}
+	}
+	for _, observation := range d.Admission.ObservationIDs {
+		if observation <= d.StartEventID || observation >= id {
+			return ErrReference
+		}
+	}
+	return nil
 }

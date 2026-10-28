@@ -205,6 +205,9 @@ func (s *State) apply(id uint64, event Event) error {
 	case Observed:
 		alias = e.Alias
 		namespace = e.Namespace
+	case DecisionRecorded:
+		alias = e.Alias
+		namespace = e.Namespace
 	default:
 		return ErrMalformed
 	}
@@ -239,6 +242,9 @@ func (s *State) apply(id uint64, event Event) error {
 		return s.acknowledge(id, e, false, nil)
 	case SelfAcknowledged:
 		return s.acknowledge(id, e.Acknowledged, true, e.Overridden)
+	case DecisionRecorded:
+		// Historical evidence only: current side maps are unchanged.
+		return s.validateDecision(e)
 	case Observed:
 		d, ok := s.declarations[e.Alias.key()]
 		if !ok || e.Declaration != s.Prior(e.Alias) || e.ChangeID != d.Event.ChangeID || e.Revision != d.Event.Revision {

@@ -18,11 +18,20 @@ type journalQuery interface {
 }
 
 func sharedReader(ctx context.Context, db journalQuery, q QueueID, seed queue.State) journalreader.Reader {
-	return journalreader.New(seed, dependency.JournalInitialized{}, func(id uint64) ([]byte, error) {
+	r := journalreader.New(seed, dependency.JournalInitialized{}, func(id uint64) ([]byte, error) {
 		var raw []byte
 		err := db.QueryRow(ctx, `SELECT payload FROM events WHERE queue_id=$1 AND id=$2`, q, id).Scan(&raw)
 		return raw, err
 	})
+	// Read lazily: only dependency decision companions consult the stored key.
+	r.WithChangeIdentity(func(pr int) (queue.ChangeID, error) {
+		key, err := storedKey(ctx, db, q)
+		if err != nil {
+			return "", err
+		}
+		return key.ChangeID(pr)
+	})
+	return r
 }
 
 // Close rows before reference lookups: pgx cannot issue a second query while a

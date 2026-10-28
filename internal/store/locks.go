@@ -58,6 +58,13 @@ func (s *Store) lockMigration(ctx context.Context, tx pgx.Tx) error {
 // Notify's queues UPDATE takes NO KEY UPDATE and is compatible with FK KEY SHARE;
 // TakeNotification's FOR UPDATE can delay inserts but never waits on the queue
 // advisory/action/observation locks. Shared append never acquires a second tx.
+// Activated dependency landing start (ADR 0011 slice 4a, Hold): source-queue
+// resolution and each direct source's settlement-prefix verification are
+// lock-free reads (that prefix is immutable once its row commits); then the
+// queue advisories of B plus its direct sources in ascending queue-ID order,
+// all before any other lock in the transaction, never a source advisory while
+// already holding B's -> then exactly the landing-start order above. Two
+// starts with overlapping sets thus cannot deadlock on queue advisories.
 // Plan/BeginConsequential/poison publication take queue
 // advisory -> actions row locks -> event INSERT/FK locks. Claim/ClaimQueue commit
 // action row locks before a separate queue-locked poison-publication transaction;

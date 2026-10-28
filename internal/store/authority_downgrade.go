@@ -16,6 +16,8 @@ import (
 var authorityDowngradeEventTypes = []string{
 	"policy_authority_applied", "write_restriction_observed", "write_restriction_verified",
 	"outside_push_acknowledged", "landing_checks_recorded",
+	// ADR 0011 slice 4a (Hold): emitted only by activated dependency queues.
+	"dependency_waits_withheld",
 }
 
 // ErrAuthorityDowngradeRefused marks a decided refusal: retained journal or

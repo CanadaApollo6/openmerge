@@ -56,12 +56,15 @@ func (s *Store) startLanding(ctx context.Context, claim ClaimedAction, cfg queue
 // The activated provenance writer enters startLandingTransaction with its
 // concrete evidence, re-evaluated under the queue lock before insertion.
 func (s *Store) startLandingWithSide(ctx context.Context, claim ClaimedAction, cfg queue.Config, policy cp.Policy, fresh []queue.ApprovalEligibilityObserved, decisions []queue.LandingDecisionRecorded, start queue.LandingStarted, authorize func(context.Context, pgx.Tx, emission, queue.Event) (bool, error), build func([]uint64) (SideAppend, error), checks ...queue.LandingChecksRecorded) error {
-	return s.startLandingTransaction(ctx, claim, cfg, policy, fresh, decisions, start, authorize, build, nil, checks...)
+	return s.startLandingTransaction(ctx, claim, cfg, policy, fresh, decisions, start, authorize, build, nil, nil, checks...)
 }
 
-func (s *Store) startLandingTransaction(ctx context.Context, claim ClaimedAction, cfg queue.Config, policy cp.Policy, fresh []queue.ApprovalEligibilityObserved, decisions []queue.LandingDecisionRecorded, start queue.LandingStarted, authorize func(context.Context, pgx.Tx, emission, queue.Event) (bool, error), build func([]uint64) (SideAppend, error), provenance *ProvenanceStart, checks ...queue.LandingChecksRecorded) error {
+func (s *Store) startLandingTransaction(ctx context.Context, claim ClaimedAction, cfg queue.Config, policy cp.Policy, fresh []queue.ApprovalEligibilityObserved, decisions []queue.LandingDecisionRecorded, start queue.LandingStarted, authorize func(context.Context, pgx.Tx, emission, queue.Event) (bool, error), build func([]uint64) (SideAppend, error), provenance *ProvenanceStart, dependencies *DependencyStart, checks ...queue.LandingChecksRecorded) error {
 	if !policy.Enabled() && (len(fresh) != 0 || len(decisions) != 0) {
 		return LandingDecisionRequiredError{}
+	}
+	if dependencies != nil && (provenance != nil || build != nil) {
+		return errors.New("combined dependency and provenance landing start is not activated")
 	}
 	// Charge lock waits and validation time to the lease in the worker clock.
 	// Legacy starts retain their original timestamp behavior.
@@ -74,7 +77,15 @@ func (s *Store) startLandingTransaction(ctx context.Context, claim ClaimedAction
 		return event
 	}
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := s.lockQueue(ctx, tx, claim.QueueID); err != nil {
+		// An activated dependency start takes B plus its direct sources in one
+		// canonical order, never a source lock while already holding B's.
+		var locked dependencyLockSet
+		if dependencies != nil {
+			var err error
+			if locked, err = dependencies.lock(ctx, s, tx, claim.QueueID); err != nil {
+				return err
+			}
+		} else if err := s.lockQueue(ctx, tx, claim.QueueID); err != nil {
 			return err
 		}
 		if err := checkApprovalRead(ctx, tx, claim.QueueID); err != nil {
@@ -104,6 +115,15 @@ func (s *Store) startLandingTransaction(ctx context.Context, claim ClaimedAction
 			}
 		} else if policy.Enabled() {
 			if err := state.ValidateLandingDecisions(policy, land, start, fresh, decisions); err != nil {
+				return fmt.Errorf("%w: %w", ErrStale, err)
+			}
+		}
+		var dependencyBuild func([]uint64, uint64) (SideAppend, error)
+		if dependencies != nil {
+			if dependencyBuild, err = dependencies.validate(ctx, tx, claim.QueueID, locked, state, land, start, policy.Enabled()); err != nil {
+				if errors.Is(err, ErrStale) {
+					return err
+				}
 				return fmt.Errorf("%w: %w", ErrStale, err)
 			}
 		}
@@ -159,14 +179,27 @@ func (s *Store) startLandingTransaction(ctx context.Context, claim ClaimedAction
 			return ErrStale
 		}
 		var decisionIDs []uint64
+		var startID uint64
 		for i, event := range encodedEvents {
 			var id uint64
 			if err := tx.QueryRow(ctx, `INSERT INTO events(queue_id,type,payload) VALUES ($1,$2,$3::jsonb) RETURNING id`, claim.QueueID, event.name, string(event.payload)).Scan(&id); err != nil {
 				return err
 			}
-			if _, ok := events[i].(queue.LandingDecisionRecorded); ok {
+			switch events[i].(type) {
+			case queue.LandingDecisionRecorded:
 				decisionIDs = append(decisionIDs, id)
+			case queue.LandingStarted:
+				startID = id
 			}
+		}
+		if dependencyBuild != nil {
+			request, err := dependencyBuild(decisionIDs, startID)
+			if err != nil {
+				return err
+			}
+			// A fold refusal is a stale admission: roll back and re-plan.
+			_, err = s.appendSideTx(ctx, tx, claim.QueueID, request, "")
+			return dependencyStale(err)
 		}
 		if build != nil {
 			request, err := build(decisionIDs)

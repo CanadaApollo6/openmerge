@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
+	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/executor"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -45,6 +46,15 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		if err := s.store.RecoverProvenance(ctx, w.id); err != nil {
 			return err
 		}
+	}
+	if w.dependencies != nil {
+		if err := w.dependencies.complete(w); err != nil {
+			return err
+		}
+		if err := w.dependencies.recover(ctx, w.id); err != nil {
+			return err
+		}
+		ctx = store.WithDependencyActivation(ctx, w.id, w.dependencies.binding)
 	}
 	completion := store.Done
 	// Completion survives shutdown cancellation. Uncertain writes are retried via
@@ -257,6 +267,26 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 	emit := s.store.Emit(actionCtx, claim, cfg)
 	if w.stageA != nil {
 		emit = s.store.EmitWithPolicy(actionCtx, claim, cfg, w.stageA.policy)
+	}
+	// The durable start, its landing-start reads and every member's decision
+	// companion commit together; all other events keep the ordinary emitter.
+	if w.dependencies != nil {
+		ordinary := emit
+		emit = func(event queue.Event) error {
+			start, ok := event.(queue.LandingStarted)
+			if !ok {
+				return ordinary(event)
+			}
+			land, ok := claim.Action.(queue.Land)
+			if !ok {
+				return errors.New("dependency landing start without Land")
+			}
+			evidence, err := w.dependencies.landingStart(actionCtx, land, start)
+			if err != nil {
+				return err
+			}
+			return s.store.StartDependencyLanding(actionCtx, claim, cfg, cp.Policy{}, nil, nil, start, evidence)
+		}
 	}
 	executionAction := claim.Action
 	if report, ok := executionAction.(queue.ReportStatus); ok {

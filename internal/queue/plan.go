@@ -386,6 +386,7 @@ func (cfg Config) buildRetryDelay(failures int) time.Duration {
 // batchCandidates gives pending sub-batches priority and never waits to retest them.
 func (s State) batchCandidates(cfg Config, now time.Time) ([]BatchPR, time.Time) {
 	s.pruneWaitingGroups()
+	s.pruneDependencyWaits()
 	if len(s.pending) > 0 && s.pending[0].bisection {
 		return slices.Clone(s.pending[0].prs), time.Time{}
 	}
@@ -408,11 +409,11 @@ func (s State) batchCandidates(cfg Config, now time.Time) ([]BatchPR, time.Time)
 	var oldest time.Time
 	for _, entry := range s.Entries {
 		pr := BatchPR{PR: entry.PR, HeadSHA: entry.HeadSHA}
-		if s.inBatch(pr.PR) || !s.runnablePRs([]BatchPR{pr}) {
+		if s.inBatch(pr.PR) || !s.runnablePRs([]BatchPR{pr}) || s.DependencyGated(pr) {
 			continue
 		}
-		if len(prs) == 0 || entry.EnqueuedAt.Before(oldest) {
-			oldest = entry.EnqueuedAt
+		if clock := s.dependencyClock(entry); len(prs) == 0 || clock.Before(oldest) {
+			oldest = clock
 		}
 		prs = append(prs, pr)
 		if len(prs) == size {
