@@ -165,19 +165,19 @@ func (r *Reader) Apply(id uint64, raw []byte) (_ Event, applyErr error) {
 	}
 	// Side facts latch invalidation immediately, including if later observations
 	// restore eligibility before a worker next polls. A landing is never retired.
-	batches := []string{}
+	if next.dependencies.HasCompositions() {
+ batches := []string{}
 	for _, b := range next.Queue.Batches() {
 		batches = append(batches, b.ID)
-		if c, _, ok := next.dependencies.Composition(b.ID); ok && !next.dependencies.CompositionValid(c) {
-			next.Queue = next.Queue.WithDependencyInvalidation(b.ID)
-		}
+		if e.Dependency!=nil { if c,_,ok:=next.dependencies.Composition(b.ID); ok && !next.dependencies.CompositionValid(c) { next.Queue=next.Queue.WithDependencyInvalidation(b.ID) } }
 	}
 	for _, b := range next.Queue.Batches() {
-		if b.InvalidationReason == "dependency-changed" {
+		if e.Dependency!=nil && b.InvalidationReason == "dependency-changed" {
 			next.dependencies = next.dependencies.LatchCompositionCause(b.ID)
 		}
 	}
 	next.dependencies = next.dependencies.RetainCompositions(batches)
+ }
 	next.composed = next.composed || e.Queue == nil
 	next.lastID = id
 	*r = next

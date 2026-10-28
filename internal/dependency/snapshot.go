@@ -85,11 +85,13 @@ func DecodeSnapshot(raw []byte, expected JournalInitialized) (queue.State, State
 		if err := strictJSON(raw, &v); err != nil {
 			return queue.State{}, State{}, err
 		}
-		q, s, err := DecodeSnapshot(v.Base, expected)
-		if err != nil {
-			return q, s, err
-		}
-		if s.initialization == nil || s.compositions != nil || v.LastID != s.lastID || v.Initialization != *s.initialization || len(v.Compositions) > 32 {
+		q,err:=queue.DecodeSnapshot(v.Queue)
+  if err!=nil { return queue.State{},State{},err }
+  base:=snapshot{SnapshotVersion,v.Queue,v.Initialization,v.LastID,v.LastHash,v.Declarations,v.Policies,v.Observations}
+  state,err:=base.state(expected)
+  if err!=nil { return queue.State{},State{},err }
+  s:=state
+  if len(v.Compositions)>32 {
 			return queue.State{}, State{}, ErrMalformed
 		}
 		s.compositions = map[string]compositionProjection{}
@@ -232,9 +234,13 @@ const CompositionSnapshotVersion = 10
 
 type compositionSnapshot struct {
 	Version        int                     `json:"Version"`
-	Base           json.RawMessage         `json:"Base"`
+	Queue json.RawMessage `json:"Queue"`
 	Initialization JournalInitialized      `json:"Initialization"`
 	LastID         uint64                  `json:"LastID"`
+ LastHash string `json:"LastHash"`
+ Declarations []declarationProjection `json:"Declarations"`
+ Policies []policyProjection `json:"Policies"`
+ Observations []observationProjection `json:"Observations"`
 	Compositions   []compositionProjection `json:"Compositions"`
 }
 
@@ -244,7 +250,9 @@ func EncodeSnapshot(q queue.State, s State) ([]byte, error) {
 	if err != nil || s.compositions == nil {
 		return base, err
 	}
-	v := compositionSnapshot{CompositionSnapshotVersion, base, *s.initialization, s.lastID, []compositionProjection{}}
+	var legacy snapshot
+ if err:=json.Unmarshal(base,&legacy); err!=nil { return nil,err }
+ v:=compositionSnapshot{CompositionSnapshotVersion,legacy.Queue,legacy.Initialization,legacy.LastID,legacy.LastHash,legacy.Declarations,legacy.Policies,legacy.Observations,[]compositionProjection{}}
 	for _, c := range s.compositions {
 		v.Compositions = append(v.Compositions, compositionProjection{EventID: c.EventID, Event: cloneComposition(c.Event), InvalidatedBy: c.InvalidatedBy})
 	}

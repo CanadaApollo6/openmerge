@@ -149,12 +149,8 @@ func TestCompositionSnapshotRejectsForgedWrapperAndFutureCause(t *testing.T) {
 	if _, _, err := DecodeSnapshot(raw, f.init); err != nil {
 		t.Fatal("valid composition snapshot", err)
 	}
-	legacy, err := queue.EncodeSnapshot(q)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for name, mutate := range map[string]func(*compositionSnapshot){
-		"legacy base":              func(v *compositionSnapshot) { v.Base = legacy },
+		for name, mutate := range map[string]func(*compositionSnapshot){
+		"old version":              func(v *compositionSnapshot) { v.Version = SnapshotVersion },
 		"future cause":             func(v *compositionSnapshot) { v.Compositions[0].InvalidatedBy = v.LastID + 1 },
 		"cause before composition": func(v *compositionSnapshot) { v.Compositions[0].InvalidatedBy = 1 },
 		"wrong member":             func(v *compositionSnapshot) { v.Compositions[0].Event.Members[0].Alias.Number++ },

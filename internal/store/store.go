@@ -271,6 +271,9 @@ func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, ded
 	}
 	var watermark int64
 	var stale bool
+ formation:=false
+ for _,event:=range events { switch event.(type) { case queue.BatchStarted,queue.ChainedBatchStarted: formation=true } }
+ if !formation { ctx=withoutDependencyFormationClock(ctx,q) }
 	ctx, err := s.prepareDependencyClocks(ctx, q)
 	if err != nil {
 		return 0, err

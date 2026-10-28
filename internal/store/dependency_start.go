@@ -20,7 +20,7 @@ import (
 // still rejects dependency configuration, and only the private serve seam may
 // install this context value (journalreader writer guard).
 type dependencyActivationKey struct{}
-type dependencyLandingClockKey struct{}
+type dependencySkipFormationClockKey struct{}
 type dependencyClockPreparationKey struct{}
 type dependencyClockPreparation struct {
 	queue   QueueID
@@ -92,9 +92,9 @@ func withDependencyWaits(ctx context.Context, db journalQuery, q QueueID, r jour
 		change, revision, known := changeRevision(key, r.Queue, entry.PR, entry.HeadSHA)
 		waiting := !known || deps.Admission(string(change), revision).Code != ""
 		waits[entry.PR] = queue.DependencyWait{Head: entry.HeadSHA, Waiting: waiting}
-		admitted = admitted || !waiting
+		admitted = admitted || !waiting && r.Queue.BatchForPR(entry.PR)==nil
 	}
-	if admitted && ctx.Value(dependencyLandingClockKey{}) == nil {
+	if admitted && ctx.Value(dependencySkipFormationClockKey{}) == nil {
 		var clocks map[int]time.Time
 		if prepared, ok := ctx.Value(dependencyClockPreparationKey{}).(dependencyClockPreparation); ok {
 			if prepared.queue != q || prepared.through != deps.Through() || !sameDependencyClockEntries(prepared.entries, r.Queue.Entries) {
@@ -286,7 +286,7 @@ type DependencyMemberStart struct {
 func (s *Store) StartDependencyLanding(ctx context.Context, claim ClaimedAction, cfg queue.Config, policy cp.Policy, fresh []queue.ApprovalEligibilityObserved, decisions []queue.LandingDecisionRecorded, start queue.LandingStarted, evidence DependencyStart, checks ...queue.LandingChecksRecorded) error {
 	// Formation clocks cannot affect authorization of an already-built Land.
 	// Do not scan clock history under B plus its direct-source locks.
-	ctx = context.WithValue(ctx, dependencyLandingClockKey{}, true)
+	ctx = context.WithValue(ctx, dependencySkipFormationClockKey{}, true)
 	return retryLandingDecision(s.startLandingTransaction(ctx, claim, cfg, policy, fresh, decisions, start, s.authorizeStart, nil, nil, &evidence, checks...))
 }
 
@@ -766,7 +766,7 @@ func sameDependencyClockEntries(a, b []queue.Entry) bool {
 // identities; drift retries rather than rescanning history while holding locks.
 func (s *Store) prepareDependencyClocks(ctx context.Context, q QueueID) (context.Context, error) {
 	activation, ok := ctx.Value(dependencyActivationKey{}).(dependencyActivation)
-	if !ok || activation.queue != q || ctx.Value(dependencyLandingClockKey{}) != nil {
+	if !ok || activation.queue != q || ctx.Value(dependencySkipFormationClockKey{}) != nil {
 		return ctx, nil
 	}
 	var prepared dependencyClockPreparation
@@ -786,7 +786,7 @@ func (s *Store) prepareDependencyClocks(ctx context.Context, q QueueID) (context
 		prepared = dependencyClockPreparation{queue: q, through: deps.Through(), entries: slices.Clone(current.reader.Queue.Entries), clocks: map[int]time.Time{}}
 		for _, e := range prepared.entries {
 			change, revision, known := changeRevision(key, current.reader.Queue, e.PR, e.HeadSHA)
-			if known && deps.Admission(string(change), revision).Code == "" {
+			if known && current.reader.Queue.BatchForPR(e.PR)==nil && deps.Admission(string(change), revision).Code == "" {
 				prepared.clocks, err = dependencyEligibleClocks(ctx, tx, q, current.reader.Queue, key)
 				return err
 			}
@@ -797,4 +797,12 @@ func (s *Store) prepareDependencyClocks(ctx context.Context, q QueueID) (context
 		return ctx, err
 	}
 	return context.WithValue(ctx, dependencyClockPreparationKey{}, prepared), nil
+}
+
+// withoutDependencyFormationClock keeps non-build actions on recorded gates
+// without acquiring formation-clock history that cannot affect their authority.
+func withoutDependencyFormationClock(ctx context.Context,q QueueID) context.Context {
+ a,ok:=ctx.Value(dependencyActivationKey{}).(dependencyActivation)
+ if !ok || a.queue!=q { return ctx }
+ return context.WithValue(ctx,dependencySkipFormationClockKey{},true)
 }
