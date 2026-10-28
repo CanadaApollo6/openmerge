@@ -663,7 +663,7 @@ func TestProvenanceAdmissionRequiresPendingLandedRecovery(t *testing.T) {
 	appendEvents(t, f.s, f.q, queue.Landed{BatchID: f.c.Start.BatchID, NewBaseSHA: f.decisions[0].LandedSHA, NewFence: "next"})
 	tx, err := f.s.pool.Begin(t.Context())
 	must(t, err)
-	defer tx.Rollback(t.Context())
+	defer func() { _ = tx.Rollback(t.Context()) }()
 	must(t, f.s.lockQueue(t.Context(), tx, f.q))
 	_, err = f.input.validate(t.Context(), tx, f.q, state, f.c.Policy, f.c.Land, f.c.Start, f.fresh, f.decisions)
 	if err == nil || !strings.Contains(err.Error(), "landed recovery required before admission") {
