@@ -651,3 +651,22 @@ func TestProvenanceCompleteEmptyInventoryUsesArrayEncoding(t *testing.T) {
 		t.Fatal("empty mapping did not use arrays", mapping)
 	}
 }
+
+func TestProvenanceAdmissionRequiresPendingLandedRecovery(t *testing.T) {
+	f := newWriterFixture(t, queue.Merge)
+	state, _, err := f.s.Load(t.Context(), f.q)
+	must(t, err)
+	must(t, f.start(t.Context()))
+	previous, err := f.s.ProvenancePredecessors(t.Context(), f.q, []p.InventoryRequest{f.input.Members[0].Inventory.Request})
+	must(t, err)
+	f.input.Members[0].PreviousObservationID = previous[0]
+	appendEvents(t, f.s, f.q, queue.Landed{BatchID: f.c.Start.BatchID, NewBaseSHA: f.decisions[0].LandedSHA, NewFence: "next"})
+	tx, err := f.s.pool.Begin(t.Context())
+	must(t, err)
+	defer tx.Rollback(t.Context())
+	must(t, f.s.lockQueue(t.Context(), tx, f.q))
+	_, err = f.input.validate(t.Context(), tx, f.q, state, f.c.Policy, f.c.Land, f.c.Start, f.fresh, f.decisions)
+	if err == nil || !strings.Contains(err.Error(), "landed recovery required before admission") {
+		t.Fatalf("admission with pending Landed: %v", err)
+	}
+}

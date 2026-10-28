@@ -449,11 +449,26 @@ func (s *Server) stageACheckPolicy(ctx context.Context, w *worker, batch *queue.
 	if err != nil {
 		return false, false, err
 	}
-	pending, waiting := false, []int{}
-	for i, pin := range batch.PRs {
-		evidence, err := stageAReviewEvidence(state, w.stageA.policy, fresh[i])
+	// Preflight must retain the declaration-bound reviewers that the final
+	// provenance gate will evaluate, or it can reject before reaching that gate.
+	var provenanceReviews []*ApprovalEvidence
+	if w.provenance != nil {
+		land.ExpectedBaseSHA, land.Method = batch.BaseSHA, batch.Method
+		provenanceReviews, err = w.provenance.reviewEvidence(ctx, s.store, w, state, land, fresh, checks)
 		if err != nil {
 			return false, false, err
+		}
+	}
+	pending, waiting := false, []int{}
+	for i, pin := range batch.PRs {
+		var evidence *ApprovalEvidence
+		if w.provenance != nil {
+			evidence = provenanceReviews[i]
+		} else {
+			evidence, err = stageAReviewEvidence(state, w.stageA.policy, fresh[i])
+			if err != nil {
+				return false, false, err
+			}
 		}
 		outcome, err := mergeResultWithApprovals(w.cfg.MergeWhen, w.prs[pin.PR], checks, evidence)
 		if err != nil {

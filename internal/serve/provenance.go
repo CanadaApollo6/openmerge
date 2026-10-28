@@ -159,6 +159,24 @@ func (pass *provenancePass) prepareStart(ctx context.Context, s *store.Store, w 
 	return v, err
 }
 
+// reviewEvidence uses the same pinned inventory and declaration identity as
+// final admission without requiring pending CI or approval conditions to pass.
+func (pass *provenancePass) reviewEvidence(ctx context.Context, s *store.Store, w *worker, state queue.State, land queue.Land, fresh []queue.ApprovalEligibilityObserved, checks []forge.CheckRun) ([]*ApprovalEvidence, error) {
+	prepared, err := pass.prepareStart(ctx, s, w, state, land, "preflight", fresh, checks)
+	if err != nil {
+		return nil, err
+	}
+	reviews := make([]*ApprovalEvidence, 0, len(prepared.Members))
+	for i, member := range prepared.Members {
+		evaluation, err := provenanceeval.Evaluate(state, pass.policy, fresh[i], prepared.Expression, member.Values, prepared.Policy, member.Inventory)
+		if err != nil {
+			return nil, err
+		}
+		reviews = append(reviews, &ApprovalEvidence{Known: evaluation.BaselineApprovals.ReviewsKnown, Reviewers: evaluation.BaselineApprovals.ReviewLogins})
+	}
+	return reviews, nil
+}
+
 // provenanceGate preserves the existing fresh-read/metadata protocol. The activated
 // writer is reached only here; ordinary queues keep their original Commit.
 func provenanceGate(g *executor.LandingDecisionGate, evidence *store.ProvenanceStart) *executor.LandingDecisionGate {
