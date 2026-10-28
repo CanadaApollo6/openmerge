@@ -186,7 +186,7 @@ func TestDependencyCompositionInvalidationThroughFoldAndReplay(t *testing.T) {
 			decoded, err := queue.DecodeEvent(raw)
 			must(t, err)
 			event, ok := decoded.(queue.DependencyCompositionsInvalidated)
-			if !ok || !slices.Equal(event.CompositionIDs, []uint64{compID}) || len(event.CauseEventIDs)!=1 || event.CauseEventIDs[0]<=compID {
+			if !ok || !slices.Equal(event.CompositionIDs, []uint64{compID}) || len(event.CauseEventIDs) != 1 || event.CauseEventIDs[0] <= compID {
 				t.Fatal("missing exact retirement companion", decoded)
 			}
 			// The emitted event must also apply through the pure queue fold.
@@ -440,9 +440,9 @@ func TestDependencyCompositionOutsideAdmissionAndWrongReferencesRefused(t *testi
 	f.observe(t, "waiting", f.a.base)
 	current = read()
 	for _, bad := range []queue.DependencyCompositionsInvalidated{
-		{BatchIDs: []string{id}, CompositionIDs: []uint64{compID - 1}, Reason: "dependency-changed",CauseEventIDs:[]uint64{f.observedID}},
-		{BatchIDs: []string{"other"}, CompositionIDs: []uint64{compID}, Reason: "dependency-changed",CauseEventIDs:[]uint64{f.observedID}},
- {BatchIDs: []string{id},CompositionIDs:[]uint64{compID},Reason:"dependency-changed",CauseEventIDs:[]uint64{f.observedID+1}},
+		{BatchIDs: []string{id}, CompositionIDs: []uint64{compID - 1}, Reason: "dependency-changed", CauseEventIDs: []uint64{f.observedID}},
+		{BatchIDs: []string{"other"}, CompositionIDs: []uint64{compID}, Reason: "dependency-changed", CauseEventIDs: []uint64{f.observedID}},
+		{BatchIDs: []string{id}, CompositionIDs: []uint64{compID}, Reason: "dependency-changed", CauseEventIDs: []uint64{f.observedID + 1}},
 	} {
 		_, raw, err := queue.EncodeEvent(bad)
 		must(t, err)

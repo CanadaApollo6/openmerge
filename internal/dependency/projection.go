@@ -264,7 +264,7 @@ func (s *State) apply(id uint64, event Event) error {
 		if s.compositions == nil {
 			s.compositions = map[string]compositionProjection{}
 		}
-		s.compositions[e.BatchID] = compositionProjection{EventID:id,Event:cloneComposition(e)}
+		s.compositions[e.BatchID] = compositionProjection{EventID: id, Event: cloneComposition(e)}
 	case DecisionRecorded:
 		// Historical evidence only: current side maps are unchanged.
 		return s.validateDecision(e)

@@ -21,7 +21,7 @@ func TestDependencyCompositionDiscardExactSuffixAndLandingBoundary(t *testing.T)
 	if !ok || !slices.Equal(invalid.BatchIDs, []string{"b2", "b3", "b4"}) {
 		t.Fatal("wrong planned suffix", actions)
 	}
-	event := DependencyCompositionsInvalidated{BatchIDs: invalid.BatchIDs, CompositionIDs: []uint64{12, 13, 14}, Reason: invalid.Reason,CauseEventIDs:[]uint64{30,30,30}}
+	event := DependencyCompositionsInvalidated{BatchIDs: invalid.BatchIDs, CompositionIDs: []uint64{12, 13, 14}, Reason: invalid.Reason, CauseEventIDs: []uint64{30, 30, 30}}
 	kind, raw, err := EncodeEvent(event)
 	if err != nil || kind != "dependency_compositions_invalidated" {
 		t.Fatal(kind, err)
@@ -35,8 +35,8 @@ func TestDependencyCompositionDiscardExactSuffixAndLandingBoundary(t *testing.T)
 		t.Fatal("discard changed queue positions")
 	}
 	for _, bad := range []DependencyCompositionsInvalidated{
-		{BatchIDs: []string{"b2"}, CompositionIDs: []uint64{12},CauseEventIDs:[]uint64{30}, Reason: "dependency-changed"},
-		{BatchIDs: []string{"b4", "b3", "b2"}, CompositionIDs: []uint64{14, 13, 12},CauseEventIDs:[]uint64{30,30,30}, Reason: "dependency-changed"},
+		{BatchIDs: []string{"b2"}, CompositionIDs: []uint64{12}, CauseEventIDs: []uint64{30}, Reason: "dependency-changed"},
+		{BatchIDs: []string{"b4", "b3", "b2"}, CompositionIDs: []uint64{14, 13, 12}, CauseEventIDs: []uint64{30, 30, 30}, Reason: "dependency-changed"},
 	} {
 		if got := Apply(s, bad); len(got.Batches()) != 4 {
 			t.Fatal("accepted inexact suffix", bad)
@@ -48,7 +48,7 @@ func TestDependencyCompositionDiscardExactSuffixAndLandingBoundary(t *testing.T)
 	if landing.Active.InvalidationReason != "" || landing.Active.Phase != Landing {
 		t.Fatal("cascade abandoned a started push")
 	}
-	if got := Apply(landing, DependencyCompositionsInvalidated{BatchIDs: []string{"b1", "b2", "b3", "b4"}, CompositionIDs: []uint64{11, 12, 13, 14},CauseEventIDs:[]uint64{30,30,30,30}, Reason: "dependency-changed"}); len(got.Batches()) != 4 {
+	if got := Apply(landing, DependencyCompositionsInvalidated{BatchIDs: []string{"b1", "b2", "b3", "b4"}, CompositionIDs: []uint64{11, 12, 13, 14}, CauseEventIDs: []uint64{30, 30, 30, 30}, Reason: "dependency-changed"}); len(got.Batches()) != 4 {
 		t.Fatal("discard crossed settlement boundary")
 	}
 }

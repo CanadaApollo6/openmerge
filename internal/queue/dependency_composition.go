@@ -14,7 +14,7 @@ type DependencyCompositionsInvalidated struct {
 	BatchIDs       []string `json:"batch_ids"`
 	CompositionIDs []uint64 `json:"composition_ids"`
 	Reason         string   `json:"reason"`
- CauseEventIDs []uint64 `json:"cause_event_ids"`
+	CauseEventIDs  []uint64 `json:"cause_event_ids"`
 }
 
 func (DependencyCompositionsInvalidated) queueEvent() {}
@@ -24,11 +24,11 @@ func (e DependencyCompositionsInvalidated) Validate() error {
 	if err := (InvalidateBatches{BatchIDs: e.BatchIDs, Reason: e.Reason}).Validate(); err != nil {
 		return err
 	}
-	if e.Reason != "dependency-changed" || len(e.CompositionIDs) != len(e.BatchIDs) || len(e.CauseEventIDs)!=len(e.BatchIDs) {
+	if e.Reason != "dependency-changed" || len(e.CompositionIDs) != len(e.BatchIDs) || len(e.CauseEventIDs) != len(e.BatchIDs) {
 		return errDependencyComposition
 	}
 	for i, id := range e.CompositionIDs {
-		if id == 0 || e.CauseEventIDs[i]<=id || slices.Contains(e.CompositionIDs[:i], id) {
+		if id == 0 || e.CauseEventIDs[i] <= id || slices.Contains(e.CompositionIDs[:i], id) {
 			return errDependencyComposition
 		}
 	}

@@ -54,9 +54,9 @@ func (e CompositionRecorded) Validate() error {
 }
 
 type compositionProjection struct {
-	EventID uint64              `json:"event_id"`
- InvalidatedBy uint64 `json:"invalidated_by"`
-	Event   CompositionRecorded `json:"event"`
+	EventID       uint64              `json:"event_id"`
+	InvalidatedBy uint64              `json:"invalidated_by"`
+	Event         CompositionRecorded `json:"event"`
 }
 
 func cloneComposition(e CompositionRecorded) CompositionRecorded {
@@ -125,10 +125,14 @@ func (s State) CompositionCause(batch string) uint64 { return s.compositions[bat
 
 // LatchCompositionCause preserves the first cause through recovery and restart.
 func (s State) LatchCompositionCause(batch string) State {
- c,ok:=s.compositions[batch]
- if !ok || c.InvalidatedBy!=0 { return s }
- s=s.clone(); c.InvalidatedBy=s.lastID; s.compositions[batch]=c
- return s
+	c, ok := s.compositions[batch]
+	if !ok || c.InvalidatedBy != 0 {
+		return s
+	}
+	s = s.clone()
+	c.InvalidatedBy = s.lastID
+	s.compositions[batch] = c
+	return s
 }
 
 // RetainCompositions retires derived active evidence with the queue's batches.

@@ -663,14 +663,14 @@ func dependencyInvalidation(ctx context.Context, tx pgx.Tx, q QueueID, event que
 	if !slices.Equal(e.BatchIDs, expected) {
 		return nil, ErrStale
 	}
-	out := queue.DependencyCompositionsInvalidated{BatchIDs: slices.Clone(e.BatchIDs), CompositionIDs: []uint64{},CauseEventIDs:[]uint64{}, Reason: e.Reason}
+	out := queue.DependencyCompositionsInvalidated{BatchIDs: slices.Clone(e.BatchIDs), CompositionIDs: []uint64{}, CauseEventIDs: []uint64{}, Reason: e.Reason}
 	for _, batch := range e.BatchIDs {
 		_, id, ok := deps.Composition(batch)
 		if !ok {
 			return nil, ErrStale
 		}
 		out.CompositionIDs = append(out.CompositionIDs, id)
- out.CauseEventIDs=append(out.CauseEventIDs,deps.CompositionCause(batch))
+		out.CauseEventIDs = append(out.CauseEventIDs, deps.CompositionCause(batch))
 	}
 	return out, out.Validate()
 }
