@@ -3,10 +3,10 @@ package dependency
 import (
 	"bytes"
 	"encoding/json"
- "errors"
- "strconv"
+	"errors"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -197,16 +197,22 @@ func TestDiagnosticPreservesAdmissionAndSnapshotTail(t *testing.T) {
 }
 
 func TestDiagnosticProjectionLimit(t *testing.T) {
- s,e:=diagnosticFixture(t)
- p:=DiagnosticProjection{records:make(map[string]DiagnosticRecorded,maxProjectionEntries*MaxDirectEdges+1)}
- for n:=0;n<=maxProjectionEntries*MaxDirectEdges;n++{p.records[strconv.Itoa(n)]=e}
- if _,err:=p.Apply(s,s.lastID+1,e);!errors.Is(err,ErrLimit){t.Fatal("presentation history exceeded its bound",err)}
+	s, e := diagnosticFixture(t)
+	p := DiagnosticProjection{records: make(map[string]DiagnosticRecorded, maxProjectionEntries*MaxDirectEdges+1)}
+	for n := 0; n <= maxProjectionEntries*MaxDirectEdges; n++ {
+		p.records[strconv.Itoa(n)] = e
+	}
+	if _, err := p.Apply(s, s.lastID+1, e); !errors.Is(err, ErrLimit) {
+		t.Fatal("presentation history exceeded its bound", err)
+	}
 }
 
 func TestDependencyEmptyDeclarationHasNoPresentation(t *testing.T) {
- f:=journalTestFixture(t)
- s:=f.start(t)
- d:=f.declaration(t,s)
- s=applyJournal(t,s,d)
- if _,shown:=s.Status(d.ChangeID,d.Revision,DiagnosticProjection{},nil);shown{t.Fatal("empty independent declaration gained dependency presentation")}
+	f := journalTestFixture(t)
+	s := f.start(t)
+	d := f.declaration(t, s)
+	s = applyJournal(t, s, d)
+	if _, shown := s.Status(d.ChangeID, d.Revision, DiagnosticProjection{}, nil); shown {
+		t.Fatal("empty independent declaration gained dependency presentation")
+	}
 }
