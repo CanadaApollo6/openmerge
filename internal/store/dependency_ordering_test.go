@@ -61,6 +61,8 @@ func TestDependencyOrderingRestartLateResultsAndCancellation(t *testing.T) {
 			}
 			before, _, err := f.s.Load(ctx, f.c.id)
 			must(t, err)
+			var replayFrom uint64
+			must(t, f.s.pool.QueryRow(t.Context(), `SELECT max(id) FROM events WHERE queue_id=$1`, f.c.id).Scan(&replayFrom))
 			// A declaration edit in the middle retires exactly that suffix. The
 			// unaffected prefix must still settle before rebuilt work may land.
 			n := firstRetired
@@ -167,7 +169,9 @@ func TestDependencyOrderingRestartLateResultsAndCancellation(t *testing.T) {
 					t.Fatal("late result revived batch", id)
 				}
 			}
-			if mode != "absent" {
+			if mode == "supported" {
+				assertCompositionReplayAfter(t, f, cfg, replayFrom)
+			} else if mode == "depth-one" {
 				assertCompositionReplay(t, f, cfg)
 			}
 			if mode == "supported" {

@@ -59,10 +59,17 @@ func admitDependencyBuild(t *testing.T, f *depFixture, cfg queue.Config) string 
 }
 
 func assertCompositionReplay(t *testing.T, f *depFixture, configs ...queue.Config) {
+	t.Helper()
 	cfg := depCfg
 	if len(configs) > 0 {
 		cfg = configs[0]
 	}
+	assertCompositionReplayAfter(t, f, cfg, 0)
+}
+
+// The ordering matrix starts its cut sweep at its completed four-batch setup;
+// earlier initialization and admission cuts retain their full 4b-1 coverage.
+func assertCompositionReplayAfter(t *testing.T, f *depFixture, cfg queue.Config, firstCut uint64) {
 	t.Helper()
 	type record struct {
 		id  uint64
@@ -105,6 +112,9 @@ func assertCompositionReplay(t *testing.T, f *depFixture, configs ...queue.Confi
 	for cut, r := range records {
 		_, err := prefix.Apply(r.id, r.raw)
 		must(t, err)
+		if r.id < firstCut {
+			continue
+		}
 		raw, err := prefix.CursorSnapshot()
 		must(t, err)
 		resumed := fresh()
