@@ -168,14 +168,22 @@ func dependencyEligibleClocks(ctx context.Context, db journalQuery, q QueueID, s
 		}
 	}
 	var deps dependency.State
- count,bytes:=0,0
- var lastAt time.Time
- for rows.Next() {
-  var r record
-  if err:=rows.Scan(&r.id,&r.raw,&r.at); err!=nil { return nil,err }
-  count++; bytes+=len(r.raw)
-  if count>historyLimit || bytes>32<<20 { return nil,dependency.ErrLimit }
-  if r.at.Before(lastAt) { r.at=lastAt }; lastAt=r.at
+	count, bytes := 0, 0
+	var lastAt time.Time
+	for rows.Next() {
+		var r record
+		if err := rows.Scan(&r.id, &r.raw, &r.at); err != nil {
+			return nil, err
+		}
+		count++
+		bytes += len(r.raw)
+		if count > historyLimit || bytes > 32<<20 {
+			return nil, dependency.ErrLimit
+		}
+		if r.at.Before(lastAt) {
+			r.at = lastAt
+		}
+		lastAt = r.at
 		event, err := dependency.DecodeEvent(r.raw)
 		if err != nil {
 			return nil, err
@@ -204,8 +212,10 @@ func dependencyEligibleClocks(ctx context.Context, db journalQuery, q QueueID, s
 			clocks[entry.PR] = c
 		}
 	}
-	if err:=rows.Err(); err!=nil { return nil,err }
- out := map[int]time.Time{}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := map[int]time.Time{}
 	for pr, c := range clocks {
 		if !c.start.IsZero() {
 			out[pr] = c.start.Add(-c.elapsed)

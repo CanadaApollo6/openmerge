@@ -17,6 +17,7 @@ type DependencyCompositionsInvalidated struct {
 }
 
 func (DependencyCompositionsInvalidated) queueEvent() {}
+
 // Validate requires the exact bounded suffix and one immutable companion per batch.
 func (e DependencyCompositionsInvalidated) Validate() error {
 	if err := (InvalidateBatches{BatchIDs: e.BatchIDs, Reason: e.Reason}).Validate(); err != nil {

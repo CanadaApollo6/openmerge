@@ -1,8 +1,8 @@
 package dependency
 
 import (
+	"encoding/json"
 	"reflect"
- "encoding/json"
 	"slices"
 )
 
@@ -10,12 +10,12 @@ import (
 // Observation IDs retain the original audit evidence; unchanged refreshes do
 // not invalidate a composition merely because their journal IDs differ.
 type CompositionMember struct {
-	Alias        SourceAlias    `json:"alias"`
-	ChangeID     string         `json:"change_id"`
-	Revision     uint64         `json:"revision"`
-	Head         string         `json:"head"`
-	Admission    AdmissionBasis `json:"admission"`
-	BasisDigest string `json:"basis_digest"`
+	Alias       SourceAlias    `json:"alias"`
+	ChangeID    string         `json:"change_id"`
+	Revision    uint64         `json:"revision"`
+	Head        string         `json:"head"`
+	Admission   AdmissionBasis `json:"admission"`
+	BasisDigest string         `json:"basis_digest"`
 }
 
 // CompositionRecorded binds the exact durable admission, before its builder
@@ -29,6 +29,7 @@ type CompositionRecorded struct {
 }
 
 func (CompositionRecorded) dependencyEvent() {}
+
 // Validate checks framing and requires every consumed input to precede build admission.
 func (e CompositionRecorded) Validate() error {
 	if !validDigestID(e.Namespace, "omj1_") || !cleanText(e.BatchID) || e.StartEventID == 0 || !objectID(e.BaseSHA) || len(e.Members) == 0 || len(e.Members) > 128 {
@@ -39,8 +40,14 @@ func (e CompositionRecorded) Validate() error {
 		if !m.Alias.valid() || !validDigestID(m.ChangeID, "chg1_") || seen[m.ChangeID] || m.Revision == 0 || !objectID(m.Head) || !m.Admission.valid() || !hexDigest(m.BasisDigest) {
 			return ErrMalformed
 		}
-  if m.Admission.Declaration.EventID>=e.StartEventID || m.Admission.PolicyEventID>=e.StartEventID || m.Admission.AcknowledgementEventID>=e.StartEventID { return ErrMalformed }
-  for _,id:=range m.Admission.ObservationIDs { if id>=e.StartEventID { return ErrMalformed } }
+		if m.Admission.Declaration.EventID >= e.StartEventID || m.Admission.PolicyEventID >= e.StartEventID || m.Admission.AcknowledgementEventID >= e.StartEventID {
+			return ErrMalformed
+		}
+		for _, id := range m.Admission.ObservationIDs {
+			if id >= e.StartEventID {
+				return ErrMalformed
+			}
+		}
 		seen[m.ChangeID] = true
 	}
 	return nil
@@ -66,18 +73,23 @@ func (s State) CompositionMember(change string, revision uint64, head string) (C
 	if a.Code != "" {
 		return CompositionMember{}, ErrNotAdmitted
 	}
-	m := CompositionMember{Alias:a.Alias,ChangeID:change,Revision:revision,Head:head,Admission:a.Basis}
- type source struct { Reference string `json:"reference"`; Revision Baseline `json:"revision"` }
- sources:=[]source{}
+	m := CompositionMember{Alias: a.Alias, ChangeID: change, Revision: revision, Head: head, Admission: a.Basis}
+	type source struct {
+		Reference string   `json:"reference"`
+		Revision  Baseline `json:"revision"`
+	}
+	sources := []source{}
 	edges, _, _ := s.Edges(change, revision)
 	for _, edge := range edges {
 		o, _, _ := s.Observation(Observed{Alias: a.Alias, ChangeID: change, Revision: revision, Source: edge.Reference})
-		sources=append(sources,source{o.Source,o.SourceRevision})
+		sources = append(sources, source{o.Source, o.SourceRevision})
 	}
- raw,err:=json.Marshal(sources)
- if err!=nil { return CompositionMember{},err }
- m.BasisDigest=digest("openmerge.dependency.composition-sources.v1",string(raw))
- return m,nil
+	raw, err := json.Marshal(sources)
+	if err != nil {
+		return CompositionMember{}, err
+	}
+	m.BasisDigest = digest("openmerge.dependency.composition-sources.v1", string(raw))
+	return m, nil
 }
 
 // Composition returns a detached active companion and its immutable ID.
@@ -99,7 +111,7 @@ func (s State) CompositionValid(e CompositionRecorded) bool {
 		// Policy identity is semantic, while declarations/acknowledgements are acts.
 		a.PolicyEventID, b.PolicyEventID = 0, 0
 		a.ObservationIDs, b.ObservationIDs = nil, nil
-		if !reflect.DeepEqual(a, b) || current.BasisDigest!=m.BasisDigest {
+		if !reflect.DeepEqual(a, b) || current.BasisDigest != m.BasisDigest {
 			return false
 		}
 
