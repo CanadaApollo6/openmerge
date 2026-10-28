@@ -87,9 +87,12 @@ func assertCompositionReplay(t *testing.T, f *depFixture) {
 		return r
 	}
 	full := fresh()
+ now:=time.Now()
+ plans:=[][]queue.Action{}
 	for _, r := range records {
 		_, err := full.Apply(r.id, r.raw)
 		must(t, err)
+  plans=append(plans,queue.Plan(depCfg,full.Queue,now))
 	}
 	want, err := full.CursorSnapshot()
 	must(t, err)
@@ -101,13 +104,14 @@ func assertCompositionReplay(t *testing.T, f *depFixture) {
 		must(t, err)
 		resumed := fresh()
 		must(t, resumed.LoadSnapshot(raw, r.id))
-		for _, tail := range records[cut+1:] {
+		for offset, tail := range records[cut+1:] {
 			_, err := resumed.Apply(tail.id, tail.raw)
 			must(t, err)
+   if !reflect.DeepEqual(queue.Plan(depCfg,resumed.Queue,now),plans[cut+offset+1]) { t.Fatalf("next actions differ at cut %d revision %d",cut,tail.id) }
 		}
 		got, err := resumed.CursorSnapshot()
 		must(t, err)
-		if !bytes.Equal(got, want) || !reflect.DeepEqual(queue.Plan(depCfg, resumed.Queue, time.Now()), queue.Plan(depCfg, full.Queue, time.Now())) {
+		if !bytes.Equal(got, want) || !reflect.DeepEqual(queue.Plan(depCfg, resumed.Queue, now), queue.Plan(depCfg, full.Queue, now)) {
 			t.Fatalf("snapshot/tail diverged at cut %d", cut)
 		}
 	}
