@@ -93,6 +93,10 @@ func TestReviewPushPreservesWaitAndNeverRepins(t *testing.T) {
 			// A confirmed matching old landing remains terminal after later pushes.
 			r.Source.Landing.Revision = delayed.Source.Current
 			read(8, "dependency-landed")
+			o, _, ok = s.Observation(dep.Observed{Alias: r.Consumer.Alias, ChangeID: r.Consumer.ChangeID, Revision: r.Consumer.Revision, Source: r.Edge.Reference})
+			if !ok || o.SourceRevision != delayed.Source.Current {
+				t.Fatal("confirmed old landing lost its actual revision", o)
+			}
 		})
 	}
 }

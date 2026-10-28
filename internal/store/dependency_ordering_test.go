@@ -232,9 +232,50 @@ func TestDependencyOrderingRestartLateResultsAndCancellation(t *testing.T) {
 
 func TestDependencyTrimOneSkipsClockPreparation(t *testing.T) {
 	f := newDepFixture(t)
-	ctx, err := f.s.prepareDependencyClocks(f.ctx(t.Context()), f.c.id, depCfg)
+	cfg := depCfg
+	cfg.BatchMaxSize, cfg.BatchMaxWait = 1, time.Minute
+	ctx, err := f.s.prepareDependencyClocks(f.ctx(t.Context()), f.c.id, cfg)
 	must(t, err)
 	if ctx.Value(dependencySkipFormationClockKey{}) == nil || ctx.Value(dependencyClockPreparationKey{}) != nil {
 		t.Fatal("Trim 1 scanned formation clocks")
 	}
+}
+
+func TestDependencyLateBuilderReissuesCleanupAfterRestart(t *testing.T) {
+	f := newDepFixture(t)
+	f.observe(t, "landed", f.landedA)
+	cfg := depCfg
+	cfg.SpeculationMaxDepth = 4
+	id := admitDependencyBuild(t, f, cfg)
+	ctx, now := f.ctx(t.Context()), time.Now()
+	before, _, err := f.s.Load(ctx, f.c.id)
+	must(t, err)
+	b := before.Batch(id)
+	f.observe(t, "waiting", f.a.base)
+	_, err = f.s.Append(ctx, f.c.id, []queue.Event{queue.BatchesInvalidated{BatchIDs: []string{id}, Reason: "dependency-changed"}, queue.ActionCompleted{Key: (queue.DeleteRef{Ref: b.TestRef}).Key()}}, "")
+	must(t, err)
+	_, err = f.s.pool.Exec(t.Context(), `DELETE FROM observations WHERE queue_id=$1`, f.c.id)
+	must(t, err)
+	late := queue.ChainedTestRefBuilt{BatchID: id, TestedSHA: sha('6'), LandingSHA: sha('6'), ParentBatchID: b.ParentBatchID, Position: b.ChainPosition, Method: queue.Merge, At: now}
+	_, err = f.s.Append(ctx, f.c.id, []queue.Event{late, queue.ChecksCompleted{TestedSHA: late.TestedSHA, Success: true}}, "")
+	must(t, err)
+	state, _, err := f.s.Load(ctx, f.c.id)
+	must(t, err)
+	if state.Batch(id) != nil || !reflect.DeepEqual(state.Entries, before.Entries) {
+		t.Fatal("late builder revived retired composition")
+	}
+	found := false
+	for _, a := range queue.Plan(cfg, state, now) {
+		if cleanup, ok := a.(queue.CleanupInvalidatedRef); ok && cleanup.Ref == b.TestRef {
+			found = true
+		}
+		switch a.(type) {
+		case queue.RecordCheckCancellation, queue.CancelChecks, queue.Land:
+			t.Fatal("late unobserved build supplied CI or landing authority", a)
+		}
+	}
+	if !found {
+		t.Fatal("late publication did not reissue cleanup")
+	}
+	assertCompositionReplay(t, f, cfg)
 }
