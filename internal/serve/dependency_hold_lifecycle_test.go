@@ -52,7 +52,7 @@ func TestDependencyDeclarationHoldSurvivesHeldRequestLifecycle(t *testing.T) {
 			alias := dependency.SourceAlias{ForgeInstance: binding.ForgeInstance, Installation: binding.Installation, RepositoryID: "id-owner-repo", Number: 1}
 			change, err := queue.PRChangeID("7", "owner/repo", "main", "", 1)
 			must(t, err)
-			actors := dependencyHoldActors(t, ctx, f, alias)
+			actors := dependencyHoldActors(ctx, t, f, alias)
 			ref, err := dependency.Reference{Scope: dependency.Scope{ForgeInstance: binding.ForgeInstance, Installation: binding.Installation, JournalNamespace: binding.Namespace}, ChangeID: "chg1_" + strings.Repeat("a", 64)}.Canonical()
 			must(t, err)
 			edge := dependency.DeclaredEdge{Reference: ref, Queue: source, Baseline: dependency.Baseline{Revision: 1, IntentDigest: strings.Repeat("9", 64), Head: strings.Repeat("a", 40)}}
@@ -164,7 +164,7 @@ type dependencyHoldForgeReader interface {
 // the fake forge's PR, commit-author, identity and permission readers. The
 // lifecycle fixture deliberately does not synthesize an editor list or parse a
 // body: production acquisition remains unwired until slice 6.
-func dependencyHoldActors(t *testing.T, ctx context.Context, f dependencyHoldForgeReader, alias dependency.SourceAlias) dependencyHoldActorFacts {
+func dependencyHoldActors(ctx context.Context, t *testing.T, f dependencyHoldForgeReader, alias dependency.SourceAlias) dependencyHoldActorFacts {
 	t.Helper()
 	pr, err := f.PullRequest(ctx, repo, int(alias.Number))
 	must(t, err)
