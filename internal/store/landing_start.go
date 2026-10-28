@@ -52,10 +52,14 @@ func (s *Store) startLanding(ctx context.Context, claim ClaimedAction, cfg queue
 	return s.startLandingWithSide(ctx, claim, cfg, policy, fresh, decisions, start, authorize, nil, checks...)
 }
 
-// startLandingWithSide is an unwired writer integration seam. Build is pure and
-// receives the exact inserted decision IDs. The ordinary production start path
-// always supplies nil; companion emission remains Hold.
+// startLandingWithSide preserves the foundation seam and legacy nil path.
+// The activated provenance writer enters startLandingTransaction with its
+// concrete evidence, re-evaluated under the queue lock before insertion.
 func (s *Store) startLandingWithSide(ctx context.Context, claim ClaimedAction, cfg queue.Config, policy cp.Policy, fresh []queue.ApprovalEligibilityObserved, decisions []queue.LandingDecisionRecorded, start queue.LandingStarted, authorize func(context.Context, pgx.Tx, emission, queue.Event) (bool, error), build func([]uint64) (SideAppend, error), checks ...queue.LandingChecksRecorded) error {
+	return s.startLandingTransaction(ctx, claim, cfg, policy, fresh, decisions, start, authorize, build, nil, checks...)
+}
+
+func (s *Store) startLandingTransaction(ctx context.Context, claim ClaimedAction, cfg queue.Config, policy cp.Policy, fresh []queue.ApprovalEligibilityObserved, decisions []queue.LandingDecisionRecorded, start queue.LandingStarted, authorize func(context.Context, pgx.Tx, emission, queue.Event) (bool, error), build func([]uint64) (SideAppend, error), provenance *ProvenanceStart, checks ...queue.LandingChecksRecorded) error {
 	if !policy.Enabled() && (len(fresh) != 0 || len(decisions) != 0) {
 		return LandingDecisionRequiredError{}
 	}
@@ -92,7 +96,13 @@ func (s *Store) startLandingWithSide(ctx context.Context, claim ClaimedAction, c
 		if !ok {
 			return ErrStale
 		}
-		if policy.Enabled() {
+		if provenance != nil {
+			var err error
+			build, err = provenance.validate(ctx, tx, claim.QueueID, state, policy, land, start, fresh, decisions)
+			if err != nil {
+				return fmt.Errorf("%w: %w", ErrStale, err)
+			}
+		} else if policy.Enabled() {
 			if err := state.ValidateLandingDecisions(policy, land, start, fresh, decisions); err != nil {
 				return fmt.Errorf("%w: %w", ErrStale, err)
 			}

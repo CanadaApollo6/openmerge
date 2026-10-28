@@ -348,3 +348,24 @@ func (s State) pendingGeneration(key string) bool {
 	}
 	return false
 }
+
+// PreviousObservationID is the exact current generation CAS anchor, including
+// retired evidence. It conveys no authorization to reuse that generation.
+func (s State) PreviousObservationID(r p.InventoryRequest) uint64 {
+	key := s.latest[changeKey(r)]
+	if g, ok := s.groups[key]; ok {
+		return g.ids[0]
+	}
+	return s.retired[key]
+}
+
+// AwaitingLandings returns detached accepted outcome positions in journal order.
+// Startup must settle these before admitting any new activated work.
+func (s State) AwaitingLandings() []uint64 {
+	ids := make([]uint64, 0, len(s.awaiting))
+	for _, id := range s.awaiting {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
+}

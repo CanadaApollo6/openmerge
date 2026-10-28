@@ -237,6 +237,7 @@ func (s *Server) stageAGate(parent context.Context, w *worker, claim store.Claim
 	policy := w.stageA.policy
 	var acquisition *store.ApprovalRead
 	var checkEvidence *queue.LandingChecksRecorded
+	var provenanceEvidence store.ProvenanceStart
 	pin := basis.AuthorityPin()
 	// AuthorityRequired is an explicit internal Target opt-in. A setup draft or
 	// surviving journal pin cannot enable authority evidence on a public GitHub
@@ -275,10 +276,24 @@ func (s *Server) stageAGate(parent context.Context, w *worker, claim store.Claim
 			}
 			// Authority uses the executor's exact retry-enriched, provenance-checked
 			// read. Legacy approval queues retain their existing fresh-read path.
-			if !recordChecks {
+			if !recordChecks && w.provenance == nil {
 				checks, err = w.Driver.CheckRuns(ctx, w.repo(), land.TestedSHA)
 				if err != nil {
 					return nil, err
+				}
+			}
+			var provenanceReviews []*ApprovalEvidence
+			if w.provenance != nil {
+				provenanceEvidence, err = w.provenance.prepareStart(ctx, s.store, w, state, land, attempt, fresh, checks)
+				if err != nil {
+					return nil, err
+				}
+				_, evaluations, err := provenanceEvidence.Decisions(state, policy, land, queue.LandingStarted{BatchID: land.BatchID, AttemptID: attempt, FenceToken: land.FenceToken, At: time.Now()}, fresh)
+				if err != nil {
+					return nil, err
+				}
+				for _, e := range evaluations {
+					provenanceReviews = append(provenanceReviews, &ApprovalEvidence{Reviewers: e.BaselineApprovals.ReviewLogins, Known: e.BaselineApprovals.ReviewsKnown})
 				}
 			}
 			var builder *queue.LandingChecksBuilder
@@ -290,9 +305,14 @@ func (s *Server) stageAGate(parent context.Context, w *worker, claim store.Claim
 			}
 			checksMet := true
 			for i, pin := range land.PRs {
-				evidence, err := stageAReviewEvidence(state, policy, fresh[i])
-				if err != nil {
-					return nil, err
+				var evidence *ApprovalEvidence
+				if w.provenance != nil {
+					evidence = provenanceReviews[i]
+				} else {
+					evidence, err = stageAReviewEvidence(state, policy, fresh[i])
+					if err != nil {
+						return nil, err
+					}
 				}
 				values, err := policyValuesWithApprovals(w.cfg.MergeWhen, w.prs[pin.PR], checks, evidence)
 				if err != nil {
@@ -330,6 +350,15 @@ func (s *Server) stageAGate(parent context.Context, w *worker, claim store.Claim
 			if acquisition == nil {
 				return store.ErrLandingDecisionStale
 			}
+			commit := func(checks ...queue.LandingChecksRecorded) error {
+				if w.provenance != nil {
+					if provenanceEvidence.Policy == nil {
+						return store.ErrLandingDecisionStale
+					}
+					return s.store.StartProvenanceLanding(acquisition.Context(ctx), claim, cfg, policy, fresh, decisions, start, provenanceEvidence, checks...)
+				}
+				return s.store.StartLanding(acquisition.Context(ctx), claim, cfg, policy, fresh, decisions, start, checks...)
+			}
 			if recordChecks {
 				if checkEvidence == nil {
 					return store.ErrLandingDecisionStale
@@ -337,9 +366,9 @@ func (s *Server) stageAGate(parent context.Context, w *worker, claim store.Claim
 				if checkEvidence.AttemptID != start.AttemptID {
 					return store.ErrLandingDecisionStale
 				}
-				return s.store.StartLanding(acquisition.Context(ctx), claim, cfg, policy, fresh, decisions, start, *checkEvidence)
+				return commit(*checkEvidence)
 			}
-			return s.store.StartLanding(acquisition.Context(ctx), claim, cfg, policy, fresh, decisions, start)
+			return commit()
 		},
 		Reject: func(ctx context.Context, fresh []queue.ApprovalEligibilityObserved, expected []string, start queue.LandingStarted, rejection queue.ApprovalGateRejected) error {
 			if acquisition == nil {
@@ -374,12 +403,15 @@ func (s *Server) stageAGate(parent context.Context, w *worker, claim store.Claim
 			}
 			return nil
 		}
-	} else {
+	} else if w.provenance == nil {
 		read := gate.ReadInputsWithChecks
 		gate.ReadInputs = func(ctx context.Context, land queue.Land, state queue.State) ([]queue.ApprovalEligibilityObserved, error) {
 			return read(ctx, land, state, nil, time.Time{}, "")
 		}
 		gate.ReadInputsWithChecks = nil
+	}
+	if w.provenance != nil {
+		return provenanceGate(gate, &provenanceEvidence)
 	}
 	return gate
 }

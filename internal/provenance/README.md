@@ -1,9 +1,10 @@
 # ADR 0010 declarations and local inventory
 
 This package consumes supplied strings and observations. It has no acquisition,
-network, clock, journal or queue calls. The local gitops reader imports it; live queue execution does not. The Hold
-slice-4a `serve.newProvenancePass` seam consumes that reader and this package,
-without a runtime caller or journal writer. `NewPolicy` validates the no-network
+network, clock, journal or queue calls. The Hold `serve.newProvenancePass` seam
+consumes the local gitops reader and this package. Slice 4b adds an activated
+landing writer through that private seam; public constructors cannot install it
+and the public loader still rejects `provenance.requirements` until slice 5. `NewPolicy` validates the no-network
 subset and binds static policy inputs; it does not publish configuration. See the
 [4a evidence](../../docs/research/adr-0010-4a-evidence.md).
 `LoadCandidate` projects `provenance` out and validates the remaining document
@@ -24,8 +25,7 @@ message. `IdentityInput.ParsedTrailers` uses that same named type for coauthors.
 The isolated Git adapter is the only intended producer of `GitTrailerOutput`;
 raw message strings require an explicit conversion and must never be supplied.
 No block locator, heuristic threshold, comment skipping or continuation folding
-is implemented here. The unwired slice-2 local reader calls this API; live
-queues do not.
+is implemented here. The slice-2 local reader calls this API; public queues do not activate it.
 
 The production `gitops.TrailerParser` adapter in
 `internal/gitops/provenance_parser.go` reuses
@@ -570,8 +570,8 @@ No reader/writer activation or v1 audit-format change occurs in 3a.
 `internal/journalreader` is now the single production composition boundary for
 queue, dependency and provenance codecs. The original 3a inert-import fences
 allow this reader and the store adapters. A separate AST guard permits side
-event encoding only in the unwired `store/side_append.go` adapter and rejects
-production callers. Only the derived audit-cursor composer encodes v8/v9. This guard is a **tripwire**, not proof: it does
+event encoding only in the `store/side_append.go` adapter and permits only the
+activated start/recovery callers described below. Only the derived audit-cursor composer encodes v8/v9. This guard is a **tripwire**, not proof: it does
 not catch string concatenation, `.sql` files or `_test.go` files. Existing append
 APIs still accept only the sealed legacy `queue.Event` interface. The old queue
 and dependency decoders continue refusing v9 and the new provenance kinds.
@@ -623,18 +623,60 @@ chunks, both wrapper base kinds and #163 held requests. Store integration tests
 exercise actual journal load/reporting, partial-chunk cursor restart, v9 cursor
 resume, complete legacy cursor byte goldens and wrong-kind decision refusal.
 
+## Slice 4b atomic writers (Hold)
+
+`worker.provenance` is private and nil for every public queue. Installation needs
+both the existing `newProvenancePass` policy and stable local-object/trusted
+composer hooks. An approval policy by itself cannot activate provenance. The
+AST guards retain the constructor fence and permit only the activated landing
+start and recovery paths. The 4a pre-CI filter remains the private caller's
+publication contract; this slice does not publish policy/schema or expose a
+public activation API.
+
+At landing start the executor supplies its exact final check read and fresh
+approval eligibility. `prepareStart` extracts every member's pinned originals
+again and independently calls the isolated slice-2 mapper for T and expected L.
+The effective policy and inventory retain the actual Git version and isolation
+identity. `StartProvenanceLanding` re-evaluates requirements/approvals against the
+queue-locked state, binds the declaration-and-potential-rule digest into the
+existing decision identity, checks exact generation predecessors, and uses
+`startLandingTransaction` / `appendSideTx`. Eligibility, every member decision,
+existing authority check evidence, `LandingStarted`, canonical inventory chunks,
+the tested companion, manifests and checkpoints commit or roll back together.
+No old event gains fields. Ordinary starts still supply the literal nil builder.
+
+The landed companion follows an accepted `Landed`. Before target resolution,
+settlement, reconciliation or planning on a restarted activated worker, and
+before execution of another action, `RecoverProvenance` drains pending outcomes
+through `RecoverLanded`. The successful executor result path invokes it too.
+Recovery reads retained T mappings, original decisions and the immutable outcome;
+it needs no Git objects, network, credentials or current refs. Merge, squash and
+rebase land the tested result; fast-forward lands the original terminal head
+and removes the test marker from L. Unsupported changed compositions fail closed.
+Superseded inventories are reconstructed from the historical canonical evidence
+with a new generation and exact current predecessor. Recovery never emits
+unrelated inventories; #188's batch restriction, reduction requirement, dynamic
+retirement reserve and hard caps all remain in force.
+
+See the [4b proof map](../../docs/research/adr-0010-4b-evidence.md). Deployment
+still waits for ADR 0009 period B, all 3c readers/audit v2, the older-worker drain,
+a verified pre-emission backup and explicit owner activation in slice 5.
+**High-volume queue activation remains BLOCKING on a structural fence bound or
+lifetime/rollover policy.** The existing capacity gauge, 70% alert and admission
+high water remain unchanged; compression is not that structural bound.
+
 **Writer prerequisites delivered under Hold for ADR 0010 slice 4b and ADR 0011
 slices 4a/4b (production integration remains disabled):**
 
 - **Shared transaction.** `appendSideTx` accepts the existing queue-locked
-  transaction. The unwired `startLandingWithSide` seam supplies exact inserted
+  transaction. The `startLandingWithSide` foundation seam supplies exact inserted
   decision IDs and commits decisions, companions, v9 cursor upgrade, dedupe
   manifest and append checkpoint together. A failure after decision insertion
   rolls everything back. The ordinary production start supplies no companion
   builder. Acquire the queue advisory before action/observation locks or event
   INSERTs; FK `KEY SHARE` on queues is part of this order. Never call the public
   wrapper in a second transaction while holding the first transaction's lock.
-- **Landed recovery.** The unwired `RecoverLanded` helper checks an immutable
+- **Landed recovery.** The `RecoverLanded` helper checks an immutable
   `Landed` row against the immediately preceding queue state, rejecting stale
   outcomes and mismatched attempts/decisions. It validates exact historical batch
   membership, revisions and heads, the accepted decision's tested identity, and
@@ -648,8 +690,9 @@ slices 4a/4b (production integration remains disabled):**
   compares complete canonical bundles on retry. The caller must reconstruct the
   actual landed composition from immutable inputs: a `Landed` row alone cannot
   supply source-to-build mappings. Recovery appends the missing companion once,
-  allowing tested evidence to retire. Future startup/recovery wiring must invoke
-  it before starting new work; no production caller is enabled here.
+  allowing tested evidence to retire. The activated `RecoverProvenance`
+  coordinator invokes it before starting new work; public activation remains
+  disabled.
   A recovery bundle may contain only the landed companion and inventory chunks
   consumed by its exact member generations. Reconstructed inventories must match
   the historical tested inventory after rebinding the generation and exact
@@ -682,8 +725,8 @@ slices 4a/4b (production integration remains disabled):**
   `provenance_capacity.fence_count`, `projected_bytes`, `limit_bytes` and
   `high_water_bytes` for queues with retained side evidence. Alert at 70% of
   `limit_bytes`, before the default 80% admission refusal. Track fence count and
-  growth rate to plan rollover well before refusal; raising the threshold spends
-  the queue-event reserve. Projected bytes include active canonical evidence,
+  growth rate to plan rollover well before refusal; raising the threshold cannot spend
+  the required active-inventory retirement reserve. Projected bytes include active canonical evidence,
   compressed/base64 fences and framing, but exclude the queue/dependency base;
   final snapshot encoding independently enforces the complete snapshot cap.
 
@@ -702,7 +745,8 @@ The **Hold writer foundations** provide the unwired `Store.AppendSide` API.
 It validates an entire bundle through the composed replay fold under the queue
 lock before any INSERT, preflights capacity, and upgrades the existing audit
 cursor to v9 in that same transaction. No production caller is enabled. The
-writer guard allowlists only this adapter and forbids production callers.
+writer guard permits only this adapter and the activated start/recovery callers
+above.
 
 Projection compaction retires completed tested/landed pairs, terminal non-landed
 attempts (including abandonment), and generations dropped by dequeue, closure,
@@ -733,11 +777,11 @@ the 256-row suffix bound, including after large completed histories. The origina
 v9 shape remains readable, while a strict `Compaction` checkpoint shape persists
 retired fences, and the strict `FenceTable` shape compresses those same fences
 losslessly. Legacy-only journals retain their exact full cursor bytes.
-The first future side append/compact cursor crosses the rollback boundary:
+The first activated side append/compact cursor crosses the rollback boundary:
 deploy compatible readers and audit v2 everywhere first, drain incompatible
 workers/readers, verify the pre-emission backup, and reconcile external effects
 before any restore. No writer may activate until ADR 0009 period B drains and
-its later authority/startup/owner rollout gates are satisfied.
+its authority/startup/owner rollout gates are satisfied.
 
 Invalid records and unresolved references stop queue
 `Load` and fail `/status`/`Journals` for the entire requested key set. Immutable

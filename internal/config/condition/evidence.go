@@ -142,3 +142,24 @@ func (v ObservedInput) Validate() error {
 	}
 	return nil
 }
+
+// InputType returns the type retained by the compiled expression, even when a
+// runtime value is unknown. Candidate attributes need no public registration.
+func (e Expression) InputType(name string) string {
+	if e.kind == atom && e.name == name {
+		switch e.typ {
+		case stringValue:
+			return "string"
+		case listValue:
+			return "list"
+		case boolValue:
+			return "bool"
+		}
+	}
+	for _, child := range e.children {
+		if typ := child.InputType(name); typ != "" {
+			return typ
+		}
+	}
+	return ""
+}

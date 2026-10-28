@@ -119,6 +119,7 @@ type worker struct {
 	approvalStatus       atomic.Pointer[queue.Config]
 	authorityObservation *authorityActivation
 	stageA               *stageAPolicy
+	provenance           *provenancePass
 	approvalInputProbe   func(context.Context, queue.ApprovalBasis) (queue.ApprovalEligibilityObserved, error)
 	settlementOnly       bool
 	mu                   sync.Mutex
@@ -573,6 +574,11 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 	current, _, err := s.store.Load(ctx, w.id)
 	if err != nil {
 		return err
+	}
+	if w.provenance != nil {
+		if err := s.store.RecoverProvenance(ctx, w.id); err != nil {
+			return err
+		}
 	}
 	w.accessBlocked = current.SourceBlocked(queue.RepositoryAccess)
 	if (w.settlementOnly || current.SourceBlocked(queue.RepositoryAccess)) && (current.Active == nil || current.Active.Phase != queue.Landing) {

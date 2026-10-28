@@ -31,8 +31,11 @@ type LandingDecisionGate struct {
 	// attempt ID is supplied before evidence is budgeted or conditions evaluated.
 	ReadInputsWithChecks func(context.Context, queue.Land, queue.State, []forge.CheckRun, time.Time, string) ([]queue.ApprovalEligibilityObserved, error)
 	// ReloadAfterInputs folds evidence journaled by the read before evaluating.
-	ReloadAfterInputs  bool
-	Reject             func(context.Context, []queue.ApprovalEligibilityObserved, []string, queue.LandingStarted, queue.ApprovalGateRejected) error
+	ReloadAfterInputs bool
+	Reject            func(context.Context, []queue.ApprovalEligibilityObserved, []string, queue.LandingStarted, queue.ApprovalGateRejected) error
+	// Prepare replaces baseline-only preparation for an activated additive gate.
+	// It must freshly evaluate every member; Commit repeats under the queue lock.
+	Prepare            func(queue.State, queue.Land, queue.LandingStarted, []queue.ApprovalEligibilityObserved) ([]queue.LandingDecisionRecorded, error)
 	Policy             cp.Policy
 	Load               func(context.Context) (queue.State, error)
 	ReadInputs         func(context.Context, queue.Land, queue.State) ([]queue.ApprovalEligibilityObserved, error)
@@ -81,29 +84,44 @@ func (g *LandingDecisionGate) start(ctx context.Context, land queue.Land, start 
 	if len(fresh) != len(land.PRs) || len(metadata) != len(land.PRs) {
 		return fmt.Errorf("incomplete landing evidence")
 	}
-	rejection, err := state.PrepareLandingRejection(g.Policy, land, fresh)
-	if err != nil {
-		return err
-	}
-	if len(rejection.Waiting) > 0 {
-		if g.Reject == nil {
-			return fmt.Errorf("approval rejection requires atomic persistence")
-		}
-		fingerprints := make([]string, len(fresh))
-		for i, f := range fresh {
-			fingerprints[i] = state.ApprovalFingerprint(f.Basis.ChangeID)
-		}
-		start.At = now()
-		if err := g.Reject(ctx, fresh, fingerprints, start, rejection); err != nil {
-			return err
-		}
-		return ErrLandingApprovals
-	}
 	decisions := make([]queue.LandingDecisionRecorded, len(fresh))
-	for i, f := range fresh {
-		decision, err := state.PrepareLandingDecision(g.Policy, f, start, land)
+	if g.Prepare != nil {
+		decisions, err = g.Prepare(state, land, start, fresh)
 		if err != nil {
 			return err
+		}
+		if len(decisions) != len(fresh) {
+			return fmt.Errorf("incomplete additive decisions")
+		}
+	} else {
+		rejection, err := state.PrepareLandingRejection(g.Policy, land, fresh)
+		if err != nil {
+			return err
+		}
+		if len(rejection.Waiting) > 0 {
+			if g.Reject == nil {
+				return fmt.Errorf("approval rejection requires atomic persistence")
+			}
+			fingerprints := make([]string, len(fresh))
+			for i, f := range fresh {
+				fingerprints[i] = state.ApprovalFingerprint(f.Basis.ChangeID)
+			}
+			start.At = now()
+			if err := g.Reject(ctx, fresh, fingerprints, start, rejection); err != nil {
+				return err
+			}
+			return ErrLandingApprovals
+		}
+
+	}
+
+	for i, f := range fresh {
+		decision := decisions[i]
+		if g.Prepare == nil {
+			decision, err = state.PrepareLandingDecision(g.Policy, f, start, land)
+			if err != nil {
+				return err
+			}
 		}
 		m := metadata[i]
 		// ChangeMetadata deliberately has no generation. The snapshot records the
@@ -116,8 +134,10 @@ func (g *LandingDecisionGate) start(ctx context.Context, land queue.Land, start 
 		}
 		decisions[i] = decision
 	}
-	if err := state.ValidateLandingDecisions(g.Policy, land, start, fresh, decisions); err != nil {
-		return err
+	if g.Prepare == nil {
+		if err := state.ValidateLandingDecisions(g.Policy, land, start, fresh, decisions); err != nil {
+			return err
+		}
 	}
 	start.At = now()
 	return g.Commit(ctx, fresh, decisions, start)

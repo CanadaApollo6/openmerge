@@ -160,7 +160,7 @@ func (r *evidenceResolver) provenance() error {
 			change, revision, head = string(d.Remedy.ChangeID), uint64(d.Remedy.Revision), d.Remedy.Head
 		}
 		matched := false
-		for _, m := range v.Members {
+		for i, m := range v.Members {
 			latest, err := r.previousInventory(m.Request, r.event.source.ID)
 			if err != nil {
 				return err
@@ -175,7 +175,8 @@ func (r *evidenceResolver) provenance() error {
 			if v.Stage == "landed" {
 				result = d.LandedSHA
 			}
-			if m.Mapping.Build.Result != result {
+			// Earlier members can map to intermediate batch compositions.
+			if i == len(v.Members)-1 && m.Mapping.Build.Result != result {
 				return errSource
 			}
 			for _, id := range m.ObservationIDs {
