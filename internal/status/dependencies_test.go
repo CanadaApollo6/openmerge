@@ -79,7 +79,7 @@ func TestDependencyPrivacyGoldensNoRenderingFetch(t *testing.T) {
 }
 
 func TestDependencyAuthorizedDiagnosticsAndPrecedence(t *testing.T) {
-	for _, code := range []string{"dependency-waiting", "dependency-closed", "dependency-stale", "dependency-landed", "dependency-unavailable", "dependency-source-retargeted"} {
+	for _, code := range []string{"dependency-waiting", "dependency-closed", "dependency-stale", "dependency-landed", "dependency-unavailable", "dependency-source-retargeted", "dependency-unresolved", "dependency-out-of-scope", "dependency-not-on-base", "dependency-unverified"} {
 		j, binding, ref, grant := statusfixture.StatusJournal(t, code, 1)
 		j, err := ProjectDependencies(j, binding, map[string][]dependency.Grant{ref: {grant}}, statusfixture.StatusSources())
 		if err != nil {
@@ -87,7 +87,7 @@ func TestDependencyAuthorizedDiagnosticsAndPrecedence(t *testing.T) {
 		}
 		q, e, _ := Project(j, 2, 20, nil)
 		raw, _ := json.Marshal(e.Dependency)
-		if !bytes.Contains(raw, []byte(code)) {
+		if !bytes.Contains(raw, []byte(code)) || len(e.Dependency.Diagnostics) != 1 || e.Dependency.Diagnostics[0].Code != code || e.Dependency.Diagnostics[0].Source != ref {
 			t.Fatalf("missing typed diagnosis %s: %s", code, raw)
 		}
 		if code == "dependency-landed" && e.WaitingReason.Code == WaitingDependencies {
