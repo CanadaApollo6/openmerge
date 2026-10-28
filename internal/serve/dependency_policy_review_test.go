@@ -29,7 +29,7 @@ func TestDependencyActivationStillRefusesStageAAndProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, w := range map[string]*worker{
-		"Stage A": {stageA: &stageAPolicy{}},
+		"Stage A":    {stageA: &stageAPolicy{}},
 		"provenance": {provenance: &provenancePass{}},
 	} {
 		t.Run(name, func(t *testing.T) {

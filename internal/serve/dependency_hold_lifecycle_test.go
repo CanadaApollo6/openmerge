@@ -147,11 +147,11 @@ func TestDependencyDeclarationHoldSurvivesHeldRequestLifecycle(t *testing.T) {
 }
 
 type dependencyHoldActorFacts struct {
-	attribution       dependency.Attribution
-	accountability    dependency.Accountability
+	attribution      dependency.Attribution
+	accountability   dependency.Accountability
 	declarationGrant dependency.Grant
 	independentGrant dependency.Grant
-	exclusions        []string
+	exclusions       []string
 }
 
 type dependencyHoldForgeReader interface {
@@ -210,10 +210,10 @@ func dependencyHoldActors(t *testing.T, ctx context.Context, f dependencyHoldFor
 	slices.Sort(exclusions)
 	exclusions = slices.Compact(exclusions)
 	return dependencyHoldActorFacts{
-		attribution:       dependency.Attribution{Editors: editors},
-		accountability:    dependency.Accountability{Author: strconv.FormatInt(author.ID, 10), Humans: []string{}},
+		attribution:      dependency.Attribution{Editors: editors},
+		accountability:   dependency.Accountability{Author: strconv.FormatInt(author.ID, 10), Humans: []string{}},
 		declarationGrant: declarationGrant,
 		independentGrant: dependency.Grant{SubjectID: strconv.FormatInt(independent.ID, 10), ReturnedID: strconv.FormatInt(grant.User.ID, 10), RepositoryID: alias.RepositoryID, ReadID: "fake-independent-writer", Fresh: true, Allowed: grant.CanWrite(independent.ID)},
-		exclusions:        exclusions,
+		exclusions:       exclusions,
 	}
 }
