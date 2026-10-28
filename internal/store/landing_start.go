@@ -79,7 +79,7 @@ func (s *Store) startLandingTransaction(ctx context.Context, claim ClaimedAction
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		// An activated dependency start takes B plus its direct sources in one
 		// canonical order, never a source lock while already holding B's.
-		var locked dependencyLocks
+		var locked dependencyLockSet
 		if dependencies != nil {
 			var err error
 			if locked, err = dependencies.lock(ctx, s, tx, claim.QueueID); err != nil {

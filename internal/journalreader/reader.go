@@ -71,6 +71,7 @@ type Reader struct {
 	dependencies dependency.State
 	expected     dependency.JournalInitialized
 	lookup       Lookup
+	changeID     ChangeIdentity
 	lastID       uint64
 	composed     bool // Persisted by the cursor snapshot format, never its envelope.
 }
@@ -262,6 +263,14 @@ func decisionMatches(d queue.LandingDecisionRecorded, l pj.Landing, req p.Invent
 // WithLookup replaces the immutable lookup with a transaction-local candidate overlay.
 func (r *Reader) WithLookup(lookup Lookup) { r.lookup = lookup }
 
+// ChangeIdentity derives a PR's ADR 0007 ChangeID from the journal's stored
+// canonical queue key, never from a discovery alias or a companion's claim.
+type ChangeIdentity func(pr int) (queue.ChangeID, error)
+
+// WithChangeIdentity installs the canonical deriver. Without it, dependency
+// decision companions fail closed: their consumer member cannot be bound.
+func (r *Reader) WithChangeIdentity(derive ChangeIdentity) { r.changeID = derive }
+
 // VerifyDependencyBinding checks a writer-supplied independent identity without
 // changing the reader's trust configuration or exposing satisfaction.
 func (r Reader) VerifyDependencyBinding(binding dependency.JournalInitialized) error {
@@ -296,9 +305,14 @@ func (r Reader) validateDependencyDecision(id uint64, d dependency.DecisionRecor
 	pin := b.PRs[d.Member]
 	bindings := r.Queue.BatchRevisions(d.BatchID)
 	revision, known := r.Queue.PRRevision(pin.PR)
-	// Legacy revision observations carry no ChangeID: the store derived it from
-	// the stored canonical queue key under the start lock. Never accept another.
-	if !known || len(bindings) != len(b.PRs) || revision.ChangeID != "" && string(revision.ChangeID) != d.ChangeID || uint64(bindings[d.Member].Revision) != d.Revision || pin.HeadSHA != d.Head || bindings[d.Member].HeadSHA != d.Head {
+	if r.changeID == nil || d.Alias.Number != uint64(pin.PR) {
+		return ErrReference
+	}
+	// Legacy revision observations carry no ChangeID: bind the member to the
+	// stored canonical queue key's derivation, exactly as the store did under the
+	// start lock, and to any recorded ChangeID as well. Never accept another.
+	derived, err := r.changeID(pin.PR)
+	if err != nil || string(derived) != d.ChangeID || !known || len(bindings) != len(b.PRs) || revision.ChangeID != "" && revision.ChangeID != derived || uint64(bindings[d.Member].Revision) != d.Revision || pin.HeadSHA != d.Head || bindings[d.Member].HeadSHA != d.Head {
 		return ErrReference
 	}
 	req := p.InventoryRequest{ChangeID: d.ChangeID, Revision: strconv.FormatUint(d.Revision, 10), Head: d.Head}

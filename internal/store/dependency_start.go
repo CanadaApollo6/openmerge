@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -23,6 +24,32 @@ type dependencyActivationKey struct{}
 // dependencyLocks maps each locked direct-source key to its stored queue.
 type dependencyLocks = map[dependency.QueueKey]QueueID
 
+// dependencyLockSet is what lock() acquired, plus each direct source's
+// settlement facts verified once, before any lock was taken.
+type dependencyLockSet struct {
+	queues  dependencyLocks
+	settled map[settlementKey]settledBatch
+}
+
+type settlementKey struct {
+	queue QueueID
+	event uint64
+}
+
+// settledBatch is an accepted Landed outcome and the members its batch bound
+// immediately before it. raw is the settlement row, re-read under the lock.
+type settledBatch struct {
+	raw     []byte
+	outcome queue.Landed
+	members []settledMember
+}
+
+type settledMember struct {
+	change   queue.ChangeID
+	revision uint64
+	head     string
+}
+
 type dependencyActivation struct {
 	queue   QueueID
 	binding dependency.JournalInitialized
@@ -36,8 +63,9 @@ func WithDependencyActivation(ctx context.Context, q QueueID, binding dependency
 }
 
 // withDependencyWaits derives the planner overlay from recorded facts in the
-// same replay, plus the journal recorded_at of each admission's consumed rows.
-// A wrong or absent binding fails the load closed; nothing is inferred.
+// same replay, plus when each admission's consumed rows became satisfied (see
+// satisfiedSince). A wrong or absent binding fails the load closed; nothing is
+// inferred.
 func withDependencyWaits(ctx context.Context, db journalQuery, q QueueID, r journalreader.Reader) (queue.State, error) {
 	a, ok := ctx.Value(dependencyActivationKey{}).(dependencyActivation)
 	if !ok || a.queue != q {
@@ -55,6 +83,7 @@ func withDependencyWaits(ctx context.Context, db journalQuery, q QueueID, r jour
 	admitted := map[int][]uint64{}
 	heads := map[int]string{}
 	var ids []int64
+	var horizon time.Time
 	for _, entry := range r.Queue.Entries {
 		change, revision, ok := changeRevision(key, r.Queue, entry.PR, entry.HeadSHA)
 		if !ok {
@@ -69,31 +98,18 @@ func withDependencyWaits(ctx context.Context, db journalQuery, q QueueID, r jour
 		for _, id := range admission.Events {
 			ids = append(ids, int64(id))
 		}
+		if horizon.IsZero() || entry.EnqueuedAt.Before(horizon) {
+			horizon = entry.EnqueuedAt
+		}
 	}
-	recorded := map[uint64]time.Time{}
-	if len(ids) > 0 {
-		rows, err := db.Query(ctx, `SELECT id, recorded_at FROM events WHERE queue_id=$1 AND id = ANY($2)`, q, ids)
-		if err != nil {
-			return queue.State{}, err
-		}
-		for rows.Next() {
-			var id int64
-			var at time.Time
-			if err := rows.Scan(&id, &at); err != nil {
-				rows.Close()
-				return queue.State{}, err
-			}
-			recorded[uint64(id)] = at
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return queue.State{}, err
-		}
+	since, err := satisfiedSince(ctx, db, q, ids, horizon)
+	if err != nil {
+		return queue.State{}, err
 	}
 	for pr, events := range admitted {
 		var eligible time.Time
 		for _, id := range events {
-			at, ok := recorded[id]
+			at, ok := since[id]
 			if !ok {
 				return queue.State{}, journalreader.ErrReference
 			}
@@ -104,6 +120,82 @@ func withDependencyWaits(ctx context.Context, db journalQuery, q QueueID, r jour
 		waits[pr] = queue.DependencyWait{Head: heads[pr], EligibleAt: eligible}
 	}
 	return r.Queue.WithDependencyWaits(waits), nil
+}
+
+// dependencyWithheld returns the record that folds the activated planner's
+// prune of gated pending members before this start, if any. ok is false when
+// the fold would still refuse the start, which then cancels as stale. Without
+// the overlay nothing is withheld and legacy starts are unchanged.
+func dependencyWithheld(state queue.State, event queue.Event) (*queue.DependencyWaitsWithheld, bool) {
+	var id string
+	switch start := event.(type) {
+	case queue.BatchStarted:
+		id = start.BatchID
+	case queue.ChainedBatchStarted:
+		id = start.BatchID
+	default:
+		return nil, true
+	}
+	members := state.DependencyWithheld()
+	if len(members) == 0 {
+		return nil, true
+	}
+	withheld := queue.DependencyWaitsWithheld{PRs: members}
+	return &withheld, queue.Apply(queue.Apply(state, withheld), event).Batch(id) != nil
+}
+
+func insertWithheld(ctx context.Context, tx pgx.Tx, q QueueID, withheld *queue.DependencyWaitsWithheld) error {
+	if withheld == nil {
+		return nil
+	}
+	name, payload, err := queue.EncodeEvent(*withheld)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO events(queue_id, type, payload) VALUES ($1, $2, $3::jsonb)`, q, name, string(payload))
+	return err
+}
+
+// satisfiedSince maps each consumed row to the recorded_at that began its
+// unchanged run: a landed observation whose expected_prior chain is landed for
+// the same declaration and source, or a policy whose prior_event_id chain has
+// the same digest, was satisfied since the oldest such predecessor. Re-recording
+// unchanged evidence therefore never restarts batch max_wait; any other change
+// (a different result, digest or declaration, an acknowledgement) is a
+// waiting-to-eligible transition, which does. Declarations are never re-recorded
+// unchanged (the fold refuses them). The walk stops once it passes horizon, the
+// oldest admitted entry's enqueue time, since an earlier start cannot change any
+// planner clock. One statement; primary-key steps only.
+func satisfiedSince(ctx context.Context, db journalQuery, q QueueID, ids []int64, horizon time.Time) (map[uint64]time.Time, error) {
+	since := map[uint64]time.Time{}
+	if len(ids) == 0 {
+		return since, nil
+	}
+	// Kind-neutral by construction: only observations carry expected_prior and
+	// only policy companions carry prior_event_id; every other consumed row
+	// (declaration, acknowledgement) has neither and ends its own run. A step
+	// must keep the head's kind and its declaration/source/result/digest.
+	const prior = `COALESCE(e.payload->'data'->>'expected_prior', e.payload->'data'->>'prior_event_id')::bigint`
+	const same = `jsonb_build_array(e.payload->'data'->'declaration', e.payload->'data'->'source', e.payload->'data'->'result', e.payload->'data'->'digest')`
+	rows, err := db.Query(ctx, `WITH RECURSIVE run(head, kind, prior, same, at) AS (
+		SELECT e.id, e.type, `+prior+`, `+same+`, e.recorded_at FROM events e WHERE e.queue_id=$1 AND e.id = ANY($2)
+		UNION ALL
+		SELECT run.head, e.type, `+prior+`, run.same, e.recorded_at FROM run JOIN events e ON e.queue_id=$1 AND e.id=run.prior
+		WHERE run.at > $3 AND e.type=run.kind AND `+same+` = run.same
+	) SELECT head, min(at) FROM run GROUP BY head`, q, ids, horizon)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var at time.Time
+		if err := rows.Scan(&id, &at); err != nil {
+			return nil, err
+		}
+		since[uint64(id)] = at
+	}
+	return since, rows.Err()
 }
 
 func storedKey(ctx context.Context, db journalQuery, q QueueID) (QueueKey, error) {
@@ -179,37 +271,99 @@ func (v DependencyStart) sourceQueue(ctx context.Context, tx pgx.Tx, key depende
 // lock acquires B plus every supplied direct source in ascending queue-ID
 // order, the canonical order of the existing multi-queue lock paths. It runs
 // before any other lock in this transaction and performs no forge I/O.
-func (v DependencyStart) lock(ctx context.Context, s *Store, tx pgx.Tx, q QueueID) (dependencyLocks, error) {
-	sources := dependencyLocks{}
+//
+// Before taking any lock it verifies each distinct source settlement exactly
+// once (verifySettlement). That journal prefix is immutable once the settlement
+// row is committed: every insert into a queue's journal holds that queue's
+// advisory lock through commit, so no lower ID can appear later. Under the
+// locks, settlement() only re-reads the row and checks the current source fold.
+func (v DependencyStart) lock(ctx context.Context, s *Store, tx pgx.Tx, q QueueID) (dependencyLockSet, error) {
+	set := dependencyLockSet{queues: dependencyLocks{}, settled: map[settlementKey]settledBatch{}}
 	ids := []QueueID{q}
 	for _, m := range v.Members {
 		for _, source := range m.Sources {
-			if _, ok := sources[source.Queue]; ok {
+			id, ok := set.queues[source.Queue]
+			if !ok {
+				var err error
+				if id, err = v.sourceQueue(ctx, tx, source.Queue); err != nil {
+					return set, fmt.Errorf("%w: %w", ErrStale, err)
+				}
+				if id == q {
+					return set, fmt.Errorf("%w: %w", ErrStale, dependency.ErrOutOfScope)
+				}
+				set.queues[source.Queue] = id
+				ids = append(ids, id)
+			}
+			key := settlementKey{id, source.SettlementEventID}
+			if _, ok := set.settled[key]; ok {
 				continue
 			}
-			id, err := v.sourceQueue(ctx, tx, source.Queue)
+			settled, err := verifySettlement(ctx, tx, id, source.SettlementEventID)
 			if err != nil {
-				return nil, fmt.Errorf("%w: %w", ErrStale, err)
+				return set, err
 			}
-			if id == q {
-				return nil, fmt.Errorf("%w: %w", ErrStale, dependency.ErrOutOfScope)
-			}
-			sources[source.Queue] = id
-			ids = append(ids, id)
+			set.settled[key] = settled
 		}
 	}
 	slices.Sort(ids)
 	for _, id := range slices.Compact(ids) {
 		if err := s.lockQueue(ctx, tx, id); err != nil {
-			return nil, err
+			return set, err
 		}
 	}
-	return sources, nil
+	return set, nil
+}
+
+// verifySettlement proves, without any lock, that event is an accepted Landed
+// outcome in source queue id: replaying the immutable prefix before it, the
+// batch was landing and the fold accepts the outcome. It records the batch's
+// member bindings at that point. This is the only prefix replay per settlement.
+func verifySettlement(ctx context.Context, tx pgx.Tx, id QueueID, event uint64) (settledBatch, error) {
+	var raw []byte
+	if err := tx.QueryRow(ctx, `SELECT payload FROM events WHERE queue_id=$1 AND id=$2`, id, int64(event)).Scan(&raw); err != nil {
+		return settledBatch{}, fmt.Errorf("%w: dependency-unverified: %v", ErrStale, err)
+	}
+	decoded, err := journalreader.DecodeEvent(raw)
+	if err != nil {
+		return settledBatch{}, err
+	}
+	outcome, ok := decoded.Queue.(queue.Landed)
+	if !ok {
+		return settledBatch{}, fmt.Errorf("%w: dependency-unverified", ErrStale)
+	}
+	var seed queue.State
+	if err := tx.QueryRow(ctx, `SELECT base,COALESCE(initial_fence,'') FROM queues WHERE id=$1`, id).Scan(&seed.BaseBranch, &seed.Fence); err != nil {
+		return settledBatch{}, err
+	}
+	before, _, err := replayJournal(ctx, tx, id, seed, int64(event)-1, true)
+	if err != nil {
+		return settledBatch{}, err
+	}
+	b := before.Queue.Batch(outcome.BatchID)
+	if b == nil || b.Phase != queue.Landing {
+		return settledBatch{}, fmt.Errorf("%w: dependency-unverified", ErrStale)
+	}
+	if after := queue.Apply(before.Queue, outcome); after.Batch(outcome.BatchID) != nil || after.BaseSHA != outcome.NewBaseSHA {
+		return settledBatch{}, fmt.Errorf("%w: dependency-unverified", ErrStale)
+	}
+	key, err := storedKey(ctx, tx, id)
+	if err != nil {
+		return settledBatch{}, err
+	}
+	settled := settledBatch{raw: raw, outcome: outcome}
+	bindings := before.Queue.BatchRevisions(b.ID)
+	for i, pr := range b.PRs {
+		change, _, ok := changeRevision(key, before.Queue, pr.PR, pr.HeadSHA)
+		if ok && i < len(bindings) && bindings[i].HeadSHA == pr.HeadSHA {
+			settled.members = append(settled.members, settledMember{change, uint64(bindings[i].Revision), pr.HeadSHA})
+		}
+	}
+	return settled, nil
 }
 
 // validate rechecks every member under the full lock set. The direct-source set
 // is re-derived from the current declarations: any change restarts preparation.
-func (v DependencyStart) validate(ctx context.Context, tx pgx.Tx, q QueueID, locked dependencyLocks, state queue.State, land queue.Land, start queue.LandingStarted, decisions bool) (func([]uint64, uint64) (SideAppend, error), error) {
+func (v DependencyStart) validate(ctx context.Context, tx pgx.Tx, q QueueID, locked dependencyLockSet, state queue.State, land queue.Land, start queue.LandingStarted, decisions bool) (func([]uint64, uint64) (SideAppend, error), error) {
 	var seed queue.State
 	var repository, lane string
 	if err := tx.QueryRow(ctx, `SELECT base,COALESCE(initial_fence,''),repository,lane FROM queues WHERE id=$1`, q).Scan(&seed.BaseBranch, &seed.Fence, &repository, &lane); err != nil {
@@ -245,7 +399,7 @@ func (v DependencyStart) validate(ctx context.Context, tx pgx.Tx, q QueueID, loc
 		return nil, err
 	}
 	changes := make([]queue.ChangeID, len(land.PRs))
-	used := map[dependency.QueueKey]bool{}
+	sources := map[QueueID]sourceFold{}
 	for i, member := range v.Members {
 		change, revision, ok := changeRevision(stored, state, land.PRs[i].PR, land.PRs[i].HeadSHA)
 		if !ok || bindings[i].HeadSHA != land.PRs[i].HeadSHA || uint64(bindings[i].Revision) != revision {
@@ -267,18 +421,22 @@ func (v DependencyStart) validate(ctx context.Context, tx pgx.Tx, q QueueID, loc
 			if member.Observations[j].Source != edge.Reference || member.Observations[j].Result != "landed" || source.Reference != edge.Reference || source.Queue != edge.Queue {
 				return nil, fmt.Errorf("%w: direct-source set changed", ErrStale)
 			}
-			id, ok := locked[source.Queue]
-			if !ok {
+			id, ok := locked.queues[source.Queue]
+			settled, verified := locked.settled[settlementKey{id, source.SettlementEventID}]
+			if !ok || !verified {
 				return nil, fmt.Errorf("%w: unlocked direct source", ErrStale)
 			}
-			used[source.Queue] = true
-			if err := v.settlement(ctx, tx, id, edge, source, self); err != nil {
+			current, ok := sources[id]
+			if !ok {
+				if current, err = foldSource(ctx, tx, id); err != nil {
+					return nil, err
+				}
+				sources[id] = current
+			}
+			if err := v.settlement(ctx, tx, id, edge, source, self, current, settled); err != nil {
 				return nil, err
 			}
 		}
-	}
-	if len(used) != len(locked) {
-		return nil, fmt.Errorf("%w: direct-source set changed", ErrStale)
 	}
 	// Fold the supplied reads at placeholder positions so a hold, CAS race or
 	// non-landed read refuses before any insert, with its typed code.
@@ -341,23 +499,32 @@ func dependencyStale(err error) error {
 	return err
 }
 
-// settlement checks one direct source under its queue lock: bilateral consent
-// in the source's own policy companion, an unchanged journal base since the
-// fresh ancestry read, and an accepted Landed outcome for the exact source
-// change revision/head. No forge I/O occurs while these locks are held.
-func (v DependencyStart) settlement(ctx context.Context, tx pgx.Tx, id QueueID, edge dependency.DeclaredEdge, source dependency.SourceSettlement, self dependency.QueueKey) error {
+// sourceFold is one locked direct source's current journal fold, replayed once
+// per start from its checkpoint however many edges or members name it.
+type sourceFold struct {
+	reader    journalreader.Reader
+	watermark uint64
+}
+
+func foldSource(ctx context.Context, tx pgx.Tx, id QueueID) (sourceFold, error) {
 	var seed queue.State
 	if err := tx.QueryRow(ctx, `SELECT base,COALESCE(initial_fence,'') FROM queues WHERE id=$1`, id).Scan(&seed.BaseBranch, &seed.Fence); err != nil {
-		return err
+		return sourceFold{}, err
 	}
-	current, watermark, err := replayJournal(ctx, tx, id, seed, 0, true)
-	if err != nil {
-		return err
-	}
-	if uint64(watermark) < source.Watermark || current.Queue.BaseSHA != source.BaseSHA {
+	reader, watermark, err := replayJournal(ctx, tx, id, seed, 0, true)
+	return sourceFold{reader, uint64(watermark)}, err
+}
+
+// settlement checks one direct source under its queue lock: bilateral consent
+// in the source's own policy companion, an unchanged journal base since the
+// fresh ancestry read, and the pre-verified accepted Landed outcome for the
+// exact source change revision/head, whose row must still be byte-identical.
+// No forge I/O and no prefix replay occur while these locks are held.
+func (v DependencyStart) settlement(ctx context.Context, tx pgx.Tx, id QueueID, edge dependency.DeclaredEdge, source dependency.SourceSettlement, self dependency.QueueKey, current sourceFold, settled settledBatch) error {
+	if current.watermark < source.Watermark || current.reader.Queue.BaseSHA != source.BaseSHA {
 		return fmt.Errorf("%w: direct source base drifted since the landing-start read", ErrStale)
 	}
-	deps, err := current.BoundDependencies(v.Binding)
+	deps, err := current.reader.BoundDependencies(v.Binding)
 	if err != nil {
 		return err
 	}
@@ -373,36 +540,14 @@ func (v DependencyStart) settlement(ctx context.Context, tx pgx.Tx, id QueueID, 
 		return fmt.Errorf("%w: dependency-stale", ErrStale)
 	}
 	var raw []byte
-	if err := tx.QueryRow(ctx, `SELECT payload FROM events WHERE queue_id=$1 AND id=$2`, id, int64(source.SettlementEventID)).Scan(&raw); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT payload FROM events WHERE queue_id=$1 AND id=$2`, id, int64(source.SettlementEventID)).Scan(&raw); err != nil || !bytes.Equal(raw, settled.raw) {
 		return fmt.Errorf("%w: dependency-unverified: %v", ErrStale, err)
 	}
-	event, err := journalreader.DecodeEvent(raw)
-	if err != nil {
-		return err
-	}
-	outcome, ok := event.Queue.(queue.Landed)
-	if !ok || outcome.NewBaseSHA != source.Commit || source.SettlementEventID > uint64(watermark) {
+	if settled.outcome.NewBaseSHA != source.Commit || source.SettlementEventID > current.watermark {
 		return fmt.Errorf("%w: dependency-unverified", ErrStale)
 	}
-	before, _, err := replayJournal(ctx, tx, id, seed, int64(source.SettlementEventID)-1, true)
-	if err != nil {
-		return err
-	}
-	b := before.Queue.Batch(outcome.BatchID)
-	if b == nil || b.Phase != queue.Landing {
-		return fmt.Errorf("%w: dependency-unverified", ErrStale)
-	}
-	if after := queue.Apply(before.Queue, outcome); after.Batch(outcome.BatchID) != nil || after.BaseSHA != outcome.NewBaseSHA {
-		return fmt.Errorf("%w: dependency-unverified", ErrStale)
-	}
-	key, err := storedKey(ctx, tx, id)
-	if err != nil {
-		return err
-	}
-	bindings := before.Queue.BatchRevisions(b.ID)
-	for i, pr := range b.PRs {
-		change, _, ok := changeRevision(key, before.Queue, pr.PR, pr.HeadSHA)
-		if ok && i < len(bindings) && string(change) == ref.ChangeID && uint64(bindings[i].Revision) == source.Revision.Revision && pr.HeadSHA == source.Revision.Head && bindings[i].HeadSHA == pr.HeadSHA {
+	for _, m := range settled.members {
+		if string(m.change) == ref.ChangeID && m.revision == source.Revision.Revision && m.head == source.Revision.Head {
 			return nil
 		}
 	}

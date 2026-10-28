@@ -579,9 +579,26 @@ literal nil provenance/dependency evidence. Existing goldens are untouched.
   blamed, and never dequeues. The same `batchCandidates` drives depth 1, ADR 0009
   chained admission at depth 4 and `NextWake`; `CanStart` revalidates the same
   gated view under the queue lock. A missing value fails closed.
+- **Journaled regroup.** The fold starts only its exact first pending group, so
+  the planner's prune must be durable before a start that relies on it. When the
+  gated view withholds pending members, the start authorization appends the new
+  queue kind `dependency_waits_withheld` (exact members and heads) immediately
+  before `BatchStarted`/`ChainedBatchStarted` in the same transaction, and
+  refuses (cancels as stale) unless the fold then accepts the start. Withheld
+  members leave their groups and keep their entry order: unrelated eligible
+  changes pass them (ADR 0011 Stage A), and once eligible they compose freshly
+  from the head queue. Holding the whole group instead would block every start,
+  because the fold admits no fresh batch while a pending group exists. Replay
+  folds the record without the overlay; it is a no-op unless every member is
+  still pending at that head, and unactivated queues never emit it.
 - **Wait clocks.** Batch `max_wait` is computed only from eligible candidates;
-  a change's clock starts at `max(EnqueuedAt, EligibleAt)`, where `EligibleAt`
-  is the latest journal `recorded_at` of the rows its admission consumes. There
+  a change's clock starts at `max(EnqueuedAt, EligibleAt)`. `EligibleAt` is the
+  latest start of the unchanged run of each consumed row: a landed observation
+  re-recorded for the same declaration and source, or a policy re-applied with
+  the same digest, keeps its predecessor's `recorded_at` (one recursive
+  primary-key walk, stopping at the oldest admitted enqueue time). Only a
+  waiting-to-eligible transition restarts the clock; declarations are never
+  re-recorded unchanged. There
   is no conflict-grace clock in the codebase yet; 4b must extend `EligibleAt` to
   accumulate eligible time across a rewind-induced wait.
 - **Decision companion.** `dependency_decision_recorded` is a new wire-v1 kind,
@@ -598,10 +615,15 @@ literal nil provenance/dependency evidence. Existing goldens are untouched.
   `startLandingTransaction` with dependency evidence (never together with the
   provenance writer). It locks B plus the supplied direct sources in ascending
   queue-ID order before any other lock, then re-derives the direct-source set from
-  B's current declarations and refuses any difference. Under the source locks it
-  checks the source's own policy companion (`allow_to` B), an unchanged journal
-  base since the fresh ancestry read, and an accepted `Landed` outcome for the
-  exact source change revision/head and commit. It refuses while any accepted
+  B's current declarations and refuses any difference. Before taking any lock it
+  verifies each distinct source settlement once: replaying the immutable prefix
+  before it, the outcome is an accepted `Landed` for a landing batch. That prefix
+  cannot change once the row commits, because every journal insert holds its
+  queue's advisory lock through commit. Under the source locks it replays each
+  source's current fold once (from its checkpoint), re-reads the settlement row
+  byte-for-byte, and checks the source's own policy companion (`allow_to` B), an
+  unchanged journal base since the fresh ancestry read, and that the settled
+  batch bound the exact source change revision/head and commit. It refuses while any accepted
   `Landed` awaits `RecoverLanded`, compares the fresh governing policy reread with
   the recorded companion, and folds the supplied landing-start reads before any
   insert. Fresh eligibility, decisions, unchanged `LandingStarted`, the landing-
@@ -623,6 +645,9 @@ ADR ambiguities resolved here:
   order could deadlock against them. The mutation proof shows a real deadlock.
 - Legacy revision observations carry no `ChangeID`. Like audit, the store derives
   it from the stored canonical queue key and never accepts a different recorded ID.
+  The shared reader binds each companion the same way: alias number equal to the
+  batch member's PR, and `ChangeID` equal to the stored key's derivation (the
+  store installs a lazy deriver; without one, companions fail closed).
 - Composition and invalidation companions (`dependency_composition_recorded`,
   `dependency_compositions_invalidated`) belong with 4b's invalidation: in 4a a
   refused start keeps B un-started (fail closed) until the inputs recover.
@@ -637,10 +662,16 @@ source journal reads and ancestry) is wired in slice 6. The fence-bound
 **BLOCKING** item above still applies to every high-volume activation.
 
 Proofs: `TestAdmissionFromRecordedFactsOnly`, `TestDecisionCompanionWireAndFold`,
-`TestDependencyDecisionBindsDurableStart` (reader),
+`TestDependencyDecisionBindsDurableStart`,
+`TestDependencyDecisionBindsConsumerIdentity` (reader),
 `TestDependencyWaitsGatePlannerAtDepthsOneAndFour`,
 `TestDependencyWaitsNeverBisectedRetriedOrDequeued`,
-`TestDependencyWaitSuspendsBatchMaxWait`, store
+`TestDependencyWaitSuspendsBatchMaxWait`,
+`TestDependencyWaitsWithheldFoldAgreesWithPlanner`,
+`TestDependencyWaitsWithheldFoldIsExact`, store
+`TestDependencyWaitsWithheldStartFoldsThroughStore`,
+`TestDependencyEligibilityStableAcrossUnchangedRefresh`,
+`TestDependencyLockRefusesSelfSource`,
 `TestDependencyPlannerGateFromRecordedFacts`,
 `TestDependencyStartCommitsCompanionAtomically`,
 `TestDependencyStartRefusesEachAdmissionGateAtomically` (12 gates),

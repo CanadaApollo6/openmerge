@@ -13,6 +13,7 @@ import (
 // Legacy format asserts a side-evidence-free prefix; v8/v9 retain composed state.
 func (r *Reader) LoadSnapshot(raw []byte, through uint64) error {
 	next := New(queue.State{}, r.expected, r.lookup)
+	next.changeID = r.changeID
 	decoded, err := pj.DecodeSnapshot(raw, func(kind string, base []byte) error {
 		expected := r.expected
 		if kind == "dependency" {

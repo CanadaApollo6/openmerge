@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -171,27 +172,30 @@ func (f *depFixture) ctx(ctx context.Context) context.Context {
 }
 
 // claimLand drives B's own batch to an authorized Land claim.
-func (f *depFixture) claimLand(t *testing.T) ClaimedAction {
+func (f *depFixture) claimLand(t *testing.T, batch ...string) ClaimedAction {
 	t.Helper()
 	ctx := f.ctx(t.Context())
 	now := time.Now()
-	appendEvents(t, f.s, f.c.id, queue.BatchStarted{BatchID: "b1", BaseSHA: f.c.base, PRs: []queue.BatchPR{{PR: f.c.pr, HeadSHA: f.c.head}}, At: now}, queue.TestRefBuilt{BatchID: "b1", TestedSHA: sha('f'), Method: queue.Merge, At: now}, queue.ChecksCompleted{TestedSHA: sha('f'), Success: true})
+	id := "b1"
+	if len(batch) > 0 {
+		id = batch[0]
+	}
+	appendEvents(t, f.s, f.c.id, queue.BatchStarted{BatchID: id, BaseSHA: f.c.base, PRs: []queue.BatchPR{{PR: f.c.pr, HeadSHA: f.c.head}}, At: now}, queue.TestRefBuilt{BatchID: id, TestedSHA: sha('f'), Method: queue.Merge, At: now}, queue.ChecksCompleted{TestedSHA: sha('f'), Success: true})
 	_, err := f.s.Plan(ctx, f.c.id, depCfg, now)
 	must(t, err)
-	claims, err := f.s.ClaimQueue(ctx, f.c.id, 1, time.Minute, now)
+	// Only Land is claimed: a prior landing's effects stay unclaimed.
+	claims, err := f.s.ClaimQueue(ctx, f.c.id, 10, time.Minute, now)
 	must(t, err)
-	if len(claims) != 1 {
+	i := slices.IndexFunc(claims, func(c ClaimedAction) bool { _, ok := c.Action.(queue.Land); return ok })
+	if i < 0 {
 		t.Fatal("missing Land claim", claims)
 	}
-	if _, ok := claims[0].Action.(queue.Land); !ok {
-		t.Fatal("unexpected claim", claims[0].Action)
-	}
-	ok, err := f.s.BeginConsequential(ctx, claims[0], depCfg, now)
+	ok, err := f.s.BeginConsequential(ctx, claims[i], depCfg, now)
 	must(t, err)
 	if !ok {
 		t.Fatal("Land declined")
 	}
-	return claims[0]
+	return claims[i]
 }
 
 // evidence is the trusted seam's fresh landing-start read for B's one edge.
@@ -379,11 +383,20 @@ func TestDependencyStartRefusesEachAdmissionGateAtomically(t *testing.T) {
 // Two consumers declare each other (a concurrent cycle). Both starts must lock
 // {X,Y} in one canonical order and refuse, never deadlock: no member of a cycle
 // lands while a direct source is unlanded. Reordering the lock set deadlocks.
+// Each queue first lands an unrelated filler change, so the lock-free
+// settlement-prefix check passes and the refusal happens under the locks.
 func TestDependencyStartLockOrderAndConcurrentCycle(t *testing.T) {
 	s := newStore(t)
 	b := depBinding(t)
 	x := newDepQueue(t, s, b, "acme/x", 1, '1')
 	y := newDepQueue(t, s, b, "acme/y", 2, '2')
+	settled := map[QueueID]uint64{}
+	for _, d := range []*depQueue{&x, &y} {
+		now, landed := time.Now(), sha(byte('5'+d.pr))
+		appendEvents(t, s, d.id, queue.PRObserved{PR: 100, HeadSHA: sha('7'), Eligible: true, Trusted: true}, queue.EnqueueRequested{PR: 100, At: now}, queue.BatchStarted{BatchID: "b1", BaseSHA: d.base, PRs: []queue.BatchPR{{PR: 100, HeadSHA: sha('7')}}, At: now}, queue.TestRefBuilt{BatchID: "b1", TestedSHA: landed, Method: queue.Merge, At: now}, queue.ChecksCompleted{TestedSHA: landed, Success: true}, queue.LandingStarted{BatchID: "b1", AttemptID: "filler", FenceToken: "fence-" + strings.TrimPrefix(d.key.Repository, "https://github.com/"), At: now})
+		settled[d.id] = uint64(appendEvents(t, s, d.id, queue.Landed{BatchID: "b1", NewBaseSHA: landed, NewFence: "next"}))
+		d.base = landed
+	}
 	claims := map[QueueID]ClaimedAction{}
 	evidence := map[QueueID]DependencyStart{}
 	for _, pair := range [][2]*depQueue{{&x, &y}, {&y, &x}} {
@@ -395,8 +408,8 @@ func TestDependencyStartLockOrderAndConcurrentCycle(t *testing.T) {
 		o.ExpectedPrior = depSide(t, s, self.id, b, "observe", o)[0]
 		o.ReadSequence = 2
 		f := &depFixture{s: s, b: b, c: *self}
-		claims[self.id] = f.claimLand(t)
-		evidence[self.id] = DependencyStart{Binding: b, Members: []DependencyMemberStart{{Observations: []dependency.Observed{o}, Sources: []dependency.SourceSettlement{{Reference: source.ref, Queue: source.key, Source: source.alias, Grant: dependency.Grant{SubjectID: "author", ReturnedID: "author", RepositoryID: source.alias.RepositoryID, ReadID: "landing-start", Fresh: true, Allowed: true}, Revision: o.SourceRevision, Commit: sha('9'), SettlementEventID: 1, Watermark: 1, BaseSHA: source.base}}, PolicyCommit: self.policy.Commit, PolicyDigest: self.policy.Digest}}}
+		claims[self.id] = f.claimLand(t, "b2")
+		evidence[self.id] = DependencyStart{Binding: b, Members: []DependencyMemberStart{{Observations: []dependency.Observed{o}, Sources: []dependency.SourceSettlement{{Reference: source.ref, Queue: source.key, Source: source.alias, Grant: dependency.Grant{SubjectID: "author", ReturnedID: "author", RepositoryID: source.alias.RepositoryID, ReadID: "landing-start", Fresh: true, Allowed: true}, Revision: o.SourceRevision, Commit: source.base, SettlementEventID: settled[source.id], Watermark: settled[source.id], BaseSHA: source.base}}, PolicyCommit: self.policy.Commit, PolicyDigest: self.policy.Digest}}}
 	}
 	var calls atomic.Int32
 	var first sync.WaitGroup
@@ -419,9 +432,12 @@ func TestDependencyStartLockOrderAndConcurrentCycle(t *testing.T) {
 		}()
 	}
 	for range 2 {
-		if err := <-errs; !errors.Is(err, ErrLandingDecisionStale) {
-			t.Fatal("cycle start admitted or deadlocked:", err)
+		if err := <-errs; !errors.Is(err, ErrLandingDecisionStale) || !strings.Contains(err.Error(), "dependency-unverified") {
+			t.Fatal("cycle start admitted, deadlocked or refused before its locks:", err)
 		}
+	}
+	if calls.Load() != 4 {
+		t.Fatal("both starts did not reach both locks", calls.Load())
 	}
 	s.beforeQueueLock = nil
 	for _, q := range []QueueID{x.id, y.id} {
@@ -477,7 +493,7 @@ func TestDependencyStartWithApprovalDecisionsAndPendingRecovery(t *testing.T) {
 			must(t, s.lockQueue(t.Context(), tx, q))
 			state, _, err := load(t.Context(), tx, q)
 			must(t, err)
-			_, err = DependencyStart{Binding: depBinding(t)}.validate(t.Context(), tx, q, dependencyLocks{}, state, c.Land, c.Start, true)
+			_, err = DependencyStart{Binding: depBinding(t)}.validate(t.Context(), tx, q, dependencyLockSet{}, state, c.Land, c.Start, true)
 			return err
 		}
 		if err := admit(); err == nil || !strings.Contains(err.Error(), "landed recovery required before admission") {

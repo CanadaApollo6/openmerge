@@ -496,7 +496,9 @@ func (s *Store) authorizeStart(ctx context.Context, tx pgx.Tx, execution emissio
 		}
 	}
 	if stored.Key == stored.Action.Key() && queue.CanStart(execution.cfg, state, stored.Action, event) {
-		return false, nil
+		if withheld, ok := dependencyWithheld(state, event); ok {
+			return false, insertWithheld(ctx, tx, claim.QueueID, withheld)
+		}
 	}
 	_, err = tx.Exec(ctx, `UPDATE actions SET status = 'cancelled', attempt_id = NULL,
 		lease_until = NULL, updated_at = $2 WHERE id = $1`, record.id, at)
