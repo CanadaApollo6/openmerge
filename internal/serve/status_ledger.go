@@ -70,7 +70,8 @@ func (s *Server) ledgerSummary(ctx context.Context, w *worker, pr int) (string, 
 			}
 		}
 		projection, _, _ := status.Project(journals[0], 0, 0, s.options.Sanitizer)
-		w.ledgerCache = &ledgerCache{watermark: projection.Watermark, projection: projection, journal: journals[0]}
+		// Cache identity uses the private DB cursor, never a redacted public marker.
+		w.ledgerCache = &ledgerCache{watermark: watermark, projection: projection, journal: journals[0]}
 	}
 	q := &w.ledgerCache.projection
 	q.Readiness = &status.Readiness{Ready: !w.managed || w.ready}

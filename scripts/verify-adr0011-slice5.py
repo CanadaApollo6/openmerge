@@ -61,6 +61,8 @@ MUTANTS = [
     ('empty-declaration-hold', 'internal/dependency/status.go',
      'if len(d.Event.Edges) == 0 && !d.Held && !d.Unknown {',
      'if false && len(d.Event.Edges) == 0 && !d.Held && !d.Unknown {', './internal/dependency'),
+    ('public-watermark-cache-key', 'internal/serve/status_ledger.go',
+     'watermark: watermark,', 'watermark: projection.Watermark,', './internal/serve'),
     ('downgrade-inventory-omission', 'internal/store/authority_downgrade.go',
      '"dependency_waits_withheld", "dependency_diagnostic_recorded",',
      '"dependency_waits_withheld",', './internal/store'),
