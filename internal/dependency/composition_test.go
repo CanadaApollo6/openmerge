@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+ "time"
+ "github.com/CanadaApollo6/openmerge/internal/queue"
 )
 
 func TestCompositionCompanionStrictCodecAndSemanticBasis(t *testing.T) {
@@ -49,6 +51,10 @@ func TestCompositionCompanionStrictCodecAndSemanticBasis(t *testing.T) {
 	if !refreshed.CompositionValid(c) {
 		t.Fatal("same evidence caused rebuild")
 	}
+ revised:=o
+ revised.ExpectedPrior=refreshed.lastID; revised.ReadSequence++; revised.SourceRevision.Revision++
+ if applyJournal(t,refreshed,revised).CompositionValid(c) { t.Fatal("different satisfying landing retained composition") }
+
 	o.ExpectedPrior = refreshed.lastID
 	o.ReadSequence++
 	o.Result = "waiting"
@@ -108,4 +114,28 @@ func TestCompositionMaximumBatchFitsEventCap(t *testing.T) {
 	if err != nil || len(raw) >= maxEventBytes {
 		t.Fatal("maximum composition exceeds event cap", len(raw), err)
 	}
+}
+
+func TestCompositionSnapshotRejectsForgedWrapperAndFutureCause(t *testing.T) {
+ f,s,_,d:=decisionFixture(t)
+ m,err:=s.CompositionMember(d.ChangeID,d.Revision,d.Head); if err!=nil { t.Fatal(err) }
+ c:=CompositionRecorded{Namespace:f.init.Namespace,BatchID:"b1",StartEventID:100,BaseSHA:d.TestedSHA,Members:[]CompositionMember{m}}
+ s,err=Apply(s,101,c); if err!=nil { t.Fatal(err) }
+ now:=time.Now()
+ q:=queue.State{BaseBranch:"main",BaseSHA:d.TestedSHA}
+ for _,event:=range []queue.Event{queue.PRObserved{PR:2,HeadSHA:m.Head,Eligible:true,Trusted:true},queue.EnqueueRequested{PR:2,At:now},queue.BatchStarted{BatchID:"b1",BaseSHA:d.TestedSHA,PRs:[]queue.BatchPR{{PR:2,HeadSHA:m.Head}},At:now}} { q=queue.Apply(q,event) }
+ raw,err:=EncodeSnapshot(q,s); if err!=nil { t.Fatal(err) }
+ if _,_,err:=DecodeSnapshot(raw,f.init); err!=nil { t.Fatal("valid composition snapshot",err) }
+ legacy,err:=queue.EncodeSnapshot(q); if err!=nil { t.Fatal(err) }
+ for name,mutate:=range map[string]func(*compositionSnapshot){
+  "legacy base":func(v *compositionSnapshot){ v.Base=legacy },
+  "future cause":func(v *compositionSnapshot){ v.Compositions[0].InvalidatedBy=v.LastID+1 },
+  "cause before composition":func(v *compositionSnapshot){ v.Compositions[0].InvalidatedBy=1 },
+  "wrong member":func(v *compositionSnapshot){ v.Compositions[0].Event.Members[0].Alias.Number++ },
+ } {
+  var v compositionSnapshot
+  if err:=json.Unmarshal(raw,&v); err!=nil { t.Fatal(err) }; mutate(&v)
+  bad,err:=json.Marshal(v); if err!=nil { t.Fatal(err) }
+  if _,_,err:=DecodeSnapshot(bad,f.init); err==nil { t.Fatal("accepted forged wrapper",name) }
+ }
 }

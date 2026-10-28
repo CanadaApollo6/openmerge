@@ -120,7 +120,7 @@ func (r *Reader) Apply(id uint64, raw []byte) (_ Event, applyErr error) {
 			}
 			for i, batch := range invalid.BatchIDs {
 				_, ref, ok := r.dependencies.Composition(batch)
-				if !ok || ref != invalid.CompositionIDs[i] {
+				if !ok || ref != invalid.CompositionIDs[i] || r.dependencies.CompositionCause(batch)!=invalid.CauseEventIDs[i] {
 					return Event{}, ErrReference
 				}
 			}
@@ -170,7 +170,8 @@ func (r *Reader) Apply(id uint64, raw []byte) (_ Event, applyErr error) {
 			next.Queue = next.Queue.WithDependencyInvalidation(b.ID)
 		}
 	}
-	next.dependencies = next.dependencies.RetainCompositions(batches)
+	for _,b:=range next.Queue.Batches() { if b.InvalidationReason=="dependency-changed" { next.dependencies=next.dependencies.LatchCompositionCause(b.ID) } }
+ next.dependencies = next.dependencies.RetainCompositions(batches)
 	next.composed = next.composed || e.Queue == nil
 	next.lastID = id
 	*r = next

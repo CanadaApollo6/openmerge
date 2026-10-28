@@ -89,12 +89,12 @@ func DecodeSnapshot(raw []byte, expected JournalInitialized) (queue.State, State
 		if err != nil {
 			return q, s, err
 		}
-		if v.LastID != s.lastID || v.Initialization != *s.initialization || len(v.Compositions) > 32 {
+		if s.initialization==nil || s.compositions!=nil || v.LastID != s.lastID || v.Initialization != *s.initialization || len(v.Compositions) > 32 {
 			return queue.State{}, State{}, ErrMalformed
 		}
 		s.compositions = map[string]compositionProjection{}
 		for i, c := range v.Compositions {
-			if c.Event.Validate() != nil || c.Event.Namespace != expected.Namespace || c.EventID == 0 || c.EventID > s.lastID || c.Event.StartEventID >= c.EventID || i > 0 && v.Compositions[i-1].EventID >= c.EventID {
+			if c.Event.Validate() != nil || c.Event.Namespace != expected.Namespace || c.EventID == 0 || c.EventID > s.lastID || c.InvalidatedBy!=0 && (c.InvalidatedBy<=c.EventID || c.InvalidatedBy>s.lastID) || c.Event.StartEventID >= c.EventID || i > 0 && v.Compositions[i-1].EventID >= c.EventID {
 				return queue.State{}, State{}, ErrMalformed
 			}
 			if _, exists := s.compositions[c.Event.BatchID]; exists {
@@ -109,7 +109,7 @@ func DecodeSnapshot(raw []byte, expected JournalInitialized) (queue.State, State
 					return queue.State{}, State{}, ErrStale
 				}
 			}
-			s.compositions[c.Event.BatchID] = compositionProjection{c.EventID, cloneComposition(c.Event)}
+			s.compositions[c.Event.BatchID] = compositionProjection{EventID:c.EventID,Event:cloneComposition(c.Event),InvalidatedBy:c.InvalidatedBy}
 		}
 		return q, s, nil
 	}
@@ -246,7 +246,7 @@ func EncodeSnapshot(q queue.State, s State) ([]byte, error) {
 	}
 	v := compositionSnapshot{CompositionSnapshotVersion, base, *s.initialization, s.lastID, []compositionProjection{}}
 	for _, c := range s.compositions {
-		v.Compositions = append(v.Compositions, compositionProjection{c.EventID, cloneComposition(c.Event)})
+		v.Compositions = append(v.Compositions, compositionProjection{EventID:c.EventID,Event:cloneComposition(c.Event),InvalidatedBy:c.InvalidatedBy})
 	}
 	slices.SortFunc(v.Compositions, func(a, b compositionProjection) int { return compareID(a.EventID, b.EventID) })
 	raw, err := json.Marshal(v)
