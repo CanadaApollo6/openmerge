@@ -24,8 +24,10 @@ GitLab and Forgejo. Executor results must preserve both contracts.
 engines and Postgres cells, a Cloudflare control plane, one US region initially,
 and Bun tooling. Running tests in an external sandbox must not run repository
 code inside an engine cell or move landing authority into the control plane.
-Its licensing question remains open. The owner's newer open-source description
-leans toward fully OSS; the final licensing decision belongs to the owner.
+The Go engine's permanent open-source decision is recorded below; control-plane
+and hosted-service licensing remain open. ADR 0012's historical licensing
+question is cross-referenced here rather than amended: the
+[ADR conventions](README.md) prohibit rewriting history.
 
 This proposal and its index entry are **docs only, Inert**. They authorize no
 runner switch, configuration change, App grant, deployment or activation. The
@@ -48,15 +50,20 @@ This is an engineering priority order, not measured savings for every workload.
 | Cheaper compute | Forge-reported checks already allow external runners | Provider setup guidance, comparable measurements and, later, an opt-in API executor |
 
 Queue-only full CI needs distinct stable names, for example `pr-light` and
-`queue-full`. PR admission may require the former; queue landing must require
-the latter on the exact tested commit, with every required matrix member
-accounted for. Document each workflow/job producer, trigger and policy name.
-Do not rename a light job to satisfy a full-suite requirement, count a skipped
-suite as success, or leave a PR-only required check waiting forever on a queue
-ref. In forge authority mode, reconcile required-check protection with these
-triggers; in OpenMerge authority mode, map requirements into `merge_when` under
-ADR 0008's protection import rules. Producer ambiguity remains a blocker, not a
-reason to relax checks. This ADR defines the intended contract, not new config
+`queue-full`. In forge-authority mode the ruleset requires **only queue-tested
+check names**, such as `queue-full`, with every required matrix member accounted
+for on the exact tested commit. The PR never receives `queue-full`, so ordinary
+manual merges are blocked and landing proceeds only through the tested queue
+commit. `pr-light` must never be a required ruleset check: composed merge/squash
+queue commits do not run it. Keep it advisory on PRs or require it in PR admission
+policy, not in the ruleset or landing `merge_when`.
+
+In OpenMerge-authority mode, map full-suite requirements into `merge_when`
+under ADR 0008's protection import rules. The [operating guide](../operating.md)
+binds those checks to queue refs through the check suite's exact `head_branch`.
+Document each workflow/job producer, trigger and policy name. Do not rename a
+light job to satisfy a full-suite requirement or count a skipped suite as success.
+Producer ambiguity blocks landing. This is the intended contract, not new config
 keys accepted by today's binary.
 
 ### Separate three execution paths
@@ -111,8 +118,8 @@ No provider-specific types enter the planner or forge driver contracts.
 Recommend **App-published forge checks plus signed journal attestations**, with
 an explicit owner opt-in. Path (c) stays disabled until the owner accepts this
 model and its implementation passes adversarial qualification. It is a proposed
-extension to ADR 0008's “CI stays where it is” boundary, not a claim that the
-current engine already supports self-attested CI.
+extension to ADR 0008's separation of CI execution from queue policy authority,
+not a claim that the current engine already supports self-attested CI.
 
 On a forge with native checks, (c) must publish its result through the
 installation's App and then consume the fresh forge observation for the exact
@@ -188,7 +195,10 @@ Its [runner docs](https://docs.blacksmith.sh/blacksmith-runners/overview.md)
 list `us-east`, `us-west`, `eu-west` and `eu-central`.
 Its [App permissions](https://docs.blacksmith.sh/blacksmith-administration/github-app.md)
 describe GitHub organization self-hosted runner provisioning/registration.
-These facts do not establish personal-account eligibility.
+Eligibility depends on organization versus personal ownership.
+`gh api users/CanadaApollo6 -q .type` returned `User` on 2026-10-28: this is a
+personal account. These facts do not establish personal-account eligibility;
+qualify support before assigning the Blacksmith arm.
 
 Boat's [pricing](https://docs.boat.dev/pricing.md) lists $20/$100/$500/$2000
 monthly plans with the corresponding dollars included as VM time, rather than
@@ -228,6 +238,9 @@ At M=3 that consumes the $20 plan's 12-start minute allowance. At M=4 it needs
 Without bursting, pace admission across windows; 60/hour allows only three
 complete 16-start waves (48 starts), and 200/day only twelve (192), ignoring all
 other usage. Matrix concurrency limits help but do not remove hour/day budgets.
+At steady state, two-minute CI at depth four with M=4 needs about **8 starts/minute**
+(4 × 4 / 2), plus rebuilds: close to the $20 plan's 12/minute limit and already
+above its sustained 60/hour allowance.
 Use an installation-wide start budget, backpressure and an explicit burst-spend
 cap; more speculation can otherwise increase both latency and cost.
 
@@ -237,11 +250,13 @@ Illustrative arithmetic, not a benchmark: a two-minute Boat default job costs
 storage, plan utilization and any remaining Actions orchestration cost in cost
 per landed PR. Compare matched resources and actual durations, not rate ratios.
 
-Boat's EU machines create a cross-region path from ADR 0012's US cells. Measure
-checkout, hydration, artifact transfer and cancellation round trips; do not
-promise a latency improvement. Require owner consent to code/secrets leaving
-the engine region and qualify snapshot storage location and deletion. No
-US-only or EU-only residency promise follows from this proposal.
+Boat runs in the EU only today (Germany, Finland, France), per its
+[compliance docs](https://docs.boat.dev/compliance.md). The added transatlantic
+latency is negligible next to CI duration except for very large repos and
+caches; it matters mainly for teams with US data-residency requirements, which
+can choose another provider or exclude Boat in the broker. Measure checkout,
+hydration and artifact transfer in the experiment. Snapshot copies may leave
+the EU; qualify storage location and deletion before any residency commitment.
 
 Keep provider credentials, snapshot formats and pricing outside the planner;
 retain (a) and allow migration to another executor without rewriting policy.
@@ -262,6 +277,8 @@ comparability. Do not silently omit the arm or change repository visibility.
 
 After period B ends **and drains**, pre-register a three-arm comparison on
 OpenMerge's own CI: GitHub-hosted, Boat through `runs-on`, and Blacksmith.
+Commit a protocol file at a recorded Git SHA before arm assignment, with owner
+sign-off on the metrics and thresholds in that file.
 Resolve public/personal-account eligibility before assigning work. Fix the
 suite, resource class, matrix, depth/batching policy, retry policy, time windows,
 sample size, assignment method and stopping rules before seeing outcomes.
@@ -281,6 +298,9 @@ assignment, preserving all failed and cancelled attempts. Define metrics first:
 Pre-register acceptable latency/flake regressions and required cost improvement
 with the owner; do not invent thresholds after the comparison. No runner changes
 before period B, because they would contaminate ADR 0009's latency comparison.
+Queue-only full CI on OpenMerge itself would also change its `merge_when`: today
+`check` and `sim-exits` run on both PRs and queue pushes. That change, too, waits
+for the recorded period-B drain.
 
 ### Staged slices and deployment classes
 
@@ -296,6 +316,7 @@ Every implementation slice waits for the period-B drain and earlier ADR gates.
 | 3 | Boat API executor behind the owner-approved trust decision; exact-SHA/matrix/tenant validation, App check publication, signed evidence/export, budget and secret isolation qualification | Hold |
 | 4 | Snapshot cache per trusted base SHA and environment digests; prove tenant isolation, poison rejection, eviction, misses and truthful billing | Hold |
 | 5 | Cancel-by-delete using durable recorded targets; prove idempotency, restart recovery, confirmed deletion, late-result rejection and no deletion of landing attempts | Hold |
+| 6 | OpenMerge runner broker after the executor interface (slice 2) and experiment data; qualify provider/size selection, routing, fallback, budget, cache and trust constraints | Hold |
 
 Cancel-by-delete extends the executor capability, not the meaning of a forge
 cancel POST. Reuse ADR 0011 slice 4b's invalidated composition/suffix identities
@@ -305,27 +326,77 @@ never turn cleanup failure into permission to land. The Boat slice requires
 bounded sandbox lifetime/cleanup before activation; slice 5 adds prompt
 invalidation cancellation, not the first protection against leaked machines.
 
-### Open questions for the owner
+### Owner decisions (2026-10-28)
 
-1. **Which trust model for (c)?** Recommend App-published checks plus signed
-   attestations and independent audit anchors, explicitly accepting that
-   engine/provider compromise can falsify execution. Keep (c) off until that
-   acceptance and qualification; retain independent forge CI as the default.
-2. **Should hosted OpenMerge bundle or resell compute?** Recommend bring-your-own
-   provider account initially, with transparent cost reporting and spending caps.
-   Defer resale/bundling until measured bills, support obligations and pricing
-   are approved; no hidden subsidy or compute commitment in the alpha.
-3. **Default executor for new installs?** Recommend (a), existing forge CI, with
-   opt-in (b) guidance. Do not silently switch providers or require an
-   organization account for individual private repositories. API execution is
-   a later explicit opt-in, including on forges without native CI.
-4. **Accept EU-only Boat compute alongside US hosting?** Recommend per-installation
-   opt-in after latency and data-location review, including non-EU snapshot
-   copies; otherwise retain the current executor. Do not make Boat the hosted
-   default or promise a residency boundary the provider does not supply.
-5. **Licensing direction?** Recommend fully OSS in line with the owner's updated
-   product description. Leave license selection and any change to ADR 0012's
-   unresolved licensing position to a separate explicit owner decision.
+Riel St. Amand (`CanadaApollo6`) recorded these decisions on 2026-10-28.
+The ADR remains **Proposed** because the trust model remains unresolved.
+
+1. **Licensing:** “The engine is fully open source and will stay that way.”
+   This is a permanent decision for the Go engine. Control-plane and
+   hosted-service licensing were not stated and remain open. This settles the
+   engine portion of [ADR 0012's licensing question](0012-hosted-service-architecture.md#owner-decisions-2026-10-27)
+   without rewriting that accepted record.
+2. **Compute resale:** hosted OpenMerge **will resell compute**; the model is
+   still to be decided using the experiment evidence below. Bring-your-own
+   provider accounts remain supported for self-hosted users. This direction
+   does not authorize an immediate commercial rollout.
+3. **Default runner:** keep the repository's existing CI. Eventually build an
+   OpenMerge runner that optimizes the combination of speed and cost, as below.
+4. **Boat regions:** record EU-only compute as the provider note above, rather
+   than an open owner question; installations can choose another provider.
+
+### Hosted compute resale model
+
+| Candidate | Tradeoff |
+|---|---|
+| Pass-through at cost plus a platform fee | Transparent compute cost and predictable platform revenue; requires cost allocation and customers may dislike a separate fee |
+| Bundled minutes per plan tier | Simple budgeting; unused allowances and heavy users create utilization and overage risk |
+| Per-minute markup | Simple metering; machine sizes and provider fees complicate rates, and margins are tiny at $0.0006/min |
+| Savings-share against GitHub-hosted | Aligns revenue with measured savings; requires an agreed baseline, matched workloads and auditable savings attribution |
+
+Meter and bill through the ADR 0012 control plane, preserving engine landing
+authority. Provider start fees can overwhelm VM-time margin. Crypto mining on
+resold compute, stolen payment methods and other abuse require tenant spend,
+concurrency, start-rate and runtime limits, fraud detection and suspension.
+
+Terms checked on 2026-10-28 constrain the offering:
+[Boat TOS-6/8](https://boat.dev/terms) allows charging for a product built on
+sandboxes, while plain compute resale needs written approval and account/key
+sharing is restricted. Confirm OpenMerge's chosen offering fits that permission.
+[Blacksmith sections 2/3](https://docs.blacksmith.sh/about/terms-of-service)
+require org integration and restricts selling or granting third-party service
+access; obtain a suitable agreement before resale. Neither integration support
+nor a low list price grants blanket resale permission. Recheck terms at rollout.
+
+Choose the model using measured billed and marginal cost per landed PR,
+matched GitHub-hosted baseline savings, cold/warm durations, queue latency,
+flake/retry/cancellation rates, start-fee exposure, plan utilization, storage,
+egress and orchestration charges. Also measure tenant usage distribution,
+support/payment costs and abuse losses; test fee/allowance sensitivity and
+customer willingness to pay before approving prices or commitments.
+
+### OpenMerge runner direction
+
+Build an executor broker that chooses provider and machine size per job using
+observed duration, queue latency targets, cost, flake rate, start-rate budgets
+and cache warmth. Candidates are Boat, Blacksmith, GitHub-hosted and self-hosted;
+apply eligibility, residency and tenant provider exclusions before optimization.
+Retain a qualified fallback and record the selection and measured outcome.
+
+For (b), the broker supplies qualified `runs-on` routing within the workflow
+contract; forge-reported checks remain the trust root. For (c), it selects an
+API executor through the forge-neutral interface, preserving exact-job identity,
+owner-approved commands, result validation and the explicitly accepted trust
+model. Routing never grants secrets or landing authority and cannot turn an
+untrusted provider result into an accepted one. This later Hold slice depends
+on the executor interface and experiment data; it does not change today's default.
+
+### Open owner question: trust model
+
+**Which trust model for (c)?** Recommend App-published checks plus signed
+attestations and independent audit anchors, explicitly accepting that
+engine/provider compromise can falsify execution. Keep (c) off until that
+acceptance and qualification; retain independent forge CI as the default.
 
 ## Consequences
 
@@ -333,7 +404,7 @@ The first savings improvements preserve forge CI and require no executor
 implementation. Later API execution can be forge-neutral, but expands the
 trusted computing base and adds signing, audit, tenant isolation, start-budget
 and cleanup obligations. A low per-minute price is not a savings guarantee.
-This ADR neither accepts its open questions nor changes any live policy.
+The trust question remains open; these owner decisions change no live policy.
 
 ## Alternatives considered
 
@@ -348,6 +419,6 @@ This ADR neither accepts its open questions nor changes any live policy.
 - **Limit API execution to forges without native CI.** Reduces the initial
   migration surface but excludes owners who deliberately accept sandbox CI on
   GitHub. Keep it available as a stricter owner choice, not the general design.
-- **Make Boat the default or resell compute immediately.** Eligibility,
-  start-rate economics, data location and trust are unresolved. Measure and
-  qualify before making a product-wide commitment.
+- **Make Boat the default or launch resale immediately.** Keep existing CI as
+  default. Hosted resale is decided in principle, but model selection and rollout
+  require measured economics, provider permission and qualification.
