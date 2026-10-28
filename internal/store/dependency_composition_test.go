@@ -87,12 +87,12 @@ func assertCompositionReplay(t *testing.T, f *depFixture) {
 		return r
 	}
 	full := fresh()
- now:=time.Now()
- plans:=[][]queue.Action{}
+	now := time.Now()
+	plans := [][]queue.Action{}
 	for _, r := range records {
 		_, err := full.Apply(r.id, r.raw)
 		must(t, err)
-  plans=append(plans,queue.Plan(depCfg,full.Queue,now))
+		plans = append(plans, queue.Plan(depCfg, full.Queue, now))
 	}
 	want, err := full.CursorSnapshot()
 	must(t, err)
@@ -107,7 +107,9 @@ func assertCompositionReplay(t *testing.T, f *depFixture) {
 		for offset, tail := range records[cut+1:] {
 			_, err := resumed.Apply(tail.id, tail.raw)
 			must(t, err)
-   if !reflect.DeepEqual(queue.Plan(depCfg,resumed.Queue,now),plans[cut+offset+1]) { t.Fatalf("next actions differ at cut %d revision %d",cut,tail.id) }
+			if !reflect.DeepEqual(queue.Plan(depCfg, resumed.Queue, now), plans[cut+offset+1]) {
+				t.Fatalf("next actions differ at cut %d revision %d", cut, tail.id)
+			}
 		}
 		got, err := resumed.CursorSnapshot()
 		must(t, err)
