@@ -3,6 +3,7 @@ package dependency
 import (
 	"encoding/json"
 	"errors"
+ "fmt"
 	"reflect"
 	"testing"
 )
@@ -13,7 +14,7 @@ func TestCompositionCompanionStrictCodecAndSemanticBasis(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := CompositionRecorded{Namespace: f.init.Namespace, BatchID: "b1", StartEventID: 1, BaseSHA: d.TestedSHA, Members: []CompositionMember{m}}
+	c := CompositionRecorded{Namespace: f.init.Namespace, BatchID: "b1", StartEventID: 100, BaseSHA: d.TestedSHA, Members: []CompositionMember{m}}
 	kind, raw, err := EncodeEvent(c)
 	if err != nil || kind != "dependency_composition_recorded" {
 		t.Fatal(kind, err)
@@ -33,7 +34,8 @@ func TestCompositionCompanionStrictCodecAndSemanticBasis(t *testing.T) {
 			}
 		}
 	}
-	composed := applyJournal(t, s, c)
+	composed,err := Apply(s,101,c)
+ if err!=nil { t.Fatal(err) }
 	if !composed.CompositionValid(c) {
 		t.Fatal("fresh basis invalid")
 	}
@@ -68,8 +70,8 @@ func TestCompositionCompanionStrictCodecAndSemanticBasis(t *testing.T) {
 		t.Fatal("stale audit input admitted", err)
 	}
 	// Accessors and event inputs cannot mutate the active projection.
-	copy, _, _ := composed.Composition("b1")
-	copy.Members[0].Admission.ObservationIDs[0]++
+	detached, _, _ := composed.Composition("b1")
+	detached.Members[0].Admission.ObservationIDs[0]++
 	actual, _, _ := composed.Composition("b1")
 	if !reflect.DeepEqual(actual, c) {
 		t.Fatal("accessor alias")
@@ -81,4 +83,14 @@ func TestCompositionCompanionStrictCodecAndSemanticBasis(t *testing.T) {
 	if _, _, ok := composed.Composition("b1"); !ok {
 		t.Fatal("retirement mutated prior state")
 	}
+}
+
+func TestCompositionMaximumBatchFitsEventCap(t *testing.T) {
+ f,s,_,d:=decisionFixture(t)
+ m,err:=s.CompositionMember(d.ChangeID,d.Revision,d.Head); if err!=nil { t.Fatal(err) }
+ m.Admission.ObservationIDs=[]uint64{}
+ for id:=uint64(1);id<=MaxDirectEdges;id++ { m.Admission.ObservationIDs=append(m.Admission.ObservationIDs,id) }
+ c:=CompositionRecorded{Namespace:f.init.Namespace,BatchID:"maximum",StartEventID:100,BaseSHA:d.TestedSHA,Members:[]CompositionMember{}}
+ for i:=range 128 { member:=m; member.ChangeID=fmt.Sprintf("chg1_%064x",i+1); member.Alias.Number=uint64(i+1); c.Members=append(c.Members,member) }
+ _,raw,err:=EncodeEvent(c); if err!=nil || len(raw)>=maxEventBytes { t.Fatal("maximum composition exceeds event cap",len(raw),err) }
 }

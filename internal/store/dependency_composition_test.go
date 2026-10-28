@@ -451,3 +451,25 @@ func TestDependencyCompositionOutsideAdmissionAndWrongReferencesRefused(t *testi
 		}
 	}
 }
+
+func TestDependencyEligibleClockHistoryGrowth(t *testing.T) {
+ f:=newDepFixture(t); f.observe(t,"landed",f.landedA)
+ state,_,err:=f.s.Load(t.Context(),f.c.id); must(t,err)
+ key,err:=storedKey(t.Context(),f.s.pool,f.c.id); must(t,err)
+ measure:=func(label string) {
+  started:=time.Now()
+  clocks,err:=dependencyEligibleClocks(t.Context(),f.s.pool,f.c.id,state,key); must(t,err)
+  if clocks[f.c.pr].IsZero() { t.Fatal("lost eligible clock") }
+  t.Logf("%s history replay: %s",label,time.Since(started))
+ }
+ measure("initial")
+ const refreshes=256
+ _,err=f.s.AppendSide(t.Context(),f.c.id,SideAppend{Count:refreshes,DedupeKey:"clock-growth",Binding:f.b,Build:func(ids []uint64)([]journalreader.Event,error){
+  out:=make([]journalreader.Event,refreshes)
+  o:=f.observed
+  prior:=f.observedID
+  for i,id:=range ids { o.ExpectedPrior=prior; o.ReadSequence++; out[i]=journalreader.Event{Dependency:o}; prior=id }
+  return out,nil
+ }}); must(t,err)
+ measure("256 unchanged refreshes")
+}

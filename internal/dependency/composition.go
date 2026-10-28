@@ -2,6 +2,7 @@ package dependency
 
 import (
 	"reflect"
+ "encoding/json"
 	"slices"
 )
 
@@ -14,7 +15,7 @@ type CompositionMember struct {
 	Revision     uint64         `json:"revision"`
 	Head         string         `json:"head"`
 	Admission    AdmissionBasis `json:"admission"`
-	Observations []Observed     `json:"observations"`
+	BasisDigest string `json:"basis_digest"`
 }
 
 // CompositionRecorded binds the exact durable admission, before its builder
@@ -28,21 +29,19 @@ type CompositionRecorded struct {
 }
 
 func (CompositionRecorded) dependencyEvent() {}
+// Validate checks framing and requires every consumed input to precede build admission.
 func (e CompositionRecorded) Validate() error {
 	if !validDigestID(e.Namespace, "omj1_") || !cleanText(e.BatchID) || e.StartEventID == 0 || !objectID(e.BaseSHA) || len(e.Members) == 0 || len(e.Members) > 128 {
 		return ErrMalformed
 	}
 	seen := map[string]bool{}
 	for _, m := range e.Members {
-		if !m.Alias.valid() || !validDigestID(m.ChangeID, "chg1_") || seen[m.ChangeID] || m.Revision == 0 || !objectID(m.Head) || !m.Admission.valid() || m.Observations == nil || len(m.Observations) != len(m.Admission.ObservationIDs) {
+		if !m.Alias.valid() || !validDigestID(m.ChangeID, "chg1_") || seen[m.ChangeID] || m.Revision == 0 || !objectID(m.Head) || !m.Admission.valid() || !hexDigest(m.BasisDigest) {
 			return ErrMalformed
 		}
+  if m.Admission.Declaration.EventID>=e.StartEventID || m.Admission.PolicyEventID>=e.StartEventID || m.Admission.AcknowledgementEventID>=e.StartEventID { return ErrMalformed }
+  for _,id:=range m.Admission.ObservationIDs { if id>=e.StartEventID { return ErrMalformed } }
 		seen[m.ChangeID] = true
-		for _, o := range m.Observations {
-			if o.Validate() != nil || o.Result != "landed" || o.Alias != m.Alias || o.ChangeID != m.ChangeID || o.Revision != m.Revision || o.Namespace != e.Namespace || o.Declaration != m.Admission.Declaration {
-				return ErrMalformed
-			}
-		}
 	}
 	return nil
 }
@@ -57,7 +56,6 @@ func cloneComposition(e CompositionRecorded) CompositionRecorded {
 	for i := range e.Members {
 		m := &e.Members[i]
 		m.Admission.ObservationIDs = slices.Clone(m.Admission.ObservationIDs)
-		m.Observations = slices.Clone(m.Observations)
 	}
 	return e
 }
@@ -68,13 +66,18 @@ func (s State) CompositionMember(change string, revision uint64, head string) (C
 	if a.Code != "" {
 		return CompositionMember{}, ErrNotAdmitted
 	}
-	m := CompositionMember{a.Alias, change, revision, head, a.Basis, []Observed{}}
+	m := CompositionMember{Alias:a.Alias,ChangeID:change,Revision:revision,Head:head,Admission:a.Basis}
+ type source struct { Reference string `json:"reference"`; Revision Baseline `json:"revision"` }
+ sources:=[]source{}
 	edges, _, _ := s.Edges(change, revision)
 	for _, edge := range edges {
 		o, _, _ := s.Observation(Observed{Alias: a.Alias, ChangeID: change, Revision: revision, Source: edge.Reference})
-		m.Observations = append(m.Observations, o)
+		sources=append(sources,source{o.Source,o.SourceRevision})
 	}
-	return m, nil
+ raw,err:=json.Marshal(sources)
+ if err!=nil { return CompositionMember{},err }
+ m.BasisDigest=digest("openmerge.dependency.composition-sources.v1",string(raw))
+ return m,nil
 }
 
 // Composition returns a detached active companion and its immutable ID.
@@ -96,15 +99,10 @@ func (s State) CompositionValid(e CompositionRecorded) bool {
 		// Policy identity is semantic, while declarations/acknowledgements are acts.
 		a.PolicyEventID, b.PolicyEventID = 0, 0
 		a.ObservationIDs, b.ObservationIDs = nil, nil
-		if !reflect.DeepEqual(a, b) || len(current.Observations) != len(m.Observations) {
+		if !reflect.DeepEqual(a, b) || current.BasisDigest!=m.BasisDigest {
 			return false
 		}
-		for i, o := range current.Observations {
-			old := m.Observations[i]
-			if o.Source != old.Source || o.SourceRevision != old.SourceRevision || o.Result != old.Result {
-				return false
-			}
-		}
+
 	}
 	return true
 }

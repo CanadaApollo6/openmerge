@@ -64,8 +64,8 @@ func WithDependencyActivation(ctx context.Context, q QueueID, binding dependency
 }
 
 // withDependencyWaits derives the planner overlay from recorded facts in the
-// same replay, plus accumulated eligible intervals from recorded history. A wrong or absent binding fails the load closed; nothing is
-// inferred.
+// same replay, plus accumulated eligible intervals from recorded history.
+// A wrong or absent binding fails the load closed; nothing is inferred.
 func withDependencyWaits(ctx context.Context, db journalQuery, q QueueID, r journalreader.Reader) (queue.State, error) {
 	a, ok := ctx.Value(dependencyActivationKey{}).(dependencyActivation)
 	if !ok || a.queue != q {
@@ -153,17 +153,7 @@ func dependencyEligibleClocks(ctx context.Context, db journalQuery, q QueueID, s
 		raw []byte
 		at  time.Time
 	}
-	records, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (record, error) {
-		var r record
-		err := row.Scan(&r.id, &r.raw, &r.at)
-		return r, err
-	})
-	if err != nil {
-		return nil, err
-	}
-	if len(records) > historyLimit {
-		return nil, dependency.ErrLimit
-	}
+	defer rows.Close()
 	type clock struct {
 		start    time.Time
 		elapsed  time.Duration
@@ -178,7 +168,14 @@ func dependencyEligibleClocks(ctx context.Context, db journalQuery, q QueueID, s
 		}
 	}
 	var deps dependency.State
-	for _, r := range records {
+ count,bytes:=0,0
+ var lastAt time.Time
+ for rows.Next() {
+  var r record
+  if err:=rows.Scan(&r.id,&r.raw,&r.at); err!=nil { return nil,err }
+  count++; bytes+=len(r.raw)
+  if count>historyLimit || bytes>32<<20 { return nil,dependency.ErrLimit }
+  if r.at.Before(lastAt) { r.at=lastAt }; lastAt=r.at
 		event, err := dependency.DecodeEvent(r.raw)
 		if err != nil {
 			return nil, err
@@ -207,7 +204,8 @@ func dependencyEligibleClocks(ctx context.Context, db journalQuery, q QueueID, s
 			clocks[entry.PR] = c
 		}
 	}
-	out := map[int]time.Time{}
+	if err:=rows.Err(); err!=nil { return nil,err }
+ out := map[int]time.Time{}
 	for pr, c := range clocks {
 		if !c.start.IsZero() {
 			out[pr] = c.start.Add(-c.elapsed)

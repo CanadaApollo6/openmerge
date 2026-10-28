@@ -238,6 +238,7 @@ type compositionSnapshot struct {
 	Compositions   []compositionProjection `json:"Compositions"`
 }
 
+// EncodeSnapshot retains legacy/v8 bytes until a composition requires the v10 wrapper.
 func EncodeSnapshot(q queue.State, s State) ([]byte, error) {
 	base, err := encodeSnapshotBase(q, s)
 	if err != nil || s.compositions == nil {
