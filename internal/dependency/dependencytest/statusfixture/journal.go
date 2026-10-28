@@ -1,3 +1,4 @@
+// Package statusfixture supplies synthetic journals for presentation tests.
 package statusfixture
 
 import (

@@ -5,13 +5,14 @@ import (
 	"slices"
 )
 
-// StatusView contains only audience-safe presentation, never planner authority.
-// Redacted is adapter metadata and must not be serialized as source evidence.
+// StatusDiagnostic is a typed source explanation for an authorized reader.
 type StatusDiagnostic struct {
 	Code   string
 	Source string
 }
 
+// StatusView contains only audience-safe presentation, never planner authority.
+// Redacted is adapter metadata and must not be serialized as source evidence.
 type StatusView struct {
 	Diagnostics []StatusDiagnostic
 	Text        string

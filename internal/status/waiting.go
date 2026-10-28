@@ -26,13 +26,14 @@ const (
 	WaitingLanding      WaitingCode = "landing"
 )
 
-// WaitingReason is derived solely from recorded projections and runtime gates.
-// Details and URL remain absent when the recorded evidence cannot identify them.
+// DependencyDiagnostic identifies a source condition in an authorized view.
 type DependencyDiagnostic struct {
 	Code   string `json:"code"`
 	Source string `json:"source"`
 }
 
+// WaitingReason is derived solely from recorded projections and runtime gates.
+// Details and URL remain absent when the recorded evidence cannot identify them.
 type WaitingReason struct {
 	Diagnostics []DependencyDiagnostic `json:"diagnostics,omitempty"`
 	Code        WaitingCode            `json:"code"`
