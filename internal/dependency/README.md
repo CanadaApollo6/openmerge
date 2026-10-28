@@ -591,16 +591,16 @@ literal nil provenance/dependency evidence. Existing goldens are untouched.
   because the fold admits no fresh batch while a pending group exists. Replay
   folds the record without the overlay; it is a no-op unless every member is
   still pending at that head, and unactivated queues never emit it.
-- **Wait clocks.** Batch `max_wait` is computed only from eligible candidates;
-  a change's clock starts at `max(EnqueuedAt, EligibleAt)`. `EligibleAt` is the
-  latest start of the unchanged run of each consumed row: a landed observation
-  re-recorded for the same declaration and source, or a policy re-applied with
-  the same digest, keeps its predecessor's `recorded_at` (one recursive
-  primary-key walk, stopping at the oldest admitted enqueue time). Only a
-  waiting-to-eligible transition restarts the clock; declarations are never
-  re-recorded unchanged. There
-  is no conflict-grace clock in the codebase yet; 4b must extend `EligibleAt` to
-  accumulate eligible time across a rewind-induced wait.
+- **Wait clocks.** Batch `max_wait` is computed only from eligible candidates.
+  Slice 4b-1 replaces the 4a restart approximation with accumulated eligible
+  intervals. `EligibleAt` is the current eligible interval's start minus earlier
+  eligible duration since enqueue. Rewinds suspend the clock; recovery resumes
+  its remaining budget. Equivalent refreshes do not change it. Clock history is
+  streamed only for activated queues, bounded to 32,768 eligibility records and
+  32 MiB, and fails closed at either bound. Planning, consequential admission and
+  emission prepare clocks before advisory locks; the locked load compares side
+  position and exact entry identities. Landing transactions skip formation clocks.
+  There is no conflict-grace clock in the codebase yet.
 - **Decision companion.** `dependency_decision_recorded` is a new wire-v1 kind,
   one per batch member so each stays far below the 1 MiB event cap with 32 edges.
   It binds namespace, batch/attempt, tested and landed SHAs, the exact
@@ -648,16 +648,10 @@ ADR ambiguities resolved here:
   The shared reader binds each companion the same way: alias number equal to the
   batch member's PR, and `ChangeID` equal to the stored key's derivation (the
   store installs a lazy deriver; without one, companions fail closed).
-- Composition and invalidation companions (`dependency_composition_recorded`,
-  `dependency_compositions_invalidated`) belong with 4b's invalidation: in 4a a
-  refused start keeps B un-started (fail closed) until the inputs recover.
+- Composition and invalidation companions were deferred by 4a and are delivered
+  in 4b-1 below. Acknowledgement now requires a fresh composition after an edit.
 
-Remaining 4a-2 fixtures: declaration holds with writer-author/editor exclusion,
-single-maintainer self-acknowledgement and policy-change approval, head-only
-opt-in refusal, multi-writer self-acknowledgement and landing-start opt-in
-revocation, unresolved attribution blocking both paths, tightening without
-acknowledgement, and held-request auto-admission and dequeue/re-request preserving
-holds, all exercised through this writer. Production acquisition (ObserveEdge,
+The 4a-2 hold and acknowledgement fixtures shipped in #197. Production acquisition (ObserveEdge,
 source journal reads and ancestry) is wired in slice 6. The fence-bound
 **BLOCKING** item above still applies to every high-volume activation.
 
@@ -678,3 +672,54 @@ Proofs: `TestAdmissionFromRecordedFactsOnly`, `TestDecisionCompanionWireAndFold`
 `TestDependencyStartLockOrderAndConcurrentCycle`,
 `TestDependencyStartWithApprovalDecisionsAndPendingRecovery`, and serve
 `TestDependencyWorkerGateStartAndRecoveryBeforeAdmission`.
+
+
+## ADR 0011 slice 4b-1 — composition invalidation (Hold)
+
+Build admission atomically appends `dependency_composition_recorded` beside the
+unchanged `BatchStarted`/`ChainedBatchStarted`. It pins the exact admission row,
+base, ordered members, declaration and policy digests, acknowledgement and original
+observation IDs, plus a versioned digest of the satisfying source revisions.
+The store refuses a landing without a current companion. `AppendSide` cannot
+append a composition outside its build-start transaction. The maximum 128-member,
+32-edge framing fits the existing event cap.
+
+The composed reader latches the first invalidating side fact and marks affected
+unstarted batches and their existing ADR 0009 suffix. Later success cannot revive
+that composition. An activated discard emits the NEW queue kind
+`dependency_compositions_invalidated`, pinning exact batch IDs, composition IDs
+and first-cause event IDs. Both raw queue folding and composed store replay accept
+the emitted discard. Entries keep their admission order. A durable landing always
+settles through its existing fence. Existing depth/capability cancellation rules
+are reused; their full dependency-specific matrix is reserved for 4b-2.
+
+Equivalent policy/observation refreshes and source-base advances that retain the
+same satisfying landing do not rebuild. A source rewind removing that landing,
+lost consent, or a declaration/policy change retires old work. Acknowledgement
+clears a declaration hold but cannot reauthorize pre-edit CI: the 4a hold fixtures
+now explicitly discard and rebuild before a successful post-edit start.
+
+Derived composition state uses dependency base v10 inside the existing v9 cursor.
+Readers retain v8 and legacy support; queues without composition history keep
+those exact encodings. Retirement removes active projections, never journal
+history, and cannot downgrade the format. Snapshot/tail tests cover every cut,
+first-cause latching and forged wrappers. Both new kinds are inventoried in the
+rollback gate and tested with real stored rows. Public dependency configuration
+remains rejected, and the private seam is still the only activation path.
+
+`RebuildReverseScope`/`Cascade` and `Store.DependencyCascade` rebuild bounded reverse
+wakes from an explicit enrolled queue set at a consistent read boundary. Wakes
+schedule direct-edge reconciliation; they do not grant satisfaction or invalidate
+through a still-confirmed landing. Only command-admitted consumers are returned.
+Polling repairs missed wakes. Forge acquisition and runtime wake dispatch remain
+slice 6 wiring, as in slices 3 and 4a.
+
+**Scope split:** 4b-2 still owns the complete suffix-order/restart/late-result and
+both-capability acceptance matrix, plus unlanded-push explicit-pin/revision-less
+semantics. The basic suffix and snapshot tests here protect the 4b-1 implementation;
+they do not claim the complete 4b exit matrix. High-volume activation remains
+blocked on the existing lifetime/fence policy and a scalable clock-history strategy;
+this slice does not silently remove the new clock acquisition bounds.
+
+See [4b-1 evidence](../../docs/research/adr-0011-4b1-evidence.md) for the item/test
+map, mutation results, timing samples and ADR interpretations.
