@@ -128,10 +128,10 @@ func TestCompositionSnapshotRejectsForgedWrapperAndFutureCause(t *testing.T) {
 	}
 	c := CompositionRecorded{Namespace: f.init.Namespace, BatchID: "b1", StartEventID: 100, BaseSHA: d.TestedSHA, Members: []CompositionMember{m}}
 	s, err = Apply(s, 101, c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now()
+ if err!=nil {t.Fatal(err)}
+ p:=f.policy(false); p.PriorEventID=2
+ s,err=Apply(s,102,p); if err!=nil {t.Fatal(err)}
+ now := time.Now()
 	q := queue.State{BaseBranch: "main", BaseSHA: d.TestedSHA}
 	for _, event := range []queue.Event{queue.PRObserved{PR: 2, HeadSHA: m.Head, Eligible: true, Trusted: true}, queue.EnqueueRequested{PR: 2, At: now}, queue.BatchStarted{BatchID: "b1", BaseSHA: d.TestedSHA, PRs: []queue.BatchPR{{PR: 2, HeadSHA: m.Head}}, At: now}} {
 		q = queue.Apply(q, event)
