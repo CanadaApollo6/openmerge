@@ -23,10 +23,10 @@ type dependencyActivationKey struct{}
 type dependencyLandingClockKey struct{}
 type dependencyClockPreparationKey struct{}
 type dependencyClockPreparation struct {
- queue QueueID
- through uint64
- entries []queue.Entry
- clocks map[int]time.Time
+	queue   QueueID
+	through uint64
+	entries []queue.Entry
+	clocks  map[int]time.Time
 }
 
 // dependencyLocks maps each locked direct-source key to its stored queue.
@@ -96,13 +96,17 @@ func withDependencyWaits(ctx context.Context, db journalQuery, q QueueID, r jour
 	}
 	if admitted && ctx.Value(dependencyLandingClockKey{}) == nil {
 		var clocks map[int]time.Time
-  if prepared,ok:=ctx.Value(dependencyClockPreparationKey{}).(dependencyClockPreparation); ok {
-   if prepared.queue!=q || prepared.through!=deps.Through() || !sameDependencyClockEntries(prepared.entries,r.Queue.Entries) { return queue.State{},ErrStale }
-   clocks=prepared.clocks
-  } else {
-   clocks,err=dependencyEligibleClocks(ctx,db,q,r.Queue,key)
-   if err!=nil { return queue.State{},err }
-  }
+		if prepared, ok := ctx.Value(dependencyClockPreparationKey{}).(dependencyClockPreparation); ok {
+			if prepared.queue != q || prepared.through != deps.Through() || !sameDependencyClockEntries(prepared.entries, r.Queue.Entries) {
+				return queue.State{}, ErrStale
+			}
+			clocks = prepared.clocks
+		} else {
+			clocks, err = dependencyEligibleClocks(ctx, db, q, r.Queue, key)
+			if err != nil {
+				return queue.State{}, err
+			}
+		}
 		for pr, w := range waits {
 			if !w.Waiting {
 				w.EligibleAt = clocks[pr]
@@ -740,30 +744,53 @@ func (s *Store) DependencyCascade(ctx context.Context, queues []QueueID, binding
 	return out, err
 }
 
-func sameDependencyClockEntries(a,b []queue.Entry) bool {
- if len(a)!=len(b) { return false }
- for i,e:=range a { other:=b[i]; if e.PR!=other.PR || e.AdmissionID!=other.AdmissionID || e.HeadSHA!=other.HeadSHA || !e.EnqueuedAt.Equal(other.EnqueuedAt) { return false } }
- return true
+func sameDependencyClockEntries(a, b []queue.Entry) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i, e := range a {
+		other := b[i]
+		if e.PR != other.PR || e.AdmissionID != other.AdmissionID || e.HeadSHA != other.HeadSHA || !e.EnqueuedAt.Equal(other.EnqueuedAt) {
+			return false
+		}
+	}
+	return true
 }
 
 // prepareDependencyClocks performs history verification before any advisory or
 // action-row lock. The locked load compares the exact side position and entry
 // identities; drift retries rather than rescanning history while holding locks.
-func (s *Store) prepareDependencyClocks(ctx context.Context,q QueueID) (context.Context,error) {
- activation,ok:=ctx.Value(dependencyActivationKey{}).(dependencyActivation)
- if !ok || activation.queue!=q || ctx.Value(dependencyLandingClockKey{})!=nil { return ctx,nil }
- var prepared dependencyClockPreparation
- err:=pgx.BeginTxFunc(ctx,s.pool,pgx.TxOptions{IsoLevel:pgx.RepeatableRead,AccessMode:pgx.ReadOnly},func(tx pgx.Tx)error{
-  current,err:=foldSource(ctx,tx,q); if err!=nil { return err }
-  deps,err:=current.reader.BoundDependencies(activation.binding); if err!=nil { return err }
-  key,err:=storedKey(ctx,tx,q); if err!=nil { return err }
-  prepared=dependencyClockPreparation{queue:q,through:deps.Through(),entries:slices.Clone(current.reader.Queue.Entries),clocks:map[int]time.Time{}}
-  for _,e:=range prepared.entries {
-   change,revision,known:=changeRevision(key,current.reader.Queue,e.PR,e.HeadSHA)
-   if known && deps.Admission(string(change),revision).Code=="" { prepared.clocks,err=dependencyEligibleClocks(ctx,tx,q,current.reader.Queue,key); return err }
-  }
-  return nil
- })
- if err!=nil { return ctx,err }
- return context.WithValue(ctx,dependencyClockPreparationKey{},prepared),nil
+func (s *Store) prepareDependencyClocks(ctx context.Context, q QueueID) (context.Context, error) {
+	activation, ok := ctx.Value(dependencyActivationKey{}).(dependencyActivation)
+	if !ok || activation.queue != q || ctx.Value(dependencyLandingClockKey{}) != nil {
+		return ctx, nil
+	}
+	var prepared dependencyClockPreparation
+	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
+		current, err := foldSource(ctx, tx, q)
+		if err != nil {
+			return err
+		}
+		deps, err := current.reader.BoundDependencies(activation.binding)
+		if err != nil {
+			return err
+		}
+		key, err := storedKey(ctx, tx, q)
+		if err != nil {
+			return err
+		}
+		prepared = dependencyClockPreparation{queue: q, through: deps.Through(), entries: slices.Clone(current.reader.Queue.Entries), clocks: map[int]time.Time{}}
+		for _, e := range prepared.entries {
+			change, revision, known := changeRevision(key, current.reader.Queue, e.PR, e.HeadSHA)
+			if known && deps.Admission(string(change), revision).Code == "" {
+				prepared.clocks, err = dependencyEligibleClocks(ctx, tx, q, current.reader.Queue, key)
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return ctx, err
+	}
+	return context.WithValue(ctx, dependencyClockPreparationKey{}, prepared), nil
 }
