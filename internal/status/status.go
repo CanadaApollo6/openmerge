@@ -331,8 +331,10 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			visit(record, frames[i].before, frames[i].after)
 		}
 	}
-if j.DependencyQueue!=nil {s=*j.DependencyQueue}
- for n, head := range heads {
+	if j.DependencyQueue != nil {
+		s = *j.DependencyQueue
+	}
+	for n, head := range heads {
 		e := known[n]
 		e.HeadSHA = head
 		known[n] = e

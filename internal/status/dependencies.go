@@ -63,9 +63,9 @@ func ProjectDependencies(j store.Journal, binding dependency.JournalInitialized,
 	if err != nil {
 		return j, errors.New("dependency status unavailable")
 	}
-	composed:=reader.Queue
- j.DependencyQueue=&composed
- j.DependencyRedacted = false
+	composed := reader.Queue
+	j.DependencyQueue = &composed
+	j.DependencyRedacted = false
 	j.DependencyStatus = map[int]store.DependencyStatus{}
 	for _, allowed := range sourceAccess {
 		if !allowed {

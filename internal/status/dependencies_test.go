@@ -11,7 +11,7 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/dependency"
 	"github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
- "github.com/CanadaApollo6/openmerge/internal/journalreader"
+	"github.com/CanadaApollo6/openmerge/internal/journalreader"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
@@ -214,117 +214,250 @@ func TestDependencyAuthorizedReferencesRemainOriginal(t *testing.T) {
 }
 
 func TestDependencyUnstartedProgressPrivacy(t *testing.T) {
- var wantAPI,wantCheck,wantHistorical,wantBrief []byte
- for _,phase:=range []string{"queued","building","testing","discarded","invalidating","retrying","fast-forward"} {
-  j,b,ref,grant:=dependencytest.StatusJournal(t,"dependency-landed",1)
-  records:=map[uint64][]byte{}
-  reader:=journalreader.New(j.Seed,b,func(id uint64)([]byte,error){return records[id],nil})
-  reader.WithChangeIdentity(func(pr int)(queue.ChangeID,error){return j.Key.ChangeID(pr)})
-  var observed dependency.Observed
-  var observedID uint64
-  for _,record:=range j.Events {
-   records[uint64(record.ID)]=record.Payload
-   decoded,err:=reader.Apply(uint64(record.ID),record.Payload);if err!=nil{t.Fatal(err)}
-   if o,ok:=decoded.Dependency.(dependency.Observed);ok{observed=o;observedID=uint64(record.ID)}
-  }
-  appendRecord:=func(event any)uint64{
-   var raw []byte;var qe queue.Event;var err error
-   switch e:=event.(type){case queue.Event:_,raw,err=queue.EncodeEvent(e);qe=e;case dependency.Event:_,raw,err=dependency.EncodeEvent(e);default:t.Fatalf("unsupported %T",e)}
-   if err!=nil{t.Fatal(err)}
-   id:=uint64(len(j.Events)+1);records[id]=raw
-   if _,err:=reader.Apply(id,raw);err!=nil{t.Fatal(err)}
-   j.Events=append(j.Events,store.JournalEvent{ID:int64(id),Payload:raw,Event:qe})
-   return id
-  }
-  at:=j.Events[0].RecordedAt
-  var compositionID uint64
-  if phase!="queued"{
-   startID:=appendRecord(queue.BatchStarted{BatchID:"b1",BaseSHA:j.Seed.BaseSHA,PRs:[]queue.BatchPR{{PR:2,HeadSHA:strings.Repeat("b",40)}},At:at})
-   state,err:=reader.Dependencies();if err!=nil{t.Fatal(err)}
-   id,err:=j.Key.ChangeID(2);if err!=nil{t.Fatal(err)}
-   member,err:=state.CompositionMember(string(id),1,strings.Repeat("b",40));if err!=nil{t.Fatal(err)}
-   compositionID=appendRecord(dependency.CompositionRecorded{Namespace:b.Namespace,BatchID:"b1",StartEventID:startID,BaseSHA:j.Seed.BaseSHA,Members:[]dependency.CompositionMember{member}})
-  }
-  if phase=="retrying"{appendRecord(queue.TestRefBuildFailed{BatchID:"b1",At:at})}
-  if phase=="fast-forward"{
-   appendRecord(queue.FastForwardBatchSelected{BatchID:"b1",PRs:[]queue.BatchPR{{PR:2,HeadSHA:strings.Repeat("b",40)}}})
-   appendRecord(queue.FastForwardRefBuilt{BatchID:"b1",TestedSHA:strings.Repeat("e",40),HeadSHA:strings.Repeat("b",40),At:at})
-  }
-  if phase=="testing"||phase=="discarded"||phase=="invalidating"{appendRecord(queue.TestRefBuilt{BatchID:"b1",TestedSHA:strings.Repeat("e",40),Method:queue.Merge,At:at})}
-  if phase=="discarded"||phase=="invalidating"{
-   observed.ExpectedPrior=observedID;observed.ReadSequence++;observed.Result="waiting"
-   cause:=appendRecord(observed)
-   appendRecord(dependency.DiagnosticRecorded{Namespace:b.Namespace,ObservationEventID:cause,Source:dependencytest.Request().Source.Alias,Evidence:dependency.ReadEvidence{Stage:dependency.WorkRead,Declaration:observed.Declaration,Grant:grant,Observation:observed,Code:"dependency-waiting"}})
-   if reader.Queue.Active==nil||reader.Queue.Active.InvalidationReason!="dependency-changed" {t.Fatal("fixture did not latch invalidation")}
-   if phase=="discarded" {appendRecord(queue.DependencyCompositionsInvalidated{BatchIDs:[]string{"b1"},CompositionIDs:[]uint64{compositionID},CauseEventIDs:[]uint64{cause},Reason:"dependency-changed"})
-   appendRecord(queue.CheckCancellationRequested{BatchID:"b1",TestedSHA:strings.Repeat("e",40),Reason:"dependency-changed",TestRef:"openmerge/queue/main/b1",Runs:[]queue.CheckRun{{ID:1,Name:"ci",Source:"app",State:"pending"}}})}
-  }
-  if phase=="building"||phase=="testing"||phase=="fast-forward"{
-   expected:=queue.Building;if phase!="building"{expected=queue.Testing}
-   if reader.Queue.Active==nil||reader.Queue.Active.Phase!=expected{t.Fatalf("%s fixture did not exercise %s",phase,expected)}
-  }
-  if phase=="discarded"&&(reader.Queue.Active!=nil||len(reader.Queue.Invalidations)==0){t.Fatal("fixture did not discard a real composition")}
-  if phase=="retrying" && (reader.Queue.Active!=nil||!reader.Queue.SourceBlocked(queue.BuildFailed)){t.Fatal("fixture did not exercise retryable build failure")}
-  if phase=="invalidating" {
-   authorized,err:=ProjectDependencies(j,b,map[string][]dependency.Grant{ref:{grant}},dependencytest.StatusSources());if err!=nil{t.Fatal(err)}
-   _,e,_:=Project(authorized,2,100,nil)
-   if e.Status!="invalidating"{t.Fatal("status lost composed invalidation",e.Status)}
-  }
-  j,err:=ProjectDependencies(j,b,nil,dependencytest.StatusSources());if err!=nil{t.Fatal(err)}
-  q,e,why:=Project(j,2,100,nil)
-  ApplyPolicy(&q,e,queue.Config{MergeMethod:queue.Merge},at)
-  raw,err:=json.Marshal(Response{Version:Version,Queue:&q,PR:e,Why:why});if err!=nil{t.Fatal(err)}
-  check:=DependencyCheckStatus(&q,e,forge.Status{State:forge.Testing,Reason:phase,Summary:phase})
-  check.Summary+="\n\nCurrent state: "+WaitingCheckText(&q,*e,nil)+LedgerSummary(e)
-  checkRaw,err:=json.Marshal(check);if err!=nil{t.Fatal(err)}
-  if wantAPI==nil{wantAPI=raw;wantCheck=checkRaw}
-  if !bytes.Equal(wantAPI,raw)||!bytes.Equal(wantCheck,checkRaw){t.Fatalf("%s exposed unstarted dependency progress:\n%s\n%s",phase,raw,checkRaw)}
-  id,err:=j.Key.ChangeID(2);if err!=nil{t.Fatal(err)}
-  historical,_,found:=selectChangeRevision(j,string(id),1);if !found{t.Fatal("missing historical revision")}
-  hq,he,hw:=Project(historical,2,100,nil)
-  historicalRaw,err:=json.Marshal(Response{Version:Version,Queue:&hq,PR:he,Why:hw});if err!=nil{t.Fatal(err)}
-  view,found,err:=projectBrief(historical,string(id),"reviewer");if err!=nil||!found{t.Fatal(found,err)}
-  briefRaw,err:=json.Marshal(view);if err!=nil{t.Fatal(err)}
-  if wantHistorical==nil{wantHistorical=historicalRaw;wantBrief=briefRaw}
-  if !bytes.Equal(wantHistorical,historicalRaw)||!bytes.Equal(wantBrief,briefRaw){t.Fatalf("%s historical source progress leaked:\n%s\n%s",phase,historicalRaw,briefRaw)}
- }
+	var wantAPI, wantCheck, wantHistorical, wantBrief []byte
+	for _, phase := range []string{"queued", "building", "testing", "discarded", "invalidating", "retrying", "fast-forward"} {
+		j, b, ref, grant := dependencytest.StatusJournal(t, "dependency-landed", 1)
+		records := map[uint64][]byte{}
+		reader := journalreader.New(j.Seed, b, func(id uint64) ([]byte, error) { return records[id], nil })
+		reader.WithChangeIdentity(func(pr int) (queue.ChangeID, error) { return j.Key.ChangeID(pr) })
+		var observed dependency.Observed
+		var observedID uint64
+		for _, record := range j.Events {
+			records[uint64(record.ID)] = record.Payload
+			decoded, err := reader.Apply(uint64(record.ID), record.Payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if o, ok := decoded.Dependency.(dependency.Observed); ok {
+				observed = o
+				observedID = uint64(record.ID)
+			}
+		}
+		appendRecord := func(event any) uint64 {
+			var raw []byte
+			var qe queue.Event
+			var err error
+			switch e := event.(type) {
+			case queue.Event:
+				_, raw, err = queue.EncodeEvent(e)
+				qe = e
+			case dependency.Event:
+				_, raw, err = dependency.EncodeEvent(e)
+			default:
+				t.Fatalf("unsupported %T", e)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := uint64(len(j.Events) + 1)
+			records[id] = raw
+			if _, err := reader.Apply(id, raw); err != nil {
+				t.Fatal(err)
+			}
+			j.Events = append(j.Events, store.JournalEvent{ID: int64(id), Payload: raw, Event: qe})
+			return id
+		}
+		at := j.Events[0].RecordedAt
+		var compositionID uint64
+		if phase != "queued" {
+			startID := appendRecord(queue.BatchStarted{BatchID: "b1", BaseSHA: j.Seed.BaseSHA, PRs: []queue.BatchPR{{PR: 2, HeadSHA: strings.Repeat("b", 40)}}, At: at})
+			state, err := reader.Dependencies()
+			if err != nil {
+				t.Fatal(err)
+			}
+			id, err := j.Key.ChangeID(2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			member, err := state.CompositionMember(string(id), 1, strings.Repeat("b", 40))
+			if err != nil {
+				t.Fatal(err)
+			}
+			compositionID = appendRecord(dependency.CompositionRecorded{Namespace: b.Namespace, BatchID: "b1", StartEventID: startID, BaseSHA: j.Seed.BaseSHA, Members: []dependency.CompositionMember{member}})
+		}
+		if phase == "retrying" {
+			appendRecord(queue.TestRefBuildFailed{BatchID: "b1", At: at})
+		}
+		if phase == "fast-forward" {
+			appendRecord(queue.FastForwardBatchSelected{BatchID: "b1", PRs: []queue.BatchPR{{PR: 2, HeadSHA: strings.Repeat("b", 40)}}})
+			appendRecord(queue.FastForwardRefBuilt{BatchID: "b1", TestedSHA: strings.Repeat("e", 40), HeadSHA: strings.Repeat("b", 40), At: at})
+		}
+		if phase == "testing" || phase == "discarded" || phase == "invalidating" {
+			appendRecord(queue.TestRefBuilt{BatchID: "b1", TestedSHA: strings.Repeat("e", 40), Method: queue.Merge, At: at})
+		}
+		if phase == "discarded" || phase == "invalidating" {
+			observed.ExpectedPrior = observedID
+			observed.ReadSequence++
+			observed.Result = "waiting"
+			cause := appendRecord(observed)
+			appendRecord(dependency.DiagnosticRecorded{Namespace: b.Namespace, ObservationEventID: cause, Source: dependencytest.Request().Source.Alias, Evidence: dependency.ReadEvidence{Stage: dependency.WorkRead, Declaration: observed.Declaration, Grant: grant, Observation: observed, Code: "dependency-waiting"}})
+			if reader.Queue.Active == nil || reader.Queue.Active.InvalidationReason != "dependency-changed" {
+				t.Fatal("fixture did not latch invalidation")
+			}
+			if phase == "discarded" {
+				appendRecord(queue.DependencyCompositionsInvalidated{BatchIDs: []string{"b1"}, CompositionIDs: []uint64{compositionID}, CauseEventIDs: []uint64{cause}, Reason: "dependency-changed"})
+				appendRecord(queue.CheckCancellationRequested{BatchID: "b1", TestedSHA: strings.Repeat("e", 40), Reason: "dependency-changed", TestRef: "openmerge/queue/main/b1", Runs: []queue.CheckRun{{ID: 1, Name: "ci", Source: "app", State: "pending"}}})
+			}
+		}
+		if phase == "building" || phase == "testing" || phase == "fast-forward" {
+			expected := queue.Building
+			if phase != "building" {
+				expected = queue.Testing
+			}
+			if reader.Queue.Active == nil || reader.Queue.Active.Phase != expected {
+				t.Fatalf("%s fixture did not exercise %s", phase, expected)
+			}
+		}
+		if phase == "discarded" && (reader.Queue.Active != nil || len(reader.Queue.Invalidations) == 0) {
+			t.Fatal("fixture did not discard a real composition")
+		}
+		if phase == "retrying" && (reader.Queue.Active != nil || !reader.Queue.SourceBlocked(queue.BuildFailed)) {
+			t.Fatal("fixture did not exercise retryable build failure")
+		}
+		if phase == "invalidating" {
+			authorized, err := ProjectDependencies(j, b, map[string][]dependency.Grant{ref: {grant}}, dependencytest.StatusSources())
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, e, _ := Project(authorized, 2, 100, nil)
+			if e.Status != "invalidating" {
+				t.Fatal("status lost composed invalidation", e.Status)
+			}
+		}
+		j, err := ProjectDependencies(j, b, nil, dependencytest.StatusSources())
+		if err != nil {
+			t.Fatal(err)
+		}
+		q, e, why := Project(j, 2, 100, nil)
+		ApplyPolicy(&q, e, queue.Config{MergeMethod: queue.Merge}, at)
+		raw, err := json.Marshal(Response{Version: Version, Queue: &q, PR: e, Why: why})
+		if err != nil {
+			t.Fatal(err)
+		}
+		check := DependencyCheckStatus(&q, e, forge.Status{State: forge.Testing, Reason: phase, Summary: phase})
+		check.Summary += "\n\nCurrent state: " + WaitingCheckText(&q, *e, nil) + LedgerSummary(e)
+		checkRaw, err := json.Marshal(check)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if wantAPI == nil {
+			wantAPI = raw
+			wantCheck = checkRaw
+		}
+		if !bytes.Equal(wantAPI, raw) || !bytes.Equal(wantCheck, checkRaw) {
+			t.Fatalf("%s exposed unstarted dependency progress:\n%s\n%s", phase, raw, checkRaw)
+		}
+		id, err := j.Key.ChangeID(2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		historical, _, found := selectChangeRevision(j, string(id), 1)
+		if !found {
+			t.Fatal("missing historical revision")
+		}
+		hq, he, hw := Project(historical, 2, 100, nil)
+		historicalRaw, err := json.Marshal(Response{Version: Version, Queue: &hq, PR: he, Why: hw})
+		if err != nil {
+			t.Fatal(err)
+		}
+		view, found, err := projectBrief(historical, string(id), "reviewer")
+		if err != nil || !found {
+			t.Fatal(found, err)
+		}
+		briefRaw, err := json.Marshal(view)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if wantHistorical == nil {
+			wantHistorical = historicalRaw
+			wantBrief = briefRaw
+		}
+		if !bytes.Equal(wantHistorical, historicalRaw) || !bytes.Equal(wantBrief, briefRaw) {
+			t.Fatalf("%s historical source progress leaked:\n%s\n%s", phase, historicalRaw, briefRaw)
+		}
+	}
 }
 
 func TestDependencyExplicitPinPresentation(t *testing.T) {
- j,binding,ref,grant:=dependencytest.StatusJournal(t,"dependency-waiting",1)
- scope:=dependency.Scope{ForgeInstance:binding.ForgeInstance,Installation:binding.Installation,JournalNamespace:binding.Namespace}
- parsed,err:=dependency.ParseReference(ref,scope);if err!=nil{t.Fatal(err)}
- parsed.Revision=7
- pinned,err:=parsed.Canonical();if err!=nil{t.Fatal(err)}
- var digest string
- for i,record:=range j.Events {
-  if record.Event!=nil{continue}
-  event,err:=dependency.DecodeEvent(record.Payload);if err!=nil{t.Fatal(err)}
-  switch e:=event.(type){
-  case dependency.DependenciesDeclared:
-   e.Edges[0].Reference=pinned;e.Edges[0].PinnedHead=e.Edges[0].Baseline.Head
-   e.Digest=dependency.DeclarationDigest(e.Edges);digest=e.Digest;event=e
-  case dependency.Observed:
-   e.Source=pinned;e.Declaration.Digest=digest;event=e
-  case dependency.DiagnosticRecorded:
-   e.Evidence.Observation.Source=pinned;e.Evidence.Observation.Declaration.Digest=digest;e.Evidence.Declaration.Digest=digest;event=e
-  }
-  _,j.Events[i].Payload,err=dependency.EncodeEvent(event);if err!=nil{t.Fatal(err)}
- }
- j,err=ProjectDependencies(j,binding,map[string][]dependency.Grant{pinned:{grant}},dependencytest.StatusSources());if err!=nil{t.Fatal(err)}
- q,e,_:=Project(j,2,1,nil)
- if !strings.Contains(WaitingCheckText(&q,*e,nil),"at revision 7")||e.Dependency.Diagnostics[0].Source!=pinned{t.Fatal("explicit pin missing",e.Dependency)}
+	j, binding, ref, grant := dependencytest.StatusJournal(t, "dependency-waiting", 1)
+	scope := dependency.Scope{ForgeInstance: binding.ForgeInstance, Installation: binding.Installation, JournalNamespace: binding.Namespace}
+	parsed, err := dependency.ParseReference(ref, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed.Revision = 7
+	pinned, err := parsed.Canonical()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var digest string
+	for i, record := range j.Events {
+		if record.Event != nil {
+			continue
+		}
+		event, err := dependency.DecodeEvent(record.Payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch e := event.(type) {
+		case dependency.DependenciesDeclared:
+			e.Edges[0].Reference = pinned
+			e.Edges[0].PinnedHead = e.Edges[0].Baseline.Head
+			e.Digest = dependency.DeclarationDigest(e.Edges)
+			digest = e.Digest
+			event = e
+		case dependency.Observed:
+			e.Source = pinned
+			e.Declaration.Digest = digest
+			event = e
+		case dependency.DiagnosticRecorded:
+			e.Evidence.Observation.Source = pinned
+			e.Evidence.Observation.Declaration.Digest = digest
+			e.Evidence.Declaration.Digest = digest
+			event = e
+		}
+		_, j.Events[i].Payload, err = dependency.EncodeEvent(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	j, err = ProjectDependencies(j, binding, map[string][]dependency.Grant{pinned: {grant}}, dependencytest.StatusSources())
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, e, _ := Project(j, 2, 1, nil)
+	if !strings.Contains(WaitingCheckText(&q, *e, nil), "at revision 7") || e.Dependency.Diagnostics[0].Source != pinned {
+		t.Fatal("explicit pin missing", e.Dependency)
+	}
 }
 
 func TestDependencySourceBindingGuards(t *testing.T) {
- j,b,ref,g:=dependencytest.StatusJournal(t,"dependency-closed",1)
- for _,name:=range []string{"missing","alias","scope","change","revision"}{
-  sources:=dependencytest.StatusSources()
-  r:=dependencytest.Request().Source
-  switch name{case "missing":sources=nil;case "alias":r.Alias.Number++;case "scope":r.Reference.Scope.Installation="other";case "change":r.Reference.ChangeID="chg1_"+strings.Repeat("e",64);case "revision":r.Reference.Revision=1}
-  if sources!=nil{sources[dependencytest.Request().Source.Reference.ChangeID]=r}
-  projected,err:=ProjectDependencies(j,b,map[string][]dependency.Grant{ref:{g}},sources);if err!=nil{t.Fatal(name,err)}
-  _,e,_:=Project(projected,2,1,nil)
-  if e.Dependency.Text!="Dependency cannot be verified"||len(e.Dependency.Diagnostics)!=0{t.Fatal("invalid source binding disclosed diagnostics",name,e.Dependency)}
- }
+	j, b, ref, g := dependencytest.StatusJournal(t, "dependency-closed", 1)
+	for _, name := range []string{"missing", "alias", "scope", "change", "revision"} {
+		sources := dependencytest.StatusSources()
+		r := dependencytest.Request().Source
+		switch name {
+		case "missing":
+			sources = nil
+		case "alias":
+			r.Alias.Number++
+		case "scope":
+			r.Reference.Scope.Installation = "other"
+		case "change":
+			r.Reference.ChangeID = "chg1_" + strings.Repeat("e", 64)
+		case "revision":
+			r.Reference.Revision = 1
+		}
+		if sources != nil {
+			sources[dependencytest.Request().Source.Reference.ChangeID] = r
+		}
+		projected, err := ProjectDependencies(j, b, map[string][]dependency.Grant{ref: {g}}, sources)
+		if err != nil {
+			t.Fatal(name, err)
+		}
+		_, e, _ := Project(projected, 2, 1, nil)
+		if e.Dependency.Text != "Dependency cannot be verified" || len(e.Dependency.Diagnostics) != 0 {
+			t.Fatal("invalid source binding disclosed diagnostics", name, e.Dependency)
+		}
+	}
 }

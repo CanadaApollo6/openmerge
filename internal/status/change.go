@@ -185,7 +185,7 @@ func selectChangeRevision(j store.Journal, id string, revision uint64) (store.Jo
 	// Current diagnostics cannot describe an older exact revision. Preserve the
 	// activated privacy boundary while withholding current dependency details.
 	if revision != 0 && j.DependencyStatus != nil {
-  j.DependencyQueue=nil
+		j.DependencyQueue = nil
 		j.DependencyStatus = map[int]store.DependencyStatus{}
 	}
 	s := j.Seed
@@ -228,11 +228,11 @@ func selectChangeRevision(j store.Journal, id string, revision uint64) (store.Jo
 		return j, 0, false
 	}
 	if revision != 0 {
-  j.Events = j.Events[:end]
-  if j.DependencyStatus!=nil && j.DependencyRedacted {
-   j.DependencyStatus[target]=store.DependencyStatus{Text:"Dependency cannot be verified",Redacted:true,Blocking:true}
-  }
- }
+		j.Events = j.Events[:end]
+		if j.DependencyStatus != nil && j.DependencyRedacted {
+			j.DependencyStatus[target] = store.DependencyStatus{Text: "Dependency cannot be verified", Redacted: true, Blocking: true}
+		}
+	}
 	return j, target, true
 }
 
