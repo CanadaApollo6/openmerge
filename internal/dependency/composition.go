@@ -149,3 +149,6 @@ func (s State) RetainCompositions(batches []string) State {
 	}
 	return s
 }
+
+// Through returns the last consumed side position for cheap preparation fences.
+func (s State) Through() uint64 { return s.lastID }

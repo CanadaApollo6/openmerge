@@ -145,7 +145,9 @@ func (s *Store) BeginConsequential(ctx context.Context, a ClaimedAction, cfg que
 	var proceed bool
 	var decodeErr error
 	var deferred bool
-	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+ ctx,err:=s.prepareDependencyClocks(ctx,a.QueueID)
+ if err!=nil { return false,err }
+ err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if err := s.lockQueue(ctx, tx, a.QueueID); err != nil {
 			return err
 		}

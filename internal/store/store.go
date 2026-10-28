@@ -270,8 +270,10 @@ func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, ded
 		return 0, errors.New("cannot append an empty delivery")
 	}
 	var watermark int64
-	var stale bool
-	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+ var stale bool
+ ctx,err:=s.prepareDependencyClocks(ctx,q)
+ if err!=nil { return 0,err }
+ err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if err := s.lockQueue(ctx, tx, q); err != nil {
 			return err
 		}
@@ -554,7 +556,9 @@ type PlannedAction struct {
 // It returns unclaimed work, quarantining invalid rows for operators.
 func (s *Store) Plan(ctx context.Context, q QueueID, cfg queue.Config, now time.Time) ([]PlannedAction, error) {
 	var result []PlannedAction
-	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+ ctx,err:=s.prepareDependencyClocks(ctx,q)
+ if err!=nil { return nil,err }
+ err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if err := s.lockQueue(ctx, tx, q); err != nil {
 			return err
 		}
