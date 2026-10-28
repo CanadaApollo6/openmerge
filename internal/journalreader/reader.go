@@ -109,12 +109,7 @@ func (r *Reader) Apply(id uint64, raw []byte) (_ Event, applyErr error) {
 	switch {
 	case e.Queue != nil:
 		if invalid, ok := e.Queue.(queue.DependencyCompositionsInvalidated); ok {
-			pending := []string{}
-			for _, b := range r.Queue.Batches() {
-				if b.InvalidationReason == invalid.Reason {
-					pending = append(pending, b.ID)
-				}
-			}
+			pending := r.Queue.DependencyInvalidationTargets()
 			if !slices.Equal(pending, invalid.BatchIDs) {
 				return Event{}, ErrReference
 			}
@@ -126,6 +121,7 @@ func (r *Reader) Apply(id uint64, raw []byte) (_ Event, applyErr error) {
 			}
 		}
 		next.Queue = queue.Apply(r.Queue, e.Queue)
+  if invalid,ok:=e.Queue.(queue.DependencyCompositionsInvalidated); ok { for _,batch:=range invalid.BatchIDs { if next.Queue.Batch(batch)!=nil { return Event{},ErrReference } } }
 		next.Provenance = retireTerminal(r.Provenance, id, e.Queue, r.Queue, next.Queue)
 	case e.Dependency != nil:
 		if c, ok := e.Dependency.(dependency.CompositionRecorded); ok {

@@ -52,3 +52,20 @@ func TestDependencyCompositionDiscardExactSuffixAndLandingBoundary(t *testing.T)
 		t.Fatal("discard crossed settlement boundary")
 	}
 }
+
+func TestDependencyDiscardBeforeAlreadyInvalidatedSuffix(t *testing.T) {
+ cfg,s,now:=chainState(t,4,4)
+ for range 4 { s,_=admitChain(t,cfg,s,now) }
+ s=cloneState(s); s.invalidateFrom(s.Batch("b3"),"config-changed")
+ plain:=s
+ s=s.WithDependencyInvalidation("b2")
+ action:=Plan(cfg,s,now)[0].(InvalidateBatches)
+ if !slices.Equal(action.BatchIDs,[]string{"b2"}) { t.Fatal("wrong next reason segment",action) }
+ event:=DependencyCompositionsInvalidated{BatchIDs:action.BatchIDs,CompositionIDs:[]uint64{12},CauseEventIDs:[]uint64{30},Reason:action.Reason}
+ for _,before:=range []State{plain,s} {
+  after:=Apply(before,event)
+  if after.Batch("b2")!=nil || after.Batch("b3")==nil || after.Batch("b3").InvalidationReason!="config-changed" { t.Fatal("fold refused planner segment") }
+  next:=Plan(cfg,after,now)[0].(InvalidateBatches)
+  if next.Reason!="config-changed" || !slices.Equal(next.BatchIDs,[]string{"b3","b4"}) { t.Fatal("later reason was lost",next) }
+ }
+}

@@ -669,12 +669,7 @@ func dependencyInvalidation(ctx context.Context, tx pgx.Tx, q QueueID, event que
 	if err != nil {
 		return nil, err
 	}
-	expected := []string{}
-	for _, b := range current.reader.Queue.Batches() {
-		if b.InvalidationReason == e.Reason {
-			expected = append(expected, b.ID)
-		}
-	}
+	expected := current.reader.Queue.DependencyInvalidationTargets()
 	if !slices.Equal(e.BatchIDs, expected) {
 		return nil, ErrStale
 	}
@@ -687,7 +682,10 @@ func dependencyInvalidation(ctx context.Context, tx pgx.Tx, q QueueID, event que
 		out.CompositionIDs = append(out.CompositionIDs, id)
 		out.CauseEventIDs = append(out.CauseEventIDs, deps.CompositionCause(batch))
 	}
-	return out, out.Validate()
+ if err:=out.Validate(); err!=nil { return nil,err }
+ folded:=queue.Apply(current.reader.Queue,out)
+ for _,batch:=range out.BatchIDs { if folded.Batch(batch)!=nil { return nil,ErrStale } }
+ return out,nil
 }
 
 // DependencyCascade rebuilds the reverse scheduling aid from an explicit set of
