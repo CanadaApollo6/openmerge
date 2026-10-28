@@ -63,7 +63,9 @@ func ProjectDependencies(j store.Journal, binding dependency.JournalInitialized,
 	if err != nil {
 		return j, errors.New("dependency status unavailable")
 	}
-	j.DependencyRedacted = false
+	composed:=reader.Queue
+ j.DependencyQueue=&composed
+ j.DependencyRedacted = false
 	j.DependencyStatus = map[int]store.DependencyStatus{}
 	for _, allowed := range sourceAccess {
 		if !allowed {
@@ -116,24 +118,6 @@ func maskDependencyBatches(q *Queue, j store.Journal) {
 		q.ActiveBatch = nil
 	}
 	q.Invalidations = slices.DeleteFunc(q.Invalidations, func(b queue.BatchesInvalidated) bool { return b.Reason == "dependency-changed" })
-}
-
-func privateDependencyEvidence(j store.Journal, event queue.Event) bool {
-	if !j.DependencyRedacted {
-		return false
-	}
-	switch event.(type) {
-	case queue.BatchStarted, queue.ChainedBatchStarted, queue.TestRefBuilt, queue.ChainedTestRefBuilt,
-		queue.BatchRunsObserved, queue.ChecksCompleted, queue.ChecksObserved, queue.ChecksReopened,
-		queue.ChecksRefreshed, queue.CheckCancellationRequested, queue.CheckCancellationReported,
-		queue.CheckCancellationDeferred, queue.CheckRerunRequested, queue.CheckRerunDispatched,
-		queue.CheckRerunDispatchProgress, queue.ChecksFailureConfirmed:
-		return true
-	}
-	if e, ok := event.(queue.BatchesInvalidated); ok {
-		return e.Reason == "dependency-changed"
-	}
-	return false
 }
 
 // DependencyCheckStatus applies the same private hold to the entire check,

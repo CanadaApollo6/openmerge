@@ -288,7 +288,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			e.PR, e.HeadSHA, e.AdmittedAt = admitted.PR, admitted.HeadSHA, &admitted.EnqueuedAt
 			known[e.PR] = e
 		}
-		if pr > 0 && !privateDependencyEvidence(j, record.Event) && (inheritedPause[originalID] || affects(record.Event, pr, before, s, tested)) {
+		if pr > 0 && !j.DependencyRedacted && (inheritedPause[originalID] || affects(record.Event, pr, before, s, tested)) {
 			kind, _, _ := queue.EncodeEvent(record.Event)
 			evidence := Event{ID: record.ID, Type: kind, At: record.RecordedAt.UTC(), Summary: sanitizer.Sanitize(eventSummary(record.Event, before, s))}
 			evidence.Runs, evidence.RerunState = retryEvidence(record.Event, before, s, sanitizer)
@@ -331,7 +331,8 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			visit(record, frames[i].before, frames[i].after)
 		}
 	}
-	for n, head := range heads {
+if j.DependencyQueue!=nil {s=*j.DependencyQueue}
+ for n, head := range heads {
 		e := known[n]
 		e.HeadSHA = head
 		known[n] = e

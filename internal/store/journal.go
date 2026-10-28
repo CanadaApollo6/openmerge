@@ -28,7 +28,8 @@ type DependencyStatus struct {
 
 // Journal is a queue's immutable seed and committed events at one DB snapshot.
 type Journal struct {
-	DependencyRedacted bool
+	DependencyQueue *queue.State
+ DependencyRedacted bool
 	DependencyStatus   map[int]DependencyStatus
 	Key                QueueKey
 	Seed               queue.State

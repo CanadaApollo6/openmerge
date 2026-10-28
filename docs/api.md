@@ -708,8 +708,8 @@ their existing bytes. No persisted event is extended.
 
 Unauthorized readers see `code: dependencies` and exactly `Dependency cannot be
 verified`, even for a landed source. There are no source details, links or typed
-diagnostics. Private side evidence and dependency-only clock/discard evidence do
-not consume explanation rows. Redacted queue views withhold unstarted batch and
+diagnostics. Redacted explanation evidence is withheld before pagination.
+Private records cannot change row counts or continuation behavior. Redacted queue views withhold unstarted batch and
 CI evidence, including the check prefix, so build progress cannot disclose a
 private source landing. When private history prevents exposing original
 journal positions, `watermark`, explanation IDs and exposed event references are
@@ -719,8 +719,8 @@ existing deployed v1 queues retain their original reference semantics.
 
 Public checks require a separate complete recorded audience proof; an API reader's
 grant never authorizes the check audience. Current dependency evidence is withheld
-from explicitly selected historical revisions, rather than describing an old head
-with current diagnostics. Rendering reads supplied journals only and never calls a
+from explicitly selected historical revisions. Redacted historical reads retain a
+generic dependency hold to conceal old unstarted progress. Rendering reads supplied journals only and never calls a
 forge. Terminal B outcomes, landing settlement and B's independent gates retain
 their existing precedence. Dependency presentation does not grant landing authority.
 
