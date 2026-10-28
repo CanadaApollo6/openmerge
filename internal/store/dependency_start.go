@@ -475,7 +475,7 @@ func (v DependencyStart) validate(ctx context.Context, tx pgx.Tx, q QueueID, loc
 				if admission.Code != "" {
 					return nil, fmt.Errorf("%w: %s", dependency.ErrNotAdmitted, admission.Code)
 				}
-				companion := dependency.DecisionRecorded{Namespace: v.Binding.Namespace, BatchID: land.BatchID, AttemptID: start.AttemptID, TestedSHA: land.TestedSHA, LandedSHA: batch.LandingCommit(), StartEventID: startID, Member: uint64(i), Members: uint64(len(v.Members)), Alias: admission.Alias, ChangeID: string(changes[i]), Revision: uint64(bindings[i].Revision), Head: land.PRs[i].HeadSHA, Admission: admission.Basis, Sources: slices.Clone(m.Sources)}
+				companion := dependency.DecisionRecorded{Namespace: v.Binding.Namespace, BatchID: land.BatchID, AttemptID: start.AttemptID, TestedSHA: land.TestedSHA, LandedSHA: batch.LandingCommit(), StartEventID: startID, Member: uint64(i), Members: uint64(len(v.Members)), Alias: admission.Alias, ChangeID: string(changes[i]), Revision: uint64(bindings[i].Revision), Head: land.PRs[i].HeadSHA, Admission: admission.Basis, Sources: append([]dependency.SourceSettlement{}, m.Sources...)}
 				if decisions {
 					companion.DecisionID = decisionIDs[i]
 				}
