@@ -90,7 +90,9 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 					if !dependencyCalls[sel] {
 						t.Errorf("ungated dependency writer caller/capture in %s", path)
 					}
-				case "startID":
+				case "appendDependencyCompositionTx":
+ if rel!="internal/store/store.go" { t.Errorf("composition admission writer outside queue transaction in %s",path) }
+ case "startID", "buildStartID":
 					if rel != "internal/store/dependency_start.go" && rel != "internal/store/side_append.go" {
 						t.Errorf("dependency companion admission outside its start transaction in %s", path)
 					}
@@ -110,7 +112,7 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 			}
 
 			if kv, ok := n.(*ast.KeyValueExpr); ok {
-				if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "startID" && rel != "internal/store/dependency_start.go" {
+				if key, ok := kv.Key.(*ast.Ident); ok && (key.Name == "startID" || key.Name == "buildStartID") && rel != "internal/store/dependency_start.go" {
 					t.Errorf("dependency companion admission outside its start transaction in %s", path)
 				}
 			}
@@ -119,11 +121,13 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				for _, kind := range []string{"change_provenance_observed", "landing_provenance_recorded", "dependency_journal_initialized", "change_dependencies_declared", "dependency_policy_applied", "dependency_declaration_acknowledged", "dependency_declaration_self_acknowledged", "dependency_observed", "dependency_decision_recorded"} {
+				for _, kind := range []string{"change_provenance_observed", "landing_provenance_recorded", "dependency_journal_initialized", "change_dependencies_declared", "dependency_policy_applied", "dependency_declaration_acknowledged", "dependency_declaration_self_acknowledged", "dependency_observed", "dependency_decision_recorded", "dependency_composition_recorded", "dependency_compositions_invalidated"} {
 					if rel == "internal/audit/provenance.go" && (kind == "change_provenance_observed" || kind == "landing_provenance_recorded") {
 						continue
 					}
-					if strings.Contains(value, kind) {
+					if rel=="internal/store/authority_downgrade.go" && (kind=="dependency_composition_recorded" || kind=="dependency_compositions_invalidated") { continue }
+ if rel=="internal/queue/wire.go" && kind=="dependency_compositions_invalidated" { continue }
+ if strings.Contains(value, kind) {
 						t.Errorf("new kind literal outside read-only codec allowlist in %s: %s", path, kind)
 					}
 				}

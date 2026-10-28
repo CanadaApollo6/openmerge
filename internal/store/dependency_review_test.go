@@ -40,7 +40,7 @@ func TestDependencyWaitsWithheldStartFoldsThroughStore(t *testing.T) {
 				f := newDepFixture(t)
 				members := map[int]depQueue{7: f.c}
 				for i, pr := range []int{8, 9, 10} {
-					m := addDepPR(t, f.s, f.c, pr, byte('p'+i))
+					m := addDepPR(t, f.s, f.c, pr, byte('1'+i))
 					if slices.Contains(tc.waiting, pr) {
 						m.declare(t, f.s, f.b, dependency.Basis{}, 1, false, edge(f.a, false))
 					} else {
@@ -138,7 +138,7 @@ func batchPRNumbers(prs []queue.BatchPR) []int {
 
 // Review repro (round 1): re-recording unchanged landed evidence, or an
 // unchanged policy, must not postpone batch max_wait; only a waiting-to-
-// eligible transition restarts the eligibility clock.
+// eligible transition resumes the remaining eligibility budget.
 func TestDependencyEligibilityStableAcrossUnchangedRefresh(t *testing.T) {
 	f := newDepFixture(t)
 	f.observe(t, "landed", f.landedA)
@@ -163,13 +163,16 @@ func TestDependencyEligibilityStableAcrossUnchangedRefresh(t *testing.T) {
 	if after := wake(); !after.Equal(before) {
 		t.Fatalf("unchanged refresh postponed max_wait: %v -> %v", before, after)
 	}
-	// waiting -> landed is a real transition: the clock restarts at the read.
+	// waiting -> landed resumes the old budget; only the waiting interval
+ // moves the equivalent clock origin.
 	f.observe(t, "waiting", f.a.base)
-	f.observe(t, "landed", f.landedA)
+ var paused time.Time
+ must(t,f.s.pool.QueryRow(t.Context(),`SELECT recorded_at FROM events WHERE id=$1`,f.observedID).Scan(&paused))
+ f.observe(t, "landed", f.landedA)
 	var restarted time.Time
 	must(t, f.s.pool.QueryRow(t.Context(), `SELECT recorded_at FROM events WHERE id=$1`, f.observedID).Scan(&restarted))
-	if after := wake(); !after.Equal(restarted.Add(cfg.BatchMaxWait)) || !after.After(before) {
-		t.Fatalf("transition did not restart the clock: %v (before %v, read %v)", after, before, restarted)
+	if after := wake(); !after.Equal(before.Add(restarted.Sub(paused))) {
+		t.Fatalf("transition lost the accumulated clock: %v (before %v, read %v)", after, before, restarted)
 	}
 }
 

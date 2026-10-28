@@ -81,7 +81,7 @@ func (r Reader) CursorSnapshot() ([]byte, error) {
 	if err := json.Unmarshal(base, &header); err != nil {
 		return nil, err
 	}
-	if header.Version == dependency.SnapshotVersion {
+	if header.Version == dependency.SnapshotVersion || header.Version == dependency.CompositionSnapshotVersion {
 		kind = "dependency"
 	}
 	return pj.EncodeSnapshot(kind, base, r.Provenance)

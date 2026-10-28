@@ -36,7 +36,7 @@ func decisionLand(t *testing.T, s *Store) (QueueID, ClaimedAction, landingCase, 
 	must(t, err)
 	return decisionLandInput(t, s, raw)
 }
-func decisionLandInput(t *testing.T, s *Store, raw []byte) (QueueID, ClaimedAction, landingCase, queue.LandingDecisionRecorded) {
+func decisionLandInput(t *testing.T, s *Store, raw []byte, beforeAppend ...func(QueueID,queue.Event) context.Context) (QueueID, ClaimedAction, landingCase, queue.LandingDecisionRecorded) {
 	t.Helper()
 	var c landingCase
 	must(t, json.Unmarshal(raw, &c))
@@ -56,7 +56,9 @@ func decisionLandInput(t *testing.T, s *Store, raw []byte) (QueueID, ClaimedActi
 			e, err = state.PrepareBareReceipt(c.Policy, receipt.Basis, receipt.Actor, receipt.CommentID, receipt.CreatedAt, identity.BriefDigest)
 			must(t, err)
 		}
-		appendEvents(t, s, q, e)
+  ctx:=t.Context()
+  if len(beforeAppend)>0 { ctx=beforeAppend[0](q,e) }
+  _,err=s.Append(ctx,q,[]queue.Event{e},""); must(t,err)
 	}
 	state, _, err := s.Load(t.Context(), q)
 	must(t, err)

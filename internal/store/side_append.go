@@ -36,6 +36,7 @@ type SideAppend struct {
 	// startID admits dependency decision companions only inside the activated
 	// landing-start transaction, bound to its exact durable LandingStarted row.
 	startID uint64
+ buildStartID uint64
 }
 
 // AppendSide validates the entire bundle through the exact replay fold under the
@@ -139,6 +140,8 @@ func (s *Store) appendSideTx(ctx context.Context, tx pgx.Tx, q QueueID, request 
 			case event.Dependency != nil:
 				switch d := event.Dependency.(type) {
 				case dependency.JournalInitialized, dependency.DependenciesDeclared, dependency.PolicyApplied, dependency.Acknowledged, dependency.SelfAcknowledged, dependency.Observed:
+ case dependency.CompositionRecorded:
+ if request.buildStartID==0 || d.StartEventID!=request.buildStartID { return errors.New("dependency composition requires its build-start transaction") }
 				case dependency.DecisionRecorded:
 					if request.startID == 0 || d.StartEventID != request.startID {
 						return errors.New("dependency decision companion requires its landing-start transaction")
@@ -1088,4 +1091,13 @@ func (s *Store) RecoverProvenance(ctx context.Context, q QueueID) error {
 		}
 	}
 	return nil
+}
+
+// appendDependencyCompositionTx is reached only by an activated batch admission
+// in append's existing queue-locked transaction. A rejected companion rolls back
+// the unchanged BatchStarted and all preceding records as well.
+func (s *Store) appendDependencyCompositionTx(ctx context.Context,tx pgx.Tx,q QueueID,event queue.Event,startID uint64) (int64,error) {
+ request,err:=dependencyComposition(ctx,tx,q,event,startID)
+ if err!=nil || request==nil { return 0,err }
+ return s.appendSideTx(ctx,tx,q,*request,"")
 }
