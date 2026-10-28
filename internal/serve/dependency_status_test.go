@@ -64,6 +64,8 @@ func TestDependencyStatusCacheUsesJournalWatermark(t *testing.T) {
 	if driver.pulls != pulls || driver.checks != checks {
 		t.Fatal("cached rendering fetched the forge")
 	}
- if _,_,_,err:=s.ChangeDecisions(t.Context(),w.Key,id,0,0,1);err==nil {t.Fatal("retained decision positions bypassed dependency reader scope")}
+	if _, _, _, err := s.ChangeDecisions(t.Context(), w.Key, id, 0, 0, 1); err == nil {
+		t.Fatal("retained decision positions bypassed dependency reader scope")
+	}
 
 }

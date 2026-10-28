@@ -68,14 +68,20 @@ func dependencyCheckJournal(j store.Journal, pass *dependencyPass) (store.Journa
 	return status.ProjectDependencies(j, pass.binding, pass.checkAudience, pass.sources)
 }
 
-func (s *Server) dependencyDecisionScope(ctx context.Context,key store.QueueKey) error {
- for _,w:=range s.workers(){
-  if w.Key!=key || w.dependencies==nil {continue}
-  journals,err:=s.store.ReportingJournals(ctx,[]store.QueueKey{key})
-  if err!=nil || len(journals)!=1 {return errors.New("dependency evidence unavailable")}
-  j,err:=dependencyJournal(journals[0],w.dependencies)
-  if err!=nil{return err}
-  return status.RequireDependencyDecisionScope(j)
- }
- return nil
+func (s *Server) dependencyDecisionScope(ctx context.Context, key store.QueueKey) error {
+	for _, w := range s.workers() {
+		if w.Key != key || w.dependencies == nil {
+			continue
+		}
+		journals, err := s.store.ReportingJournals(ctx, []store.QueueKey{key})
+		if err != nil || len(journals) != 1 {
+			return errors.New("dependency evidence unavailable")
+		}
+		j, err := dependencyJournal(journals[0], w.dependencies)
+		if err != nil {
+			return err
+		}
+		return status.RequireDependencyDecisionScope(j)
+	}
+	return nil
 }
