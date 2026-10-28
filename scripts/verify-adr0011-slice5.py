@@ -11,7 +11,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 GO_ROOT = '/home/riels/.local/share/mise/installs/go/1.27.3'
-TESTS = ('TestDependency(Privacy|Authorized|Missing|Source|ExplicitPin|Historical|Unstarted|'
+TESTS = ('TestDependency(Privacy|Authorized|Missing|Empty|Source|ExplicitPin|Historical|Unstarted|'
          'Status|DiagnosticReal)|TestDiagnostic')
 PREFIX = ['flock', '/home/riels/.cache/openmerge-heavy.lock', 'env', 'GOFLAGS=-p=2',
           'GOMEMLIMIT=4GiB', f'GOROOT={GO_ROOT}', f'PATH={GO_ROOT}/bin:{os.environ["PATH"]}']
@@ -55,6 +55,12 @@ MUTANTS = [
      'if v.Redacted {', 'if false && v.Redacted {', './internal/status'),
     ('composed-invalidation-lost', 'internal/status/status.go',
      'if j.DependencyQueue != nil {', 'if false && j.DependencyQueue != nil {', './internal/status'),
+    ('unbounded-diagnostic-history', 'internal/dependency/diagnostic.go',
+     'if len(next.records) > maxProjectionEntries*MaxDirectEdges {',
+     'if false && len(next.records) > maxProjectionEntries*MaxDirectEdges {', './internal/dependency'),
+    ('empty-declaration-hold', 'internal/dependency/status.go',
+     'if len(d.Event.Edges) == 0 && !d.Held && !d.Unknown {',
+     'if false && len(d.Event.Edges) == 0 && !d.Held && !d.Unknown {', './internal/dependency'),
     ('downgrade-inventory-omission', 'internal/store/authority_downgrade.go',
      '"dependency_waits_withheld", "dependency_diagnostic_recorded",',
      '"dependency_waits_withheld",', './internal/store'),
@@ -98,7 +104,7 @@ def main():
                 path.write_text(original.replace(old, new, 1))
                 result = run(checkout, [package])
                 failures = re.findall(r'--- FAIL: (\S+)', result.stdout)
-                killed = result.returncode != 0 and bool(failures) and '[build failed]' not in result.stdout
+                killed = result.returncode != 0 and bool(failures) and '[build failed]' not in result.stdout and 'panic:' not in result.stdout
                 results.append({'mutation': name, 'killed': killed, 'tests': failures})
                 print(f'{name}: {"KILLED" if killed else "SURVIVED"}', flush=True)
                 if not killed:
