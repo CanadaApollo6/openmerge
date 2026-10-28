@@ -120,6 +120,7 @@ type worker struct {
 	authorityObservation *authorityActivation
 	stageA               *stageAPolicy
 	provenance           *provenancePass
+	dependencies         *dependencyPass
 	approvalInputProbe   func(context.Context, queue.ApprovalBasis) (queue.ApprovalEligibilityObserved, error)
 	settlementOnly       bool
 	mu                   sync.Mutex
@@ -579,6 +580,17 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 		if err := s.store.RecoverProvenance(ctx, w.id); err != nil {
 			return err
 		}
+	}
+	// Drain landed recovery before this cycle plans, claims or starts anything;
+	// every later load in this cycle carries the recorded-fact planner gate.
+	if w.dependencies != nil {
+		if err := w.dependencies.complete(w); err != nil {
+			return err
+		}
+		if err := w.dependencies.recover(ctx, w.id); err != nil {
+			return err
+		}
+		ctx = store.WithDependencyActivation(ctx, w.id, w.dependencies.binding)
 	}
 	w.accessBlocked = current.SourceBlocked(queue.RepositoryAccess)
 	if (w.settlementOnly || current.SourceBlocked(queue.RepositoryAccess)) && (current.Active == nil || current.Active.Phase != queue.Landing) {

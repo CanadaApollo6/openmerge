@@ -52,7 +52,7 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 			aliases[alias] = value
 			slash := filepath.ToSlash(path)
 			auditDecoder := rel == "internal/audit/provenance.go" && value == "github.com/CanadaApollo6/openmerge/internal/provenance/journal"
-			if !strings.Contains(slash, "internal/journalreader/") && !strings.HasSuffix(slash, "internal/store/shared_reader.go") && !strings.HasSuffix(slash, "internal/store/side_append.go") && !strings.Contains(slash, "internal/dependency/") && !auditDecoder {
+			if !strings.Contains(slash, "internal/journalreader/") && !strings.HasSuffix(slash, "internal/store/shared_reader.go") && !strings.HasSuffix(slash, "internal/store/side_append.go") && !strings.Contains(slash, "internal/dependency/") && !auditDecoder && !dependencySeam(rel, value) {
 				t.Errorf("new event codec escaped read-only boundary: %s", path)
 			}
 		}
@@ -64,9 +64,11 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 			"internal/dependency/codec.go":          true,
 			"internal/dependency/projection.go":     true,
 			"internal/dependency/snapshot.go":       true,
+			"internal/dependency/decision.go":       true,
 		}
 		allowedStarts := disabledCompanionStarts(file, rel)
 		activated := activatedProvenanceCalls(file, rel)
+		dependencyCalls := activatedCalls(file, rel, "dependencies")
 		transactions := sanctionedLandingTransactions(file, rel)
 		ast.Inspect(file, func(n ast.Node) bool {
 			// Include function-value captures, not just direct calls.
@@ -84,6 +86,14 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 					if !activated[sel] {
 						t.Errorf("ungated provenance writer caller/capture in %s", path)
 					}
+				case "StartDependencyLanding", "WithDependencyActivation":
+					if !dependencyCalls[sel] {
+						t.Errorf("ungated dependency writer caller/capture in %s", path)
+					}
+				case "startID":
+					if rel != "internal/store/dependency_start.go" && rel != "internal/store/side_append.go" {
+						t.Errorf("dependency companion admission outside its start transaction in %s", path)
+					}
 				case "startLandingTransaction":
 					if !transactions[sel] {
 						t.Errorf("production transaction start caller/capture in %s", path)
@@ -99,12 +109,17 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 				}
 			}
 
+			if kv, ok := n.(*ast.KeyValueExpr); ok {
+				if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "startID" && rel != "internal/store/dependency_start.go" {
+					t.Errorf("dependency companion admission outside its start transaction in %s", path)
+				}
+			}
 			if literal, ok := n.(*ast.BasicLit); ok && literal.Kind == token.STRING && !allowedKinds[rel] {
 				value, err := strconv.Unquote(literal.Value)
 				if err != nil {
 					t.Fatal(err)
 				}
-				for _, kind := range []string{"change_provenance_observed", "landing_provenance_recorded", "dependency_journal_initialized", "change_dependencies_declared", "dependency_policy_applied", "dependency_declaration_acknowledged", "dependency_declaration_self_acknowledged", "dependency_observed"} {
+				for _, kind := range []string{"change_provenance_observed", "landing_provenance_recorded", "dependency_journal_initialized", "change_dependencies_declared", "dependency_policy_applied", "dependency_declaration_acknowledged", "dependency_declaration_self_acknowledged", "dependency_observed", "dependency_decision_recorded"} {
 					if rel == "internal/audit/provenance.go" && (kind == "change_provenance_observed" || kind == "landing_provenance_recorded") {
 						continue
 					}
@@ -186,6 +201,19 @@ func TestCompanionStartHoldGuard(t *testing.T) {
 // Only direct calls inside the private queue activation branch may enter the
 // sanctioned writer or startup recovery. Function captures remain forbidden.
 func activatedProvenanceCalls(file *ast.File, rel string) map[*ast.SelectorExpr]bool {
+	return activatedCalls(file, rel, "provenance")
+}
+
+// dependencySeam names the only production files outside the read-only boundary
+// allowed to import the dependency package: the store start adapter and the
+// private serve activation seam. Neither may encode new events.
+func dependencySeam(rel, value string) bool {
+	return value == "github.com/CanadaApollo6/openmerge/internal/dependency" && (rel == "internal/store/dependency_start.go" || rel == "internal/serve/dependency.go")
+}
+
+// activatedCalls returns direct calls inside an `if x.<field> != nil` branch of
+// the private serve activation files. Function captures remain forbidden.
+func activatedCalls(file *ast.File, rel, field string) map[*ast.SelectorExpr]bool {
 	out := map[*ast.SelectorExpr]bool{}
 	if rel != "internal/serve/serve.go" && rel != "internal/serve/worker.go" && rel != "internal/serve/stage_a_gate.go" {
 		return out
@@ -201,7 +229,7 @@ func activatedProvenanceCalls(file *ast.File, rel string) map[*ast.SelectorExpr]
 		}
 		sel, ok := condition.X.(*ast.SelectorExpr)
 		nilValue, nilOK := condition.Y.(*ast.Ident)
-		if !ok || sel.Sel.Name != "provenance" || !nilOK || nilValue.Name != "nil" {
+		if !ok || sel.Sel.Name != field || !nilOK || nilValue.Name != "nil" {
 			return true
 		}
 		ast.Inspect(branch.Body, func(n ast.Node) bool {
@@ -246,24 +274,64 @@ func sanctionedLandingTransactions(file *ast.File, rel string) map[*ast.Selector
 		}
 		legacy := rel == "internal/store/landing_start.go" && fn.Name.Name == "startLandingWithSide"
 		active := rel == "internal/store/side_append.go" && fn.Name.Name == "StartProvenanceLanding"
-		if !legacy && !active {
+		dependencies := rel == "internal/store/dependency_start.go" && fn.Name.Name == "StartDependencyLanding"
+		if !legacy && !active && !dependencies {
 			continue
 		}
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
-			if !ok || len(call.Args) < 10 {
+			if !ok || len(call.Args) < 11 {
 				return true
 			}
 			sel, ok := call.Fun.(*ast.SelectorExpr)
 			if !ok || sel.Sel.Name != "startLandingTransaction" {
 				return true
 			}
-			arg, nilOK := call.Args[9].(*ast.Ident)
-			if active || nilOK && arg.Name == "nil" {
+			isNil := func(i int) bool { arg, ok := call.Args[i].(*ast.Ident); return ok && arg.Name == "nil" }
+			// Positions 9 and 10 are the provenance and dependency evidence.
+			if legacy && isNil(9) && isNil(10) || active && isNil(10) || dependencies && isNil(9) && !isNil(10) {
 				allowed[sel] = true
 			}
 			return true
 		})
 	}
 	return allowed
+}
+
+func TestActivatedDependencyWriterGuard(t *testing.T) {
+	for _, tc := range []struct {
+		source, path string
+		want         bool
+	}{
+		{`if w.dependencies != nil { ctx = store.WithDependencyActivation(ctx,w.id,b) }`, "internal/serve/serve.go", true},
+		{`if w.dependencies != nil { emit = func(e queue.Event) error { return s.store.StartDependencyLanding() } }`, "internal/serve/worker.go", true},
+		{`ctx = store.WithDependencyActivation(ctx,w.id,b)`, "internal/serve/serve.go", false},
+		{`if w.provenance != nil { s.store.StartDependencyLanding() }`, "internal/serve/worker.go", false},
+		{`if w.dependencies == nil { s.store.StartDependencyLanding() }`, "internal/serve/worker.go", false},
+		{`if w.dependencies != nil { _ = s.store.StartDependencyLanding }`, "internal/serve/worker.go", false},
+		{`if w.dependencies != nil { s.store.StartDependencyLanding() }`, "cmd/openmerge/main.go", false},
+	} {
+		file, err := parser.ParseFile(token.NewFileSet(), "guard.go", "package serve; func f(){"+tc.source+"}", 0)
+		must(t, err)
+		if (len(activatedCalls(file, tc.path, "dependencies")) > 0) != tc.want {
+			t.Fatal(tc.source)
+		}
+	}
+	for _, tc := range []struct {
+		source, path, fn string
+		want             bool
+	}{
+		{`s.startLandingTransaction(a,b,c,d,e,f,g,h,i,nil,&v)`, "internal/store/dependency_start.go", "StartDependencyLanding", true},
+		{`s.startLandingTransaction(a,b,c,d,e,f,g,h,i,&p,&v)`, "internal/store/dependency_start.go", "StartDependencyLanding", false},
+		{`s.startLandingTransaction(a,b,c,d,e,f,g,h,i,nil,nil)`, "internal/store/landing_start.go", "startLandingWithSide", true},
+		{`s.startLandingTransaction(a,b,c,d,e,f,g,h,i,nil,&v)`, "internal/store/landing_start.go", "startLandingWithSide", false},
+		{`s.startLandingTransaction(a,b,c,d,e,f,g,h,i,&p,&v)`, "internal/store/side_append.go", "StartProvenanceLanding", false},
+		{`s.startLandingTransaction(a,b,c,d,e,f,g,h,i,nil,&v)`, "internal/serve/worker.go", "StartDependencyLanding", false},
+	} {
+		file, err := parser.ParseFile(token.NewFileSet(), "guard.go", "package store; func (s *Store) "+tc.fn+"(){"+tc.source+"}", 0)
+		must(t, err)
+		if (len(sanctionedLandingTransactions(file, tc.path)) > 0) != tc.want {
+			t.Fatal(tc.source, tc.path)
+		}
+	}
 }

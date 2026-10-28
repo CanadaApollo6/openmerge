@@ -101,6 +101,9 @@ type State struct {
 	window                *adaptiveWindow
 	outcomes              []changeOutcome
 	cancellationConfirmed map[string][]CheckRun
+
+	// Planner-only ADR 0011 overlay; nil on every legacy and fold path.
+	dependencyWaits map[int]DependencyWait
 }
 
 // Entry records the head admitted to the queue, independently of later observations.

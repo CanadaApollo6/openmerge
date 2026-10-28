@@ -33,6 +33,9 @@ type SideAppend struct {
 	DedupeKey string
 	Binding   dependency.JournalInitialized
 	Build     func(ids []uint64) ([]journalreader.Event, error)
+	// startID admits dependency decision companions only inside the activated
+	// landing-start transaction, bound to its exact durable LandingStarted row.
+	startID uint64
 }
 
 // AppendSide validates the entire bundle through the exact replay fold under the
@@ -134,8 +137,12 @@ func (s *Store) appendSideTx(ctx context.Context, tx pgx.Tx, q QueueID, request 
 				// Future integration may co-transact evidence there, never bypass it here.
 				return errors.New("side append does not admit queue events")
 			case event.Dependency != nil:
-				switch event.Dependency.(type) {
+				switch d := event.Dependency.(type) {
 				case dependency.JournalInitialized, dependency.DependenciesDeclared, dependency.PolicyApplied, dependency.Acknowledged, dependency.SelfAcknowledged, dependency.Observed:
+				case dependency.DecisionRecorded:
+					if request.startID == 0 || d.StartEventID != request.startID {
+						return errors.New("dependency decision companion requires its landing-start transaction")
+					}
 				default:
 					return errors.New("side append dependency kind is not admitted")
 				}
@@ -705,7 +712,7 @@ func (v ProvenanceStart) Decisions(state queue.State, policy cp.Policy, land que
 // StartProvenanceLanding is the sanctioned activated writer. The ordinary
 // StartLanding path retains its literal nil companion builder and wire bytes.
 func (s *Store) StartProvenanceLanding(ctx context.Context, claim ClaimedAction, cfg queue.Config, policy cp.Policy, fresh []queue.ApprovalEligibilityObserved, decisions []queue.LandingDecisionRecorded, start queue.LandingStarted, evidence ProvenanceStart, checks ...queue.LandingChecksRecorded) error {
-	return retryLandingDecision(s.startLandingTransaction(ctx, claim, cfg, policy, fresh, decisions, start, s.authorizeStart, nil, &evidence, checks...))
+	return retryLandingDecision(s.startLandingTransaction(ctx, claim, cfg, policy, fresh, decisions, start, s.authorizeStart, nil, &evidence, nil, checks...))
 }
 
 func (v ProvenanceStart) validate(ctx context.Context, tx pgx.Tx, q QueueID, state queue.State, policy cp.Policy, land queue.Land, start queue.LandingStarted, fresh []queue.ApprovalEligibilityObserved, decisions []queue.LandingDecisionRecorded) (func([]uint64) (SideAppend, error), error) {
