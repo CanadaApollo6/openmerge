@@ -58,8 +58,10 @@ func admitDependencyBuild(t *testing.T, f *depFixture, cfg queue.Config) string 
 }
 
 func assertCompositionReplay(t *testing.T, f *depFixture, configs ...queue.Config) {
- cfg := depCfg
- if len(configs) > 0 { cfg = configs[0] }
+	cfg := depCfg
+	if len(configs) > 0 {
+		cfg = configs[0]
+	}
 	t.Helper()
 	type record struct {
 		id  uint64
