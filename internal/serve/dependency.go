@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"errors"
+ "github.com/CanadaApollo6/openmerge/internal/status"
 
 	"github.com/CanadaApollo6/openmerge/internal/dependency"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -15,6 +16,12 @@ import (
 type dependencyPass struct {
 	// binding is independently verified journal identity, never a snapshot's.
 	binding dependency.JournalInitialized
+ // audience is a complete recorded reader grant set per source, not App access.
+ audience map[string][]dependency.Grant
+ // checkAudience covers every check reader, independently of API readers.
+ checkAudience map[string][]dependency.Grant
+ // sources are recorded source journal bindings, never inferred from audience grants.
+ sources map[string]dependency.SourceRecord
 	// landingStart supplies trusted fresh landing-start reads, completed before
 	// the store transaction opens. It must not emit or mutate journal state.
 	landingStart func(context.Context, queue.Land, queue.LandingStarted) (store.DependencyStart, error)
@@ -30,4 +37,27 @@ func (pass *dependencyPass) complete(w *worker) error {
 		return errors.New("incomplete dependency activation")
 	}
 	return pass.binding.Validate()
+}
+
+func dependencyJournal(j store.Journal, pass *dependencyPass) (store.Journal,error) {
+ if pass == nil { return j,nil }
+ return status.ProjectDependencies(j,pass.binding,pass.audience,pass.sources)
+}
+
+func (s *Server) dependencyJournals(journals []store.Journal) ([]store.Journal,error) {
+ for i,j := range journals {
+  for _,w := range s.workers() {
+   if w.Key == j.Key && w.dependencies != nil {
+    var err error
+    journals[i],err = dependencyJournal(j,w.dependencies)
+    if err != nil { return nil,err }
+   }
+  }
+ }
+ return journals,nil
+}
+
+func dependencyCheckJournal(j store.Journal, pass *dependencyPass) (store.Journal,error) {
+ if pass==nil {return j,nil}
+ return status.ProjectDependencies(j,pass.binding,pass.checkAudience,pass.sources)
 }

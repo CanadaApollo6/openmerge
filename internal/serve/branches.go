@@ -451,7 +451,8 @@ func (s *Server) Keys() []store.QueueKey {
 
 // Journals supplies persisted history alongside this process's readiness snapshot.
 func (s *Server) Journals(ctx context.Context, keys []store.QueueKey) ([]store.Journal, error) {
-	return s.store.Journals(ctx, keys)
+	journals, err := s.store.Journals(ctx, keys)
+ if err != nil { return nil, err }; return s.dependencyJournals(journals)
 }
 
 // QueueReadiness returns the current admission gate without persisting transient failures.

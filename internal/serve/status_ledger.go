@@ -63,7 +63,11 @@ func (s *Server) ledgerSummary(ctx context.Context, w *worker, pr int) (string, 
 		if len(journals) == 0 {
 			return "", nil
 		}
-		projection, _, _ := status.Project(journals[0], 0, 0, s.options.Sanitizer)
+		if w.dependencies != nil {
+   journals[0], err = dependencyCheckJournal(journals[0], w.dependencies)
+   if err != nil { return "", err }
+  }
+  projection, _, _ := status.Project(journals[0], 0, 0, s.options.Sanitizer)
 		w.ledgerCache = &ledgerCache{watermark: projection.Watermark, projection: projection, journal: journals[0]}
 	}
 	q := &w.ledgerCache.projection

@@ -11,7 +11,8 @@ type WaitingCode string
 
 // Waiting reason codes are stable presentation categories.
 const (
-	WaitingDone      WaitingCode = "done"
+	WaitingDependencies WaitingCode = "dependencies"
+ WaitingDone      WaitingCode = "done"
 	WaitingPaused    WaitingCode = "paused"
 	WaitingApprovals WaitingCode = "approvals"
 	WaitingTrust     WaitingCode = "trust"
@@ -27,7 +28,13 @@ const (
 
 // WaitingReason is derived solely from recorded projections and runtime gates.
 // Details and URL remain absent when the recorded evidence cannot identify them.
+type DependencyDiagnostic struct {
+ Code string `json:"code"`
+ Source string `json:"source"`
+}
+
 type WaitingReason struct {
+ Diagnostics []DependencyDiagnostic `json:"diagnostics,omitempty"`
 	Code    WaitingCode `json:"code"`
 	Text    string      `json:"text"`
 	Details []string    `json:"details,omitempty"`
@@ -124,7 +131,8 @@ func deriveWaitingReason(q *Queue, e Entry, position bool) WaitingReason {
 	if e.Position == 0 {
 		return reason(WaitingOperator, "Not queued; waiting for a queue request from a writer")
 	}
-	text := fmt.Sprintf("In queue behind %d changes; waiting for the next test batch", max(0, e.Position-1))
+	if e.Dependency != nil && e.dependencyWaiting { return *e.Dependency }
+ text := fmt.Sprintf("In queue behind %d changes; waiting for the next test batch", max(0, e.Position-1))
 	if !position {
 		text = "In queue; waiting for the next test batch"
 	}
@@ -199,4 +207,14 @@ func waitingText(r WaitingReason) string {
 		text += "; " + r.URL
 	}
 	return text
+}
+
+func attachDependency(q *Queue, e *Entry) {
+ if v,ok := q.dependencies[e.PR]; ok {
+  e.dependencyWaiting = v.Blocking
+  e.dependencyRedacted=v.Redacted
+  e.Dependency = &WaitingReason{Code:WaitingDependencies,Text:v.Text,Details:slices.Clone(v.Details),URL:v.URL}
+  if v.Redacted {maskDependencyEntry(e)}
+  for _,d:=range v.Diagnostics {e.Dependency.Diagnostics=append(e.Dependency.Diagnostics,DependencyDiagnostic{Code:d.Code,Source:d.Source})}
+ }
 }

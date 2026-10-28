@@ -20,11 +20,13 @@ func ApplyPolicy(q *Queue, selected *Entry, cfg queue.Config, now time.Time) {
 	q.LastWindowFailure = q.state.LastWindowFailure()
 	for i := range q.Entries {
 		q.Entries[i].Gate = holdingGate(q, q.Entries[i], cfg, now)
-		q.Entries[i].WaitingReason = DeriveWaitingReason(q, q.Entries[i])
+		attachDependency(q,&q.Entries[i])
+  q.Entries[i].WaitingReason = DeriveWaitingReason(q, q.Entries[i])
 	}
 	if selected != nil {
 		selected.Gate = holdingGate(q, *selected, cfg, now)
-		selected.WaitingReason = DeriveWaitingReason(q, *selected)
+		attachDependency(q,selected)
+  selected.WaitingReason = DeriveWaitingReason(q, *selected)
 	}
 }
 

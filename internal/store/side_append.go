@@ -139,7 +139,7 @@ func (s *Store) appendSideTx(ctx context.Context, tx pgx.Tx, q QueueID, request 
 				return errors.New("side append does not admit queue events")
 			case event.Dependency != nil:
 				switch d := event.Dependency.(type) {
-				case dependency.JournalInitialized, dependency.DependenciesDeclared, dependency.PolicyApplied, dependency.Acknowledged, dependency.SelfAcknowledged, dependency.Observed:
+				case dependency.JournalInitialized, dependency.DependenciesDeclared, dependency.PolicyApplied, dependency.Acknowledged, dependency.SelfAcknowledged, dependency.Observed, dependency.DiagnosticRecorded:
 				case dependency.CompositionRecorded:
 					if request.buildStartID == 0 || d.StartEventID != request.buildStartID {
 						return errors.New("dependency composition requires its build-start transaction")

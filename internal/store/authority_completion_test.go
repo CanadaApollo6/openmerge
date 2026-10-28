@@ -384,7 +384,7 @@ func TestAuthorityDowngradeEventCoverage(t *testing.T) {
 		})
 	}
 	slices.Sort(added)
-	listed := slices.DeleteFunc(slices.Clone(authorityDowngradeEventTypes), func(kind string) bool { return kind == "dependency_composition_recorded" })
+	listed := slices.DeleteFunc(slices.Clone(authorityDowngradeEventTypes), func(kind string) bool { return kind == "dependency_composition_recorded" || kind == "dependency_diagnostic_recorded" })
 	slices.Sort(listed)
 	if !slices.Equal(added, listed) {
 		t.Fatalf("ADR event boundary drift: decoder additions %v; downgrade gate %v", added, listed)

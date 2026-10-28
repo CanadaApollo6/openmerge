@@ -46,7 +46,7 @@ func DecodeEvent(raw []byte) (Event, error) {
 	switch header.Type {
 	case "change_provenance_observed", "landing_provenance_recorded":
 		e.Provenance, err = pj.DecodeEvent(raw)
-	case "dependency_journal_initialized", "change_dependencies_declared", "dependency_policy_applied", "dependency_declaration_acknowledged", "dependency_declaration_self_acknowledged", "dependency_observed", "dependency_decision_recorded", "dependency_composition_recorded":
+	case "dependency_diagnostic_recorded", "dependency_journal_initialized", "change_dependencies_declared", "dependency_policy_applied", "dependency_declaration_acknowledged", "dependency_declaration_self_acknowledged", "dependency_observed", "dependency_decision_recorded", "dependency_composition_recorded":
 		e.Dependency, err = dependency.DecodeEvent(raw)
 	default:
 		e.Queue, err = queue.DecodeEvent(raw)

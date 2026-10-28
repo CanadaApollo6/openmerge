@@ -10,8 +10,26 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// DependencyStatus is an audience-safe read projection installed only by the
+// private dependency activation seam. It never contains raw source evidence.
+type DependencyDiagnostic struct {
+ Code string
+ Source string
+}
+
+type DependencyStatus struct {
+ Diagnostics []DependencyDiagnostic
+ Text string
+ Details []string
+ URL string
+ Redacted bool
+ Blocking bool
+}
+
 // Journal is a queue's immutable seed and committed events at one DB snapshot.
 type Journal struct {
+	DependencyRedacted bool
+ DependencyStatus map[int]DependencyStatus
 	Key             QueueKey
 	Seed            queue.State
 	Events          []JournalEvent
