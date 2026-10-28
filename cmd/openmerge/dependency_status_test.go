@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest"
+	"github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest/statusfixture"
 	"github.com/CanadaApollo6/openmerge/internal/status"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
@@ -23,8 +23,8 @@ func (s dependencyCLIJournal) Journals(_ context.Context, _ []store.QueueKey) ([
 func TestDependencyCLIPrivacyGolden(t *testing.T) {
 	var want []byte
 	for i, code := range []string{"missing", "dependency-waiting", "dependency-closed", "dependency-stale", "dependency-landed", "dependency-unavailable", "dependency-out-of-scope", "dependency-unresolved"} {
-		j, b, _, _ := dependencytest.StatusJournal(t, code, i+1)
-		j, err := status.ProjectDependencies(j, b, nil, dependencytest.StatusSources())
+		j, b, _, _ := statusfixture.StatusJournal(t, code, i+1)
+		j, err := status.ProjectDependencies(j, b, nil, statusfixture.StatusSources())
 		if err != nil {
 			t.Fatal(err)
 		}

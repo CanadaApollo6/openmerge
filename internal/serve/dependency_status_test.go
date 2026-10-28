@@ -4,18 +4,18 @@ import (
 	"testing"
 
 	"github.com/CanadaApollo6/openmerge/internal/dependency"
-	"github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest"
+	"github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest/statusfixture"
 	"github.com/CanadaApollo6/openmerge/internal/status"
 )
 
 func TestDependencyStatusActivationRemainsPrivate(t *testing.T) {
-	j, b, ref, grant := dependencytest.StatusJournal(t, "dependency-landed", 1)
+	j, b, ref, grant := statusfixture.StatusJournal(t, "dependency-landed", 1)
 	inactive, err := dependencyJournal(j, nil)
 	must(t, err)
 	if inactive.DependencyStatus != nil {
 		t.Fatal("inactive queue gained dependency presentation")
 	}
-	pass := &dependencyPass{binding: b, audience: map[string][]dependency.Grant{ref: {grant}}, sources: dependencytest.StatusSources()}
+	pass := &dependencyPass{binding: b, audience: map[string][]dependency.Grant{ref: {grant}}, sources: statusfixture.StatusSources()}
 	api, err := dependencyJournal(j, pass)
 	must(t, err)
 	_, apiEntry, _ := status.Project(api, 2, 1, nil)

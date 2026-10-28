@@ -10,6 +10,7 @@ import (
 
 	"github.com/CanadaApollo6/openmerge/internal/dependency"
 	"github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest"
+ "github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest/statusfixture"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/journalreader"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -32,7 +33,7 @@ func TestDependencyPrivacyGoldensNoRenderingFetch(t *testing.T) {
 	var wantAPI, wantCheck []byte
 	for i, state := range states {
 		t.Run(state, func(t *testing.T) {
-			j, binding, ref, grant := dependencytest.StatusJournal(t, state, i+1)
+			j, binding, ref, grant := statusfixture.StatusJournal(t, state, i+1)
 			denied := grant
 			denied.Allowed = false
 			mismatch := grant
@@ -40,7 +41,7 @@ func TestDependencyPrivacyGoldensNoRenderingFetch(t *testing.T) {
 			stale := grant
 			stale.Fresh = false
 			for _, audience := range [][]dependency.Grant{nil, {denied}, {mismatch}, {stale}, {grant, denied}} {
-				projected, err := ProjectDependencies(j, binding, map[string][]dependency.Grant{ref: audience}, dependencytest.StatusSources())
+				projected, err := ProjectDependencies(j, binding, map[string][]dependency.Grant{ref: audience}, statusfixture.StatusSources())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -79,8 +80,8 @@ func TestDependencyPrivacyGoldensNoRenderingFetch(t *testing.T) {
 
 func TestDependencyAuthorizedDiagnosticsAndPrecedence(t *testing.T) {
 	for _, code := range []string{"dependency-waiting", "dependency-closed", "dependency-stale", "dependency-landed", "dependency-unavailable", "dependency-source-retargeted"} {
-		j, binding, ref, grant := dependencytest.StatusJournal(t, code, 1)
-		j, err := ProjectDependencies(j, binding, map[string][]dependency.Grant{ref: {grant}}, dependencytest.StatusSources())
+		j, binding, ref, grant := statusfixture.StatusJournal(t, code, 1)
+		j, err := ProjectDependencies(j, binding, map[string][]dependency.Grant{ref: {grant}}, statusfixture.StatusSources())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -113,14 +114,14 @@ func TestDependencyAuthorizedDiagnosticsAndPrecedence(t *testing.T) {
 }
 
 func TestDependencyMissingDiagnosticAndBindingFailClosed(t *testing.T) {
-	j, binding, ref, grant := dependencytest.StatusJournal(t, "dependency-closed", 1)
+	j, binding, ref, grant := statusfixture.StatusJournal(t, "dependency-closed", 1)
 	for i := range j.Events {
 		if bytes.Contains(j.Events[i].Payload, []byte(`"type":"dependency_diagnostic_recorded"`)) {
 			j.Events = append(j.Events[:i:i], j.Events[i+1:]...)
 			break
 		}
 	}
-	j, err := ProjectDependencies(j, binding, map[string][]dependency.Grant{ref: {grant}}, dependencytest.StatusSources())
+	j, err := ProjectDependencies(j, binding, map[string][]dependency.Grant{ref: {grant}}, statusfixture.StatusSources())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +137,7 @@ func TestDependencyMissingDiagnosticAndBindingFailClosed(t *testing.T) {
 }
 
 func TestDependencySourceGrantConfusionFailsClosed(t *testing.T) {
-	j, binding, ref, _ := dependencytest.StatusJournal(t, "dependency-closed", 1)
+	j, binding, ref, _ := statusfixture.StatusJournal(t, "dependency-closed", 1)
 	var unrelated dependency.Grant
 	for i, record := range j.Events {
 		if !bytes.Contains(record.Payload, []byte(`"type":"dependency_diagnostic_recorded"`)) {
@@ -155,7 +156,7 @@ func TestDependencySourceGrantConfusionFailsClosed(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	projected, err := ProjectDependencies(j, binding, map[string][]dependency.Grant{ref: {unrelated}}, dependencytest.StatusSources())
+	projected, err := ProjectDependencies(j, binding, map[string][]dependency.Grant{ref: {unrelated}}, statusfixture.StatusSources())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,8 +167,8 @@ func TestDependencySourceGrantConfusionFailsClosed(t *testing.T) {
 }
 
 func TestDependencyHistoricalRevisionWithholdsCurrentDetails(t *testing.T) {
-	j, binding, ref, grant := dependencytest.StatusJournal(t, "dependency-closed", 1)
-	j, err := ProjectDependencies(j, binding, map[string][]dependency.Grant{ref: {grant}}, dependencytest.StatusSources())
+	j, binding, ref, grant := statusfixture.StatusJournal(t, "dependency-closed", 1)
+	j, err := ProjectDependencies(j, binding, map[string][]dependency.Grant{ref: {grant}}, statusfixture.StatusSources())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +191,7 @@ func TestDependencyHistoricalRevisionWithholdsCurrentDetails(t *testing.T) {
 		t.Fatal("current diagnostics contaminated historical revision")
 	}
 	// The current head cannot inherit an older declaration's diagnosis either.
-	current, err := ProjectDependencies(j, binding, map[string][]dependency.Grant{ref: {grant}}, dependencytest.StatusSources())
+	current, err := ProjectDependencies(j, binding, map[string][]dependency.Grant{ref: {grant}}, statusfixture.StatusSources())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,8 +202,8 @@ func TestDependencyHistoricalRevisionWithholdsCurrentDetails(t *testing.T) {
 }
 
 func TestDependencyAuthorizedReferencesRemainOriginal(t *testing.T) {
-	j, binding, ref, grant := dependencytest.StatusJournal(t, "dependency-closed", 3)
-	projected, err := ProjectDependencies(j, binding, map[string][]dependency.Grant{ref: {grant}}, dependencytest.StatusSources())
+	j, binding, ref, grant := statusfixture.StatusJournal(t, "dependency-closed", 3)
+	projected, err := ProjectDependencies(j, binding, map[string][]dependency.Grant{ref: {grant}}, statusfixture.StatusSources())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +217,7 @@ func TestDependencyAuthorizedReferencesRemainOriginal(t *testing.T) {
 func TestDependencyUnstartedProgressPrivacy(t *testing.T) {
 	var wantAPI, wantCheck, wantHistorical, wantBrief []byte
 	for _, phase := range []string{"queued", "building", "testing", "discarded", "invalidating", "retrying", "fast-forward"} {
-		j, b, ref, grant := dependencytest.StatusJournal(t, "dependency-landed", 1)
+		j, b, ref, grant := statusfixture.StatusJournal(t, "dependency-landed", 1)
 		records := map[uint64][]byte{}
 		reader := journalreader.New(j.Seed, b, func(id uint64) ([]byte, error) { return records[id], nil })
 		reader.WithChangeIdentity(func(pr int) (queue.ChangeID, error) { return j.Key.ChangeID(pr) })
@@ -315,7 +316,7 @@ func TestDependencyUnstartedProgressPrivacy(t *testing.T) {
 			t.Fatal("fixture did not exercise retryable build failure")
 		}
 		if phase == "invalidating" {
-			authorized, err := ProjectDependencies(j, b, map[string][]dependency.Grant{ref: {grant}}, dependencytest.StatusSources())
+			authorized, err := ProjectDependencies(j, b, map[string][]dependency.Grant{ref: {grant}}, statusfixture.StatusSources())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -324,7 +325,7 @@ func TestDependencyUnstartedProgressPrivacy(t *testing.T) {
 				t.Fatal("status lost composed invalidation", e.Status)
 			}
 		}
-		j, err := ProjectDependencies(j, b, nil, dependencytest.StatusSources())
+		j, err := ProjectDependencies(j, b, nil, statusfixture.StatusSources())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -379,7 +380,7 @@ func TestDependencyUnstartedProgressPrivacy(t *testing.T) {
 }
 
 func TestDependencyExplicitPinPresentation(t *testing.T) {
-	j, binding, ref, grant := dependencytest.StatusJournal(t, "dependency-waiting", 1)
+	j, binding, ref, grant := statusfixture.StatusJournal(t, "dependency-waiting", 1)
 	scope := dependency.Scope{ForgeInstance: binding.ForgeInstance, Installation: binding.Installation, JournalNamespace: binding.Namespace}
 	parsed, err := dependency.ParseReference(ref, scope)
 	if err != nil {
@@ -421,7 +422,7 @@ func TestDependencyExplicitPinPresentation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	j, err = ProjectDependencies(j, binding, map[string][]dependency.Grant{pinned: {grant}}, dependencytest.StatusSources())
+	j, err = ProjectDependencies(j, binding, map[string][]dependency.Grant{pinned: {grant}}, statusfixture.StatusSources())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -432,9 +433,9 @@ func TestDependencyExplicitPinPresentation(t *testing.T) {
 }
 
 func TestDependencySourceBindingGuards(t *testing.T) {
-	j, b, ref, g := dependencytest.StatusJournal(t, "dependency-closed", 1)
+	j, b, ref, g := statusfixture.StatusJournal(t, "dependency-closed", 1)
 	for _, name := range []string{"missing", "alias", "scope", "change", "revision"} {
-		sources := dependencytest.StatusSources()
+		sources := statusfixture.StatusSources()
 		r := dependencytest.Request().Source
 		switch name {
 		case "missing":

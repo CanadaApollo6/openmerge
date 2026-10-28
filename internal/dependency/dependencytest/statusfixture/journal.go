@@ -1,7 +1,8 @@
-package dependencytest
+package statusfixture
 
 import (
 	"github.com/CanadaApollo6/openmerge/internal/dependency"
+ "github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 	"strings"
@@ -12,7 +13,7 @@ import (
 // StatusJournal builds synthetic consumer history for every presentation surface.
 func StatusJournal(t testing.TB, code string, repeats int) (store.Journal, dependency.JournalInitialized, string, dependency.Grant) {
 	t.Helper()
-	r := Request()
+	r := dependencytest.Request()
 	var token [32]byte
 	token[0] = 1
 	binding, err := dependency.NewJournalIdentity("openmerge-db-v2:sha256:"+strings.Repeat("a", 64), token, r.Registry.Scope.ForgeInstance, r.Registry.Scope.Installation)
@@ -79,6 +80,6 @@ func StatusJournal(t testing.TB, code string, repeats int) (store.Journal, depen
 
 // StatusSources is the independently recorded source-journal binding snapshot.
 func StatusSources() map[string]dependency.SourceRecord {
-	r := Request()
+	r := dependencytest.Request()
 	return map[string]dependency.SourceRecord{r.Source.Reference.ChangeID: r.Source}
 }
