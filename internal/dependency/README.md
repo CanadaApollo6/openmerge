@@ -1,6 +1,8 @@
-# Dependency candidates (ADR 0011 slices 1–3, Inert)
+# Dependency candidates (ADR 0011 slices 1–3 Inert; 4a-1 Hold)
 
-This package is not imported by production code. Its pure core accepts immutable
+Production imports are limited to the shared reader, the store start adapter
+and the private serve seam (slice 4a-1 below); no public configuration can
+activate them. Its pure core accepts immutable
 supplied facts. Slice 3 adds explicit unwired forge acquisitions exercised only
 through fake contracts and HTTP fixtures; there are no database, journal or
 filesystem reads.
@@ -551,3 +553,97 @@ The AST writer guard is a **tripwire**, not proof of writer absence: it does not
 catch string concatenation, `.sql` files or `_test.go` files. The only allowed
 production v8/v9 composer serves derived audit cursors; review any new
 persistence adapter independently.
+
+## Slice 4a-1 planner gate, decision companion and landing-start writer (Hold)
+
+**Activation is test-seam only.** The public loader still rejects every
+`dependencies` key (`TestPublicConfigRejectsDependencyKeys` is unchanged). Only
+the private `serve.dependencyPass`, installed by internal tests, may call
+`store.WithDependencyActivation` or `store.StartDependencyLanding`, and only
+inside `if w.dependencies != nil` branches (`TestActivatedDependencyWriterGuard`,
+`TestNoProductionNewEventOrSnapshotWriters`). Without activation every load,
+plan, start, journal row, cursor and digest is byte-identical: the overlay field
+is nil, `Plan` takes its original path, and `startLandingWithSide` still passes
+literal nil provenance/dependency evidence. Existing goldens are untouched.
+
+- **Admission from recorded facts.** `State.Admission(change, revision)` returns
+  a typed blocking code or the exact `AdmissionBasis`: the alias declaration at
+  this revision (an absent declaration is `dependency-unresolved`, never an empty
+  graph), the queue's enabled policy companion and `allow_from`, any current
+  acknowledgement (a revoked self-acknowledgement re-holds), and one current
+  `landed` observation per edge. It performs no I/O and is not landing authority.
+- **Planner gate.** An activated load attaches `queue.State.WithDependencyWaits`,
+  a planner-only overlay keyed by PR and pinned head. Apply, snapshots and wire
+  bytes never see it. `batchCandidates` skips waiting changes and prunes them from
+  pending bisection/retry groups, so a wait consumes no slot, is never bisected or
+  blamed, and never dequeues. The same `batchCandidates` drives depth 1, ADR 0009
+  chained admission at depth 4 and `NextWake`; `CanStart` revalidates the same
+  gated view under the queue lock. A missing value fails closed.
+- **Wait clocks.** Batch `max_wait` is computed only from eligible candidates;
+  a change's clock starts at `max(EnqueuedAt, EligibleAt)`, where `EligibleAt`
+  is the latest journal `recorded_at` of the rows its admission consumes. There
+  is no conflict-grace clock in the codebase yet; 4b must extend `EligibleAt` to
+  accumulate eligible time across a rewind-induced wait.
+- **Decision companion.** `dependency_decision_recorded` is a new wire-v1 kind,
+  one per batch member so each stays far below the 1 MiB event cap with 32 edges.
+  It binds namespace, batch/attempt, tested and landed SHAs, the exact
+  `LandingStarted` row, the member's own decision row (zero only when the queue
+  records no approval decision), member index/count, alias/change/revision/head,
+  the admission basis and per-edge source settlements (declarer read grant,
+  landed revision/head/commit, settlement event, source watermark and base). The
+  fold requires it to equal the CURRENT admission; the shared reader requires the
+  start, decision and batch member to resolve in this queue and every observation
+  to be recorded after the start and before the companion.
+- **Landing-start transaction.** `StartDependencyLanding` enters
+  `startLandingTransaction` with dependency evidence (never together with the
+  provenance writer). It locks B plus the supplied direct sources in ascending
+  queue-ID order before any other lock, then re-derives the direct-source set from
+  B's current declarations and refuses any difference. Under the source locks it
+  checks the source's own policy companion (`allow_to` B), an unchanged journal
+  base since the fresh ancestry read, and an accepted `Landed` outcome for the
+  exact source change revision/head and commit. It refuses while any accepted
+  `Landed` awaits `RecoverLanded`, compares the fresh governing policy reread with
+  the recorded companion, and folds the supplied landing-start reads before any
+  insert. Fresh eligibility, decisions, unchanged `LandingStarted`, the landing-
+  start observations and companions then commit through `appendSideTx` in one
+  transaction, which also upgrades the outside-push cursor to v9 at its existing
+  watermark. `AppendSide` cannot admit a companion: only the start supplies its
+  bound start row. Every refusal returns `ErrLandingDecisionStale` and rolls back.
+- **Worker wiring.** Each cycle and execution calls the pass's recovery
+  (`Store.RecoverProvenance`, i.e. `RecoverLanded`) before planning, claiming or
+  any landing-start read, then installs the activation for every later load. The
+  durable start is intercepted from the ordinary emitter; other events are unchanged.
+  Stage A approval queues and provenance-activated queues refuse dependency
+  activation in 4a-1; the store transaction already links approval decisions.
+
+ADR ambiguities resolved here:
+
+- "Canonical key order" for landing-start locks is ascending stored queue ID, the
+  order the existing tenancy-gated multi-queue paths already use; a key-string
+  order could deadlock against them. The mutation proof shows a real deadlock.
+- Legacy revision observations carry no `ChangeID`. Like audit, the store derives
+  it from the stored canonical queue key and never accepts a different recorded ID.
+- Composition and invalidation companions (`dependency_composition_recorded`,
+  `dependency_compositions_invalidated`) belong with 4b's invalidation: in 4a a
+  refused start keeps B un-started (fail closed) until the inputs recover.
+
+Remaining 4a-2 fixtures: declaration holds with writer-author/editor exclusion,
+single-maintainer self-acknowledgement and policy-change approval, head-only
+opt-in refusal, multi-writer self-acknowledgement and landing-start opt-in
+revocation, unresolved attribution blocking both paths, tightening without
+acknowledgement, and held-request auto-admission and dequeue/re-request preserving
+holds, all exercised through this writer. Production acquisition (ObserveEdge,
+source journal reads and ancestry) is wired in slice 6. The fence-bound
+**BLOCKING** item above still applies to every high-volume activation.
+
+Proofs: `TestAdmissionFromRecordedFactsOnly`, `TestDecisionCompanionWireAndFold`,
+`TestDependencyDecisionBindsDurableStart` (reader),
+`TestDependencyWaitsGatePlannerAtDepthsOneAndFour`,
+`TestDependencyWaitsNeverBisectedRetriedOrDequeued`,
+`TestDependencyWaitSuspendsBatchMaxWait`, store
+`TestDependencyPlannerGateFromRecordedFacts`,
+`TestDependencyStartCommitsCompanionAtomically`,
+`TestDependencyStartRefusesEachAdmissionGateAtomically` (12 gates),
+`TestDependencyStartLockOrderAndConcurrentCycle`,
+`TestDependencyStartWithApprovalDecisionsAndPendingRecovery`, and serve
+`TestDependencyWorkerGateStartAndRecoveryBeforeAdmission`.
