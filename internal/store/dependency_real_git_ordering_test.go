@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/dependency"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	fakeforge "github.com/CanadaApollo6/openmerge/internal/forge/fake"
@@ -121,7 +122,21 @@ func TestDependencyRealGitReviewPushOrderedLanding(t *testing.T) {
 	must(t, err)
 	_, err = s.Plan(f.ctx(t.Context()), f.c.id, depCfg, now)
 	must(t, err)
-	claim := round2ClaimKey(t, s, f.c.id, now, (queue.Land{BatchID: id}).Key())
+	// Keep claim, begin and start on the same clock, as in the prefix landing
+	// test. The cancellation helper uses a one-second lease and f.start uses
+	// wall time, so combining them makes this depend on runner speed.
+	claims, err := s.ClaimQueue(f.ctx(t.Context()), f.c.id, 100, time.Minute, now)
+	must(t, err)
+	var claim ClaimedAction
+	for _, candidate := range claims {
+		if candidate.Key == (queue.Land{BatchID: id}).Key() {
+			claim = candidate
+			break
+		}
+	}
+	if claim.Key == "" {
+		t.Fatal("missing Land claim", claims)
+	}
 	ok, err := s.BeginConsequential(f.ctx(t.Context()), claim, depCfg, now)
 	must(t, err)
 	if !ok {
@@ -130,8 +145,8 @@ func TestDependencyRealGitReviewPushOrderedLanding(t *testing.T) {
 	evidence := f.evidence()
 	evidence.Members[0].Observations[0].SourceRevision = f.observed.SourceRevision
 	evidence.Members[0].Sources[0].Revision = f.observed.SourceRevision
-	must(t, f.start(t.Context(), claim, evidence))
 	land := claim.Action.(queue.Land)
+	must(t, s.StartDependencyLanding(t.Context(), claim, depCfg, cp.Policy{}, nil, nil, queue.LandingStarted{BatchID: land.BatchID, AttemptID: "b-attempt", FenceToken: land.FenceToken, At: now}, evidence))
 	writerGit(t, consumerDir, "", "update-ref", "refs/heads/main", chead, cbase)
 	onBase, err := git.IsAncestor(t.Context(), forge.RepoRef{Path: "acme/client"}, land.TestedSHA, chead)
 	must(t, err)
