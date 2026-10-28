@@ -108,16 +108,31 @@ func (r *Reader) Apply(id uint64, raw []byte) (_ Event, applyErr error) {
 	next := *r
 	switch {
 	case e.Queue != nil:
-  if invalid,ok:=e.Queue.(queue.DependencyCompositionsInvalidated); ok {
-   pending:=[]string{}
-   for _,b:=range r.Queue.Batches() { if b.InvalidationReason==invalid.Reason { pending=append(pending,b.ID) } }
-   if !slices.Equal(pending,invalid.BatchIDs) { return Event{},ErrReference }
-   for i,batch:=range invalid.BatchIDs { _,ref,ok:=r.dependencies.Composition(batch); if !ok || ref!=invalid.CompositionIDs[i] { return Event{},ErrReference } }
-  }
+		if invalid, ok := e.Queue.(queue.DependencyCompositionsInvalidated); ok {
+			pending := []string{}
+			for _, b := range r.Queue.Batches() {
+				if b.InvalidationReason == invalid.Reason {
+					pending = append(pending, b.ID)
+				}
+			}
+			if !slices.Equal(pending, invalid.BatchIDs) {
+				return Event{}, ErrReference
+			}
+			for i, batch := range invalid.BatchIDs {
+				_, ref, ok := r.dependencies.Composition(batch)
+				if !ok || ref != invalid.CompositionIDs[i] {
+					return Event{}, ErrReference
+				}
+			}
+		}
 		next.Queue = queue.Apply(r.Queue, e.Queue)
 		next.Provenance = retireTerminal(r.Provenance, id, e.Queue, r.Queue, next.Queue)
 	case e.Dependency != nil:
-  if c,ok:=e.Dependency.(dependency.CompositionRecorded); ok { if err:=r.validateDependencyComposition(id,c); err!=nil { return Event{},err } }
+		if c, ok := e.Dependency.(dependency.CompositionRecorded); ok {
+			if err := r.validateDependencyComposition(id, c); err != nil {
+				return Event{}, err
+			}
+		}
 		if d, ok := e.Dependency.(dependency.DecisionRecorded); ok {
 			if err := r.validateDependencyDecision(id, d); err != nil {
 				return Event{}, err
@@ -147,14 +162,16 @@ func (r *Reader) Apply(id uint64, raw []byte) (_ Event, applyErr error) {
 		return Event{}, err
 	}
 	// Side facts latch invalidation immediately, including if later observations
- // restore eligibility before a worker next polls. A landing is never retired.
- batches:=[]string{}
- for _,b:=range next.Queue.Batches() {
-  batches=append(batches,b.ID)
-  if c,_,ok:=next.dependencies.Composition(b.ID); ok && !next.dependencies.CompositionValid(c) { next.Queue=next.Queue.WithDependencyInvalidation(b.ID) }
- }
- next.dependencies=next.dependencies.RetainCompositions(batches)
- next.composed = next.composed || e.Queue == nil
+	// restore eligibility before a worker next polls. A landing is never retired.
+	batches := []string{}
+	for _, b := range next.Queue.Batches() {
+		batches = append(batches, b.ID)
+		if c, _, ok := next.dependencies.Composition(b.ID); ok && !next.dependencies.CompositionValid(c) {
+			next.Queue = next.Queue.WithDependencyInvalidation(b.ID)
+		}
+	}
+	next.dependencies = next.dependencies.RetainCompositions(batches)
+	next.composed = next.composed || e.Queue == nil
 	next.lastID = id
 	*r = next
 	return e, nil
@@ -358,20 +375,36 @@ func (r Reader) validateDependencyDecision(id uint64, d dependency.DecisionRecor
 	return nil
 }
 
-func (r Reader) validateDependencyComposition(id uint64,c dependency.CompositionRecorded) error {
- target,err:=r.target(c.StartEventID,id); if err!=nil { return err }
- b:=r.Queue.Batch(c.BatchID)
- if b==nil || b.Phase!=queue.Building || b.BaseSHA!=c.BaseSHA || len(b.PRs)!=len(c.Members) { return ErrReference }
- switch start:=target.Queue.(type) {
- case queue.BatchStarted: if start.BatchID!=b.ID || start.BaseSHA!=b.BaseSHA || !slices.Equal(start.PRs,b.PRs) || b.Speculative { return ErrReference }
- case queue.ChainedBatchStarted: if start.BatchID!=b.ID || start.BaseSHA!=b.BaseSHA || !slices.Equal(start.PRs,b.PRs) || !b.Speculative || start.Position!=b.ChainPosition || start.ParentBatchID!=b.ParentBatchID { return ErrReference }
- default: return ErrReference
- }
- bindings:=r.Queue.BatchRevisions(b.ID)
- for i,m:=range c.Members {
-  if r.changeID==nil || len(bindings)!=len(b.PRs) { return ErrReference }
-  change,err:=r.changeID(b.PRs[i].PR)
-  if err!=nil || string(change)!=m.ChangeID || m.Alias.Number!=uint64(b.PRs[i].PR) || m.Head!=b.PRs[i].HeadSHA || m.Revision!=uint64(bindings[i].Revision) { return ErrReference }
- }
- return nil
+func (r Reader) validateDependencyComposition(id uint64, c dependency.CompositionRecorded) error {
+	target, err := r.target(c.StartEventID, id)
+	if err != nil {
+		return err
+	}
+	b := r.Queue.Batch(c.BatchID)
+	if b == nil || b.Phase != queue.Building || b.BaseSHA != c.BaseSHA || len(b.PRs) != len(c.Members) {
+		return ErrReference
+	}
+	switch start := target.Queue.(type) {
+	case queue.BatchStarted:
+		if start.BatchID != b.ID || start.BaseSHA != b.BaseSHA || !slices.Equal(start.PRs, b.PRs) || b.Speculative {
+			return ErrReference
+		}
+	case queue.ChainedBatchStarted:
+		if start.BatchID != b.ID || start.BaseSHA != b.BaseSHA || !slices.Equal(start.PRs, b.PRs) || !b.Speculative || start.Position != b.ChainPosition || start.ParentBatchID != b.ParentBatchID {
+			return ErrReference
+		}
+	default:
+		return ErrReference
+	}
+	bindings := r.Queue.BatchRevisions(b.ID)
+	for i, m := range c.Members {
+		if r.changeID == nil || len(bindings) != len(b.PRs) {
+			return ErrReference
+		}
+		change, err := r.changeID(b.PRs[i].PR)
+		if err != nil || string(change) != m.ChangeID || m.Alias.Number != uint64(b.PRs[i].PR) || m.Head != b.PRs[i].HeadSHA || m.Revision != uint64(bindings[i].Revision) {
+			return ErrReference
+		}
+	}
+	return nil
 }

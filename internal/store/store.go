@@ -366,8 +366,10 @@ func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, ded
 					return err
 				}
 			}
-   event, err := dependencyInvalidation(ctx,tx,q,event)
-   if err!=nil { return err }
+			event, err := dependencyInvalidation(ctx, tx, q, event)
+			if err != nil {
+				return err
+			}
 			name, payload, err := queue.EncodeEvent(event)
 			if err != nil {
 				return err
@@ -380,7 +382,11 @@ func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, ded
 				VALUES ($1, $2, $3::jsonb, $4) RETURNING id`, q, name, string(payload), key).Scan(&watermark); err != nil {
 				return err
 			}
-   if through,err:=s.appendDependencyCompositionTx(ctx,tx,q,event,uint64(watermark)); err!=nil { return err } else if through!=0 { watermark=through }
+			if through, err := s.appendDependencyCompositionTx(ctx, tx, q, event, uint64(watermark)); err != nil {
+				return err
+			} else if through != 0 {
+				watermark = through
+			}
 		}
 		return nil
 	})

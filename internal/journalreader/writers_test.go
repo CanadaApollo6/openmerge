@@ -91,8 +91,10 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 						t.Errorf("ungated dependency writer caller/capture in %s", path)
 					}
 				case "appendDependencyCompositionTx":
- if rel!="internal/store/store.go" { t.Errorf("composition admission writer outside queue transaction in %s",path) }
- case "startID", "buildStartID":
+					if rel != "internal/store/store.go" {
+						t.Errorf("composition admission writer outside queue transaction in %s", path)
+					}
+				case "startID", "buildStartID":
 					if rel != "internal/store/dependency_start.go" && rel != "internal/store/side_append.go" {
 						t.Errorf("dependency companion admission outside its start transaction in %s", path)
 					}
@@ -125,9 +127,13 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 					if rel == "internal/audit/provenance.go" && (kind == "change_provenance_observed" || kind == "landing_provenance_recorded") {
 						continue
 					}
-					if rel=="internal/store/authority_downgrade.go" && (kind=="dependency_composition_recorded" || kind=="dependency_compositions_invalidated") { continue }
- if rel=="internal/queue/wire.go" && kind=="dependency_compositions_invalidated" { continue }
- if strings.Contains(value, kind) {
+					if rel == "internal/store/authority_downgrade.go" && (kind == "dependency_composition_recorded" || kind == "dependency_compositions_invalidated") {
+						continue
+					}
+					if rel == "internal/queue/wire.go" && kind == "dependency_compositions_invalidated" {
+						continue
+					}
+					if strings.Contains(value, kind) {
 						t.Errorf("new kind literal outside read-only codec allowlist in %s: %s", path, kind)
 					}
 				}

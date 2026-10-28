@@ -42,8 +42,8 @@ func EncodeEvent(event Event) (string, []byte, error) {
 	case Observed:
 		kind = "dependency_observed"
 	case CompositionRecorded:
-  kind = "dependency_composition_recorded"
- case DecisionRecorded:
+		kind = "dependency_composition_recorded"
+	case DecisionRecorded:
 		kind = "dependency_decision_recorded"
 	default:
 		return "", nil, ErrMalformed
@@ -96,8 +96,8 @@ func DecodeEvent(raw []byte) (Event, error) {
 	case "dependency_observed":
 		return decodeEventData[Observed](env.Data)
 	case "dependency_composition_recorded":
-  return decodeEventData[CompositionRecorded](env.Data)
- case "dependency_decision_recorded":
+		return decodeEventData[CompositionRecorded](env.Data)
+	case "dependency_decision_recorded":
 		return decodeEventData[DecisionRecorded](env.Data)
 	default:
 		return nil, fmt.Errorf("unknown dependency event %q", env.Type)
@@ -226,5 +226,5 @@ func requireShape(raw []byte, t reflect.Type) error {
 // ClockEventKinds selects only eligibility-changing facts for an activated
 // clock replay. Historical composition/decision evidence is not an input.
 func ClockEventKinds() []string {
- return []string{"dependency_journal_initialized","change_dependencies_declared","dependency_policy_applied","dependency_observed","dependency_declaration_acknowledged","dependency_declaration_self_acknowledged"}
+	return []string{"dependency_journal_initialized", "change_dependencies_declared", "dependency_policy_applied", "dependency_observed", "dependency_declaration_acknowledged", "dependency_declaration_self_acknowledged"}
 }

@@ -80,23 +80,39 @@ func DecodeSnapshot(raw []byte, expected JournalInitialized) (queue.State, State
 	if err := json.Unmarshal(raw, &header); err != nil {
 		return queue.State{}, State{}, err
 	}
- if header.Version == CompositionSnapshotVersion {
-  var v compositionSnapshot
-  if err:=strictJSON(raw,&v); err!=nil { return queue.State{},State{},err }
-  q,s,err:=DecodeSnapshot(v.Base,expected)
-  if err!=nil { return q,s,err }
-  if v.LastID!=s.lastID || v.Initialization!=*s.initialization || len(v.Compositions)>32 { return queue.State{},State{},ErrMalformed }
-  s.compositions=map[string]compositionProjection{}
-  for i,c:=range v.Compositions {
-   if c.Event.Validate()!=nil || c.Event.Namespace!=expected.Namespace || c.EventID==0 || c.EventID>s.lastID || c.Event.StartEventID>=c.EventID || i>0 && v.Compositions[i-1].EventID>=c.EventID { return queue.State{},State{},ErrMalformed }
-   if _,exists:=s.compositions[c.Event.BatchID]; exists { return queue.State{},State{},ErrConflict }
-   b:=q.Batch(c.Event.BatchID)
-   if b==nil || b.BaseSHA!=c.Event.BaseSHA || len(b.PRs)!=len(c.Event.Members) { return queue.State{},State{},ErrStale }
-   for j,m:=range c.Event.Members { if m.Alias.validate(expected.scope())!=nil || m.Alias.Number!=uint64(b.PRs[j].PR) || m.Head!=b.PRs[j].HeadSHA { return queue.State{},State{},ErrStale } }
-   s.compositions[c.Event.BatchID]=compositionProjection{c.EventID,cloneComposition(c.Event)}
-  }
-  return q,s,nil
- }
+	if header.Version == CompositionSnapshotVersion {
+		var v compositionSnapshot
+		if err := strictJSON(raw, &v); err != nil {
+			return queue.State{}, State{}, err
+		}
+		q, s, err := DecodeSnapshot(v.Base, expected)
+		if err != nil {
+			return q, s, err
+		}
+		if v.LastID != s.lastID || v.Initialization != *s.initialization || len(v.Compositions) > 32 {
+			return queue.State{}, State{}, ErrMalformed
+		}
+		s.compositions = map[string]compositionProjection{}
+		for i, c := range v.Compositions {
+			if c.Event.Validate() != nil || c.Event.Namespace != expected.Namespace || c.EventID == 0 || c.EventID > s.lastID || c.Event.StartEventID >= c.EventID || i > 0 && v.Compositions[i-1].EventID >= c.EventID {
+				return queue.State{}, State{}, ErrMalformed
+			}
+			if _, exists := s.compositions[c.Event.BatchID]; exists {
+				return queue.State{}, State{}, ErrConflict
+			}
+			b := q.Batch(c.Event.BatchID)
+			if b == nil || b.BaseSHA != c.Event.BaseSHA || len(b.PRs) != len(c.Event.Members) {
+				return queue.State{}, State{}, ErrStale
+			}
+			for j, m := range c.Event.Members {
+				if m.Alias.validate(expected.scope()) != nil || m.Alias.Number != uint64(b.PRs[j].PR) || m.Head != b.PRs[j].HeadSHA {
+					return queue.State{}, State{}, ErrStale
+				}
+			}
+			s.compositions[c.Event.BatchID] = compositionProjection{c.EventID, cloneComposition(c.Event)}
+		}
+		return q, s, nil
+	}
 	if header.Version != SnapshotVersion {
 		q, err := queue.DecodeSnapshot(raw)
 		return q, State{}, err
@@ -215,20 +231,26 @@ func (v snapshot) state(expected JournalInitialized) (State, error) {
 const CompositionSnapshotVersion = 10
 
 type compositionSnapshot struct {
- Version int `json:"Version"`
- Base json.RawMessage `json:"Base"`
- Initialization JournalInitialized `json:"Initialization"`
- LastID uint64 `json:"LastID"`
- Compositions []compositionProjection `json:"Compositions"`
+	Version        int                     `json:"Version"`
+	Base           json.RawMessage         `json:"Base"`
+	Initialization JournalInitialized      `json:"Initialization"`
+	LastID         uint64                  `json:"LastID"`
+	Compositions   []compositionProjection `json:"Compositions"`
 }
 
-func EncodeSnapshot(q queue.State,s State) ([]byte,error) {
- base,err:=encodeSnapshotBase(q,s)
- if err!=nil || s.compositions==nil { return base,err }
- v:=compositionSnapshot{CompositionSnapshotVersion,base,*s.initialization,s.lastID,[]compositionProjection{}}
- for _,c:=range s.compositions { v.Compositions=append(v.Compositions,compositionProjection{c.EventID,cloneComposition(c.Event)}) }
- slices.SortFunc(v.Compositions,func(a,b compositionProjection) int { return compareID(a.EventID,b.EventID) })
- raw,err:=json.Marshal(v)
- if len(raw)>maxSnapshotBytes { return nil,ErrLimit }
- return raw,err
+func EncodeSnapshot(q queue.State, s State) ([]byte, error) {
+	base, err := encodeSnapshotBase(q, s)
+	if err != nil || s.compositions == nil {
+		return base, err
+	}
+	v := compositionSnapshot{CompositionSnapshotVersion, base, *s.initialization, s.lastID, []compositionProjection{}}
+	for _, c := range s.compositions {
+		v.Compositions = append(v.Compositions, compositionProjection{c.EventID, cloneComposition(c.Event)})
+	}
+	slices.SortFunc(v.Compositions, func(a, b compositionProjection) int { return compareID(a.EventID, b.EventID) })
+	raw, err := json.Marshal(v)
+	if len(raw) > maxSnapshotBytes {
+		return nil, ErrLimit
+	}
+	return raw, err
 }

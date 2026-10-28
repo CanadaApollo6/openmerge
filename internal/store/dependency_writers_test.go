@@ -75,8 +75,10 @@ func newDepQueue(t *testing.T, s *Store, b dependency.JournalInitialized, repo s
 	ref, err := dependency.Reference{Scope: dependency.Scope{ForgeInstance: b.ForgeInstance, Installation: b.Installation, JournalNamespace: b.Namespace}, ChangeID: string(change)}.Canonical()
 	must(t, err)
 	d := depQueue{id: id, key: dependency.QueueKey{Repository: "https://github.com/" + repo, Base: "main"}, alias: dependency.SourceAlias{ForgeInstance: b.ForgeInstance, Installation: "7", RepositoryID: "id-" + strings.ReplaceAll(repo, "/", "-"), Number: uint64(pr)}, change: change, pr: pr, head: sha(head), base: sha('0'), ref: ref, revision: 1}
-	if len(objects)==2 { d.base,d.head=objects[0],objects[1] }
- now := time.Now()
+	if len(objects) == 2 {
+		d.base, d.head = objects[0], objects[1]
+	}
+	now := time.Now()
 	appendEvents(t, s, id, queue.BaseMoved{SHA: d.base}, queue.PRObserved{PR: pr, HeadSHA: d.head, Eligible: true, Trusted: true}, queue.ChangeRevisionObserved{PR: pr, ChangeID: change, Revision: 1, HeadSHA: d.head, Basis: queue.RevisionObservationBasis{BaseSHA: d.base, At: now}}, queue.EnqueueRequested{PR: pr, At: now})
 	return d
 }
@@ -181,10 +183,12 @@ func (f *depFixture) claimLand(t *testing.T, batch ...string) ClaimedAction {
 	if len(batch) > 0 {
 		id = batch[0]
 	}
- tested:=sha('f')
- if id!="b1" { tested=fmt.Sprintf("%040x",1000+len(id)+int(id[len(id)-1])) }
+	tested := sha('f')
+	if id != "b1" {
+		tested = fmt.Sprintf("%040x", 1000+len(id)+int(id[len(id)-1]))
+	}
 	_, startErr := f.s.Append(ctx, f.c.id, []queue.Event{queue.BatchStarted{BatchID: id, BaseSHA: f.c.base, PRs: []queue.BatchPR{{PR: f.c.pr, HeadSHA: f.c.head}}, At: now}, queue.TestRefBuilt{BatchID: id, TestedSHA: tested, Method: queue.Merge, At: now}, queue.ChecksCompleted{TestedSHA: tested, Success: true}}, "")
- must(t,startErr)
+	must(t, startErr)
 	_, err := f.s.Plan(ctx, f.c.id, depCfg, now)
 	must(t, err)
 	// Only Land is claimed: a prior landing's effects stay unclaimed.
@@ -459,8 +463,8 @@ func TestDependencyStartLockOrderAndConcurrentCycle(t *testing.T) {
 func TestDependencyStartWithApprovalDecisionsAndPendingRecovery(t *testing.T) {
 	t.Run("decision link", func(t *testing.T) {
 		s := newStore(t)
-  f,claim,c,d:=dependencyDecisionLand(t,s,nil)
-  q:=f.c.id
+		f, claim, c, d := dependencyDecisionLand(t, s, nil)
+		q := f.c.id
 		read, err := s.BeginApprovalRead(t.Context(), q, []queue.ChangeID{c.Fresh.Basis.ChangeID})
 		must(t, err)
 		must(t, s.StartDependencyLanding(read.Context(t.Context()), claim, c.Config, c.Policy, []queue.ApprovalEligibilityObserved{c.Fresh}, []queue.LandingDecisionRecorded{d}, c.Start, f.evidence()))

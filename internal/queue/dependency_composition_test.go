@@ -1,32 +1,54 @@
 package queue
 
 import (
- "reflect"
- "slices"
- "testing"
+	"reflect"
+	"slices"
+	"testing"
 )
 
 func TestDependencyCompositionDiscardExactSuffixAndLandingBoundary(t *testing.T) {
- cfg,s,now:=chainState(t,4,4)
- for range 4 { s,_=admitChain(t,cfg,s,now) }
- before:=s
- s=s.WithDependencyInvalidation("b2")
- if before.Batch("b2").InvalidationReason!="" { t.Fatal("planning view mutated original") }
- actions:=Plan(cfg,s,now)
- invalid,ok:=actions[0].(InvalidateBatches)
- if !ok || !slices.Equal(invalid.BatchIDs,[]string{"b2","b3","b4"}) { t.Fatal("wrong planned suffix",actions) }
- event:=DependencyCompositionsInvalidated{BatchIDs:invalid.BatchIDs,CompositionIDs:[]uint64{12,13,14},Reason:invalid.Reason}
- kind,raw,err:=EncodeEvent(event); if err!=nil || kind!="dependency_compositions_invalidated" { t.Fatal(kind,err) }
- decoded,err:=DecodeEvent(raw); if err!=nil || !reflect.DeepEqual(decoded,event) { t.Fatal("codec",err) }
- after:=Apply(s,decoded)
- if len(after.Batches())!=1 || after.Active.ID!="b1" || !reflect.DeepEqual(after.Entries,s.Entries) { t.Fatal("discard changed queue positions") }
- for _,bad:=range []DependencyCompositionsInvalidated{
-  {BatchIDs:[]string{"b2"},CompositionIDs:[]uint64{12},Reason:"dependency-changed"},
-  {BatchIDs:[]string{"b4","b3","b2"},CompositionIDs:[]uint64{14,13,12},Reason:"dependency-changed"},
- } { if got:=Apply(s,bad); len(got.Batches())!=4 { t.Fatal("accepted inexact suffix",bad) } }
- landing:=Apply(before,ChecksCompleted{TestedSHA:before.Active.TestedSHA,Success:true})
- landing=Apply(landing,LandingStarted{BatchID:"b1",AttemptID:"uncertain",FenceToken:landing.Fence,At:now})
- landing=landing.WithDependencyInvalidation("b1")
- if landing.Active.InvalidationReason!="" || landing.Active.Phase!=Landing { t.Fatal("cascade abandoned a started push") }
- if got:=Apply(landing,DependencyCompositionsInvalidated{BatchIDs:[]string{"b1","b2","b3","b4"},CompositionIDs:[]uint64{11,12,13,14},Reason:"dependency-changed"}); len(got.Batches())!=4 { t.Fatal("discard crossed settlement boundary") }
+	cfg, s, now := chainState(t, 4, 4)
+	for range 4 {
+		s, _ = admitChain(t, cfg, s, now)
+	}
+	before := s
+	s = s.WithDependencyInvalidation("b2")
+	if before.Batch("b2").InvalidationReason != "" {
+		t.Fatal("planning view mutated original")
+	}
+	actions := Plan(cfg, s, now)
+	invalid, ok := actions[0].(InvalidateBatches)
+	if !ok || !slices.Equal(invalid.BatchIDs, []string{"b2", "b3", "b4"}) {
+		t.Fatal("wrong planned suffix", actions)
+	}
+	event := DependencyCompositionsInvalidated{BatchIDs: invalid.BatchIDs, CompositionIDs: []uint64{12, 13, 14}, Reason: invalid.Reason}
+	kind, raw, err := EncodeEvent(event)
+	if err != nil || kind != "dependency_compositions_invalidated" {
+		t.Fatal(kind, err)
+	}
+	decoded, err := DecodeEvent(raw)
+	if err != nil || !reflect.DeepEqual(decoded, event) {
+		t.Fatal("codec", err)
+	}
+	after := Apply(s, decoded)
+	if len(after.Batches()) != 1 || after.Active.ID != "b1" || !reflect.DeepEqual(after.Entries, s.Entries) {
+		t.Fatal("discard changed queue positions")
+	}
+	for _, bad := range []DependencyCompositionsInvalidated{
+		{BatchIDs: []string{"b2"}, CompositionIDs: []uint64{12}, Reason: "dependency-changed"},
+		{BatchIDs: []string{"b4", "b3", "b2"}, CompositionIDs: []uint64{14, 13, 12}, Reason: "dependency-changed"},
+	} {
+		if got := Apply(s, bad); len(got.Batches()) != 4 {
+			t.Fatal("accepted inexact suffix", bad)
+		}
+	}
+	landing := Apply(before, ChecksCompleted{TestedSHA: before.Active.TestedSHA, Success: true})
+	landing = Apply(landing, LandingStarted{BatchID: "b1", AttemptID: "uncertain", FenceToken: landing.Fence, At: now})
+	landing = landing.WithDependencyInvalidation("b1")
+	if landing.Active.InvalidationReason != "" || landing.Active.Phase != Landing {
+		t.Fatal("cascade abandoned a started push")
+	}
+	if got := Apply(landing, DependencyCompositionsInvalidated{BatchIDs: []string{"b1", "b2", "b3", "b4"}, CompositionIDs: []uint64{11, 12, 13, 14}, Reason: "dependency-changed"}); len(got.Batches()) != 4 {
+		t.Fatal("discard crossed settlement boundary")
+	}
 }

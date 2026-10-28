@@ -164,11 +164,11 @@ func TestDependencyEligibilityStableAcrossUnchangedRefresh(t *testing.T) {
 		t.Fatalf("unchanged refresh postponed max_wait: %v -> %v", before, after)
 	}
 	// waiting -> landed resumes the old budget; only the waiting interval
- // moves the equivalent clock origin.
+	// moves the equivalent clock origin.
 	f.observe(t, "waiting", f.a.base)
- var paused time.Time
- must(t,f.s.pool.QueryRow(t.Context(),`SELECT recorded_at FROM events WHERE id=$1`,f.observedID).Scan(&paused))
- f.observe(t, "landed", f.landedA)
+	var paused time.Time
+	must(t, f.s.pool.QueryRow(t.Context(), `SELECT recorded_at FROM events WHERE id=$1`, f.observedID).Scan(&paused))
+	f.observe(t, "landed", f.landedA)
 	var restarted time.Time
 	must(t, f.s.pool.QueryRow(t.Context(), `SELECT recorded_at FROM events WHERE id=$1`, f.observedID).Scan(&restarted))
 	if after := wake(); !after.Equal(before.Add(restarted.Sub(paused))) {

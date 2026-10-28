@@ -304,8 +304,8 @@ func TestDependencyDeclarationHoldRefusalsGatePlannerAndStart(t *testing.T) {
 					t.Fatalf("authenticated redeclaration did not retain a known hold: %+v", got)
 				}
 				must(t, f.appendAcknowledgement(t, actors, "independent", false))
-				claim = f.rebuildAfterDependencyEdit(t,claim)
- must(t, f.start(t.Context(), claim, f.holdEvidence(t)))
+				claim = f.rebuildAfterDependencyEdit(t, claim)
+				must(t, f.start(t.Context(), claim, f.holdEvidence(t)))
 			},
 		},
 	} {
@@ -335,8 +335,8 @@ func TestDependencySelfAcknowledgementAndTighteningThroughStart(t *testing.T) {
 				f.redeclareHold(t, actors, true, false, []string{"author", "editor"})
 				must(t, f.appendAcknowledgement(t, actors, "author", true))
 				claim := f.claimLand(t)
-				claim = f.rebuildAfterDependencyEdit(t,claim)
- must(t, f.start(t.Context(), claim, f.holdEvidence(t)))
+				claim = f.rebuildAfterDependencyEdit(t, claim)
+				must(t, f.start(t.Context(), claim, f.holdEvidence(t)))
 				if got := dependencyHoldState(t, f).Hold(f.c.alias); got.Held || got.LastAcknowledgementKind != "dependency_declaration_self_acknowledged" {
 					t.Fatalf("self acknowledgement was not retained distinctly: %+v", got)
 				}
@@ -353,8 +353,8 @@ func TestDependencySelfAcknowledgementAndTighteningThroughStart(t *testing.T) {
 					t.Fatalf("opted-in multi-writer acknowledgement/warning = %+v", got)
 				}
 				claim := f.claimLand(t)
-				claim = f.rebuildAfterDependencyEdit(t,claim)
- must(t, f.start(t.Context(), claim, f.holdEvidence(t)))
+				claim = f.rebuildAfterDependencyEdit(t, claim)
+				must(t, f.start(t.Context(), claim, f.holdEvidence(t)))
 			},
 		},
 		{
@@ -381,8 +381,8 @@ func TestDependencySelfAcknowledgementAndTighteningThroughStart(t *testing.T) {
 				}
 				assertHoldBlocksPlannerAndStart(t, f, claim, f.holdEvidence(t))
 				must(t, f.appendAcknowledgement(t, actors, "independent", false))
-				claim = f.rebuildAfterDependencyEdit(t,claim)
- must(t, f.start(t.Context(), claim, f.holdEvidence(t)))
+				claim = f.rebuildAfterDependencyEdit(t, claim)
+				must(t, f.start(t.Context(), claim, f.holdEvidence(t)))
 				var selfAcknowledgements int
 				must(t, f.s.pool.QueryRow(t.Context(), `SELECT count(*) FROM events WHERE queue_id=$1 AND type='dependency_declaration_self_acknowledged'`, f.c.id).Scan(&selfAcknowledgements))
 				if selfAcknowledgements != 1 {
@@ -399,8 +399,8 @@ func TestDependencySelfAcknowledgementAndTighteningThroughStart(t *testing.T) {
 				}
 				f.observeDeclaredEdge(t, "landed", f.landedA)
 				claim := f.claimLand(t)
-				claim = f.rebuildAfterDependencyEdit(t,claim)
- must(t, f.start(t.Context(), claim, f.declarationEvidence()))
+				claim = f.rebuildAfterDependencyEdit(t, claim)
+				must(t, f.start(t.Context(), claim, f.declarationEvidence()))
 			},
 		},
 		{
@@ -458,13 +458,13 @@ func TestDependencyStrictMultiWriterHoldSurvivesNativeApproval(t *testing.T) {
 
 func TestDependencyOptedSelfAcknowledgementStillRequiresApprovalDecision(t *testing.T) {
 	s := newStore(t)
- f,claim,c,decision:=dependencyDecisionLand(t,s,func(f *depFixture){
-  actors:=newHoldActors(t)
-  f.setHoldPolicy(t,actors,true,"author")
-  f.redeclareHold(t,actors,true,false,[]string{"author","editor"})
-  must(t,f.appendAcknowledgement(t,actors,"author",true))
- })
- q:=f.c.id
+	f, claim, c, decision := dependencyDecisionLand(t, s, func(f *depFixture) {
+		actors := newHoldActors(t)
+		f.setHoldPolicy(t, actors, true, "author")
+		f.redeclareHold(t, actors, true, false, []string{"author", "editor"})
+		must(t, f.appendAcknowledgement(t, actors, "author", true))
+	})
+	q := f.c.id
 
 	read, err := s.BeginApprovalRead(t.Context(), q, []queue.ChangeID{c.Fresh.Basis.ChangeID})
 	must(t, err)

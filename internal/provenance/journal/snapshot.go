@@ -152,7 +152,7 @@ func DecodeSnapshot(raw []byte, decodeBase BaseDecoder, validate ...func(uint64,
 	// future queue and dependency versions can overlap without ambiguity.
 	if baseKind == "" {
 		baseKind = "queue"
-		if (baseHeader.Version == 8 || baseHeader.Version == 10) {
+		if baseHeader.Version == 8 || baseHeader.Version == 10 {
 			baseKind = "dependency"
 		}
 	}

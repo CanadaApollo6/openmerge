@@ -3,7 +3,7 @@ package dependency
 import (
 	"fmt"
 	"maps"
- "reflect"
+	"reflect"
 	"slices"
 )
 
@@ -44,7 +44,7 @@ type State struct {
 	declarations   map[string]declarationProjection
 	policies       map[string]policyProjection
 	observations   map[string]observationProjection
- compositions map[string]compositionProjection
+	compositions   map[string]compositionProjection
 }
 
 // VerifyBinding fences full replay against independently verified startup facts,
@@ -92,7 +92,7 @@ func (s State) clone() State {
 		s.policies = map[string]policyProjection{}
 	}
 	s.compositions = maps.Clone(s.compositions)
- s.observations = maps.Clone(s.observations)
+	s.observations = maps.Clone(s.observations)
 	if s.observations == nil {
 		s.observations = map[string]observationProjection{}
 	}
@@ -209,9 +209,9 @@ func (s *State) apply(id uint64, event Event) error {
 		alias = e.Alias
 		namespace = e.Namespace
 	case CompositionRecorded:
-  alias = e.Members[0].Alias
-  namespace = e.Namespace
- case DecisionRecorded:
+		alias = e.Members[0].Alias
+		namespace = e.Namespace
+	case DecisionRecorded:
 		alias = e.Alias
 		namespace = e.Namespace
 	default:
@@ -249,15 +249,23 @@ func (s *State) apply(id uint64, event Event) error {
 	case SelfAcknowledged:
 		return s.acknowledge(id, e.Acknowledged, true, e.Overridden)
 	case CompositionRecorded:
-  if e.StartEventID>=id { return ErrStale }
-  if _,ok:=s.compositions[e.BatchID]; ok || len(s.compositions)>=32 { return ErrConflict }
-  for _,m:=range e.Members {
-   current,err:=s.CompositionMember(m.ChangeID,m.Revision,m.Head)
-   if err!=nil || !reflect.DeepEqual(current,m) { return ErrStale }
-  }
-  if s.compositions==nil { s.compositions=map[string]compositionProjection{} }
-  s.compositions[e.BatchID]=compositionProjection{id,cloneComposition(e)}
- case DecisionRecorded:
+		if e.StartEventID >= id {
+			return ErrStale
+		}
+		if _, ok := s.compositions[e.BatchID]; ok || len(s.compositions) >= 32 {
+			return ErrConflict
+		}
+		for _, m := range e.Members {
+			current, err := s.CompositionMember(m.ChangeID, m.Revision, m.Head)
+			if err != nil || !reflect.DeepEqual(current, m) {
+				return ErrStale
+			}
+		}
+		if s.compositions == nil {
+			s.compositions = map[string]compositionProjection{}
+		}
+		s.compositions[e.BatchID] = compositionProjection{id, cloneComposition(e)}
+	case DecisionRecorded:
 		// Historical evidence only: current side maps are unchanged.
 		return s.validateDecision(e)
 	case Observed:

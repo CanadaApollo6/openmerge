@@ -248,8 +248,8 @@ func apply(s State, e Event) State {
 	case BatchesInvalidated:
 		s.applyInvalidation(e)
 	case DependencyCompositionsInvalidated:
-  s.invalidateDependencyCompositions(e)
- case DependencyWaitsWithheld:
+		s.invalidateDependencyCompositions(e)
+	case DependencyWaitsWithheld:
 		s.withholdDependencyWaits(e)
 	case BatchStarted:
 		if e.Validate() == nil && s.Active == nil && e.BatchID == s.nextBatchID() && e.BaseSHA == s.BaseSHA && s.runnablePRs(e.PRs) {
