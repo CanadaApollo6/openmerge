@@ -9,6 +9,7 @@ import (
 
 	"github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest/statusfixture"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
+	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
@@ -90,5 +91,23 @@ func TestDependencyPendingCheckKeepsReason(t *testing.T) {
 	got := DependencyCheckStatus(&q, &e, forge.Status{State: forge.Testing, Summary: "Batch b1"})
 	if got.State != forge.Queued || got.Reason != "head-changed" || strings.Contains(got.Summary, "b1") {
 		t.Fatal(got)
+	}
+}
+
+func TestDependencyUnconfirmedLandingBatchPrivacy(t *testing.T) {
+	for _, phase := range []string{"building", "testing", "invalidating", "landing"} {
+		t.Run(phase, func(t *testing.T) {
+			batch := &Batch{ID: "private", Phase: phase, TestRef: "private-ref", TestedSHA: "private-tested", LandingSHA: "private-landing", PRs: []BatchPR{{PR: 2, HeadSHA: "private-head"}}}
+			q := Queue{Chain: []*Batch{batch}, ActiveBatch: batch, Invalidations: []queue.BatchesInvalidated{{Reason: "change-left-queue"}}}
+			maskDependencyBatches(&q, store.Journal{DependencyRedacted: true})
+			if q.ActiveBatch != nil || len(q.Chain) != 0 || len(q.Invalidations) != 0 {
+				t.Fatalf("private batch presentation survived: %+v", q)
+			}
+			q = Queue{Chain: []*Batch{batch}, ActiveBatch: batch}
+			maskDependencyBatches(&q, store.Journal{})
+			if q.ActiveBatch != batch || len(q.Chain) != 1 {
+				t.Fatal("inactive presentation changed")
+			}
+		})
 	}
 }

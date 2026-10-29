@@ -7,7 +7,6 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/journalreader"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
-	"slices"
 )
 
 // ProjectDependencies is read-only. Full replay deliberately keeps diagnostics out
@@ -121,11 +120,12 @@ func maskDependencyBatches(q *Queue, j store.Journal) {
 	if !j.DependencyRedacted {
 		return
 	}
-	q.Chain = slices.DeleteFunc(q.Chain, func(b *Batch) bool { return b.Phase != "landing" })
-	if q.ActiveBatch != nil && q.ActiveBatch.Phase != "landing" {
-		q.ActiveBatch = nil
-	}
-	q.Invalidations = slices.DeleteFunc(q.Invalidations, func(b queue.BatchesInvalidated) bool { return b.Reason == "dependency-changed" })
+	// No batch presentation fields are public while dependency evidence is
+	// redacted. Confirmed settlement is projected independently on entries.
+	// Constructing the empty projection also keeps future fields private.
+	q.Chain = nil
+	q.ActiveBatch = nil
+	q.Invalidations = nil
 }
 
 // DependencyCheckStatus applies the same private hold to the entire check,
