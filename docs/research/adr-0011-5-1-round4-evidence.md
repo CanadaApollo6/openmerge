@@ -96,3 +96,16 @@ three are now caught in both modes, and the five leaks it already caught (3, 4,
 No real GitHub requests are made; the forge is the in-process fake. All Go
 commands used the heavy lock, Go 1.27.3, `GOFLAGS=-p=2`, `GOMEMLIMIT=4GiB`, and
 both test database variables pointing to port 54329.
+
+## Validation and timings
+
+`golangci-lint run ./...` reports 0 issues; gofmt is clean. Package times for
+`go test -race -short -count=1`, both test database variables exported:
+
+| Package | `dc8e7eef` | this round |
+| --- | ---: | ---: |
+| status | 48.475s | 54.746s |
+| serve | 331.751s | 333.473s |
+
+The serve metamorphic test schema is migrated once per case. Queue tables are
+truncated between worlds.
