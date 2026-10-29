@@ -124,21 +124,49 @@ func TestDependencyMultiCLIPrivacyGoldens(t *testing.T) {
 }
 
 func TestDependencyMetamorphicCLI(t *testing.T) {
- seeds:=5
- if !testing.Short(){seeds=40}
- for _,depth:=range []int{1,4} { for seed:=0;seed<seeds;seed++ {t.Run(fmt.Sprintf("depth-%d/seed-%d",depth,seed),func(t *testing.T){
-  baseline:=map[int][]byte{}
-  for world:=0;world<7;world++ {
-   j,b,prs:=statusfixture.MetamorphicJournal(t,int64(seed),depth,world)
-   j,err:=status.ProjectDependencies(j,b,nil,statusfixture.StatusSources());if err!=nil{t.Fatal(err)}
-   h:=status.Handler(dependencyCLIJournal{j},[]store.QueueKey{j.Key},"",nil)
-   for _,pr:=range append([]int{0},prs...) {
-    path:="/v1/queues/acme/client/main";if pr!=0{path+=fmt.Sprintf("/prs/%d?events=100",pr)}
-    w:=httptest.NewRecorder();h.ServeHTTP(w,httptest.NewRequest("GET",path,nil));if w.Code!=200{t.Fatal(w.Code,w.Body)}
-    var response status.Response;if err:=json.Unmarshal(w.Body.Bytes(),&response);err!=nil{t.Fatal(err)}
-    var out bytes.Buffer;if err:=printStatus(&out,response);err!=nil{t.Fatal(err)}
-    if want,ok:=baseline[pr];ok {if !bytes.Equal(want,out.Bytes()){t.Fatalf("world %d PR %d differs:\n%s\n%s",world,pr,want,out.Bytes())}} else {baseline[pr]=bytes.Clone(out.Bytes())}
-   }
-  }
- })}}
+	seeds := 5
+	if !testing.Short() {
+		seeds = 40
+	}
+	for _, depth := range []int{1, 4} {
+		for seed := 0; seed < seeds; seed++ {
+			t.Run(fmt.Sprintf("depth-%d/seed-%d", depth, seed), func(t *testing.T) {
+				baseline := map[int][]byte{}
+				for world := 0; world < 7; world++ {
+					j, b, prs := statusfixture.MetamorphicJournal(t, int64(seed), depth, world)
+					j, err := status.ProjectDependencies(j, b, nil, statusfixture.StatusSources())
+					if err != nil {
+						t.Fatal(err)
+					}
+					h := status.Handler(dependencyCLIJournal{j}, []store.QueueKey{j.Key}, "", nil)
+					for _, pr := range append([]int{0}, prs...) {
+						path := "/v1/queues/acme/client/main"
+						if pr != 0 {
+							path += fmt.Sprintf("/prs/%d?events=100", pr)
+						}
+						w := httptest.NewRecorder()
+						h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+						if w.Code != 200 {
+							t.Fatal(w.Code, w.Body)
+						}
+						var response status.Response
+						if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+							t.Fatal(err)
+						}
+						var out bytes.Buffer
+						if err := printStatus(&out, response); err != nil {
+							t.Fatal(err)
+						}
+						if want, ok := baseline[pr]; ok {
+							if !bytes.Equal(want, out.Bytes()) {
+								t.Fatalf("world %d PR %d differs:\n%s\n%s", world, pr, want, out.Bytes())
+							}
+						} else {
+							baseline[pr] = bytes.Clone(out.Bytes())
+						}
+					}
+				}
+			})
+		}
+	}
 }
