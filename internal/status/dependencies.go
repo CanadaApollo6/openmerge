@@ -97,7 +97,7 @@ func ProjectDependencies(j store.Journal, binding dependency.JournalInitialized,
 // for the whole redacted queue, preserving terminal, settlement and admission gates.
 func maskDependencyEntry(e *Entry) {
 	e.RunLedger = nil
-		switch e.Status {
+	switch e.Status {
 	case "queued", "building", "testing", "invalidating":
 		e.Status = "queued"
 		e.Reason, e.Detail, e.Gate, e.BatchID = "", "", "", ""

@@ -2,10 +2,10 @@ package serve
 
 import (
 	"context"
- "crypto/sha256"
- "encoding/json"
+	"crypto/sha256"
+	"encoding/json"
 
- "github.com/CanadaApollo6/openmerge/internal/dependency"
+	"github.com/CanadaApollo6/openmerge/internal/dependency"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -50,9 +50,9 @@ func (w *worker) lockStatus() bool {
 // current configuration and time and are always recalculated, never cached.
 type ledgerCache struct {
 	authorization [32]byte
-	watermark  int64
-	projection status.Queue
-	journal    store.Journal
+	watermark     int64
+	projection    status.Queue
+	journal       store.Journal
 }
 
 func (s *Server) ledgerSummary(ctx context.Context, w *worker, pr int) (string, error) {
@@ -63,9 +63,9 @@ func (s *Server) ledgerSummary(ctx context.Context, w *worker, pr int) (string, 
 	var authorization [32]byte
 	if pass := w.dependencies; pass != nil {
 		raw, err := json.Marshal(struct {
-			Binding dependency.JournalInitialized
+			Binding  dependency.JournalInitialized
 			Audience map[string][]dependency.Grant
-			Sources map[string]dependency.SourceRecord
+			Sources  map[string]dependency.SourceRecord
 		}{pass.binding, pass.checkAudience, pass.sources})
 		if err != nil {
 			return "", err

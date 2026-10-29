@@ -28,39 +28,39 @@ type Response struct {
 
 // Queue describes one served installation/repository/base/lane partition.
 type Queue struct {
-	Authority         *Authority                 `json:"authority,omitempty"`
-	OutsideWarnings   *OutsideWarnings           `json:"outside_warnings,omitempty"`
-	OutsidePushes     []OutsidePush              `json:"outside_pushes,omitempty"`
-	Readiness         *Readiness                 `json:"readiness,omitempty"`
-	State             string                     `json:"state"`
-	Installation      string                     `json:"installation"`
-	Repository        string                     `json:"repo"`
-	Base              string                     `json:"base"`
-	Lane              string                     `json:"lane"`
-	Watermark         int64                      `json:"watermark"`
-	BaseSHA           string                     `json:"base_sha"`
-	Paused            bool                       `json:"paused"`
-	PauseReason       string                     `json:"pause_reason"`
-	PauseDetail       string                     `json:"pause_detail"`
-	Blocks            []Block                    `json:"blocks"`
-	Chain             []*Batch                   `json:"chain,omitempty"`
-	Invalidations     []queue.BatchesInvalidated `json:"invalidations,omitempty"`
-	ActiveBatch       *Batch                     `json:"active_batch"`
-	Entries           []Entry                    `json:"entries"`
-	FailureEstimate   *FailureEstimate           `json:"failure_estimate,omitempty"`
-	LastWindowFailure *queue.WindowFailure       `json:"last_window_failure,omitempty"`
-	Window            int                        `json:"window,omitempty"`
-	BatchSize         int                        `json:"batch_size,omitempty"`
+	Authority          *Authority                 `json:"authority,omitempty"`
+	OutsideWarnings    *OutsideWarnings           `json:"outside_warnings,omitempty"`
+	OutsidePushes      []OutsidePush              `json:"outside_pushes,omitempty"`
+	Readiness          *Readiness                 `json:"readiness,omitempty"`
+	State              string                     `json:"state"`
+	Installation       string                     `json:"installation"`
+	Repository         string                     `json:"repo"`
+	Base               string                     `json:"base"`
+	Lane               string                     `json:"lane"`
+	Watermark          int64                      `json:"watermark"`
+	BaseSHA            string                     `json:"base_sha"`
+	Paused             bool                       `json:"paused"`
+	PauseReason        string                     `json:"pause_reason"`
+	PauseDetail        string                     `json:"pause_detail"`
+	Blocks             []Block                    `json:"blocks"`
+	Chain              []*Batch                   `json:"chain,omitempty"`
+	Invalidations      []queue.BatchesInvalidated `json:"invalidations,omitempty"`
+	ActiveBatch        *Batch                     `json:"active_batch"`
+	Entries            []Entry                    `json:"entries"`
+	FailureEstimate    *FailureEstimate           `json:"failure_estimate,omitempty"`
+	LastWindowFailure  *queue.WindowFailure       `json:"last_window_failure,omitempty"`
+	Window             int                        `json:"window,omitempty"`
+	BatchSize          int                        `json:"batch_size,omitempty"`
 	dependencyRedacted bool
-	dependencies      map[int]store.DependencyStatus
-	hasAuthorityPin   bool
-	sanitizer         *diagnostic.Sanitizer
-	state             queue.State
-	policyPins        []briefPolicyPin
-	eligibilityPins   map[queue.ChangeID]briefEligibilityPin
-	known             map[int]Entry
-	runLedger         map[int][]Run
-	RulesSources      []RulesSource `json:"rules_sources,omitempty"`
+	dependencies       map[int]store.DependencyStatus
+	hasAuthorityPin    bool
+	sanitizer          *diagnostic.Sanitizer
+	state              queue.State
+	policyPins         []briefPolicyPin
+	eligibilityPins    map[queue.ChangeID]briefEligibilityPin
+	known              map[int]Entry
+	runLedger          map[int][]Run
+	RulesSources       []RulesSource `json:"rules_sources,omitempty"`
 
 	ProvenanceCapacity *store.ProvenanceCapacity `json:"provenance_capacity,omitempty"`
 }
@@ -114,24 +114,24 @@ type BatchPR struct {
 // Entry uses position zero for PRs outside the queue; admission is the latest
 // successful admission, retained on a terminal PR detail response.
 type Entry struct {
-	dependencyWaiting  bool
-	Dependency         *WaitingReason `json:"dependency,omitempty"`
-	WaitingReason      WaitingReason  `json:"waiting_reason"`
-	Landing            *LandingView   `json:"landing,omitempty"`
-	Change             *ChangeReport  `json:"change,omitempty"`
-	Gate               string         `json:"gate,omitempty"`
-	RunLedger          []Run          `json:"run_ledger,omitempty"`
-	BatchID            string         `json:"batch_id,omitempty"`
-	BatchPosition      uint64         `json:"batch_position,omitempty"`
-	BatchesAhead       *int           `json:"batches_ahead"`
-	Position           int            `json:"position"`
-	PR                 int            `json:"pr"`
-	HeadSHA            string         `json:"head_sha"`
-	AdmittedAt         *time.Time     `json:"admitted_at"`
-	Status             string         `json:"status"`
-	Reason             string         `json:"reason"`
-	LastDequeueReason  string         `json:"last_dequeue_reason"`
-	Detail             string         `json:"detail,omitempty"`
+	dependencyWaiting bool
+	Dependency        *WaitingReason `json:"dependency,omitempty"`
+	WaitingReason     WaitingReason  `json:"waiting_reason"`
+	Landing           *LandingView   `json:"landing,omitempty"`
+	Change            *ChangeReport  `json:"change,omitempty"`
+	Gate              string         `json:"gate,omitempty"`
+	RunLedger         []Run          `json:"run_ledger,omitempty"`
+	BatchID           string         `json:"batch_id,omitempty"`
+	BatchPosition     uint64         `json:"batch_position,omitempty"`
+	BatchesAhead      *int           `json:"batches_ahead"`
+	Position          int            `json:"position"`
+	PR                int            `json:"pr"`
+	HeadSHA           string         `json:"head_sha"`
+	AdmittedAt        *time.Time     `json:"admitted_at"`
+	Status            string         `json:"status"`
+	Reason            string         `json:"reason"`
+	LastDequeueReason string         `json:"last_dequeue_reason"`
+	Detail            string         `json:"detail,omitempty"`
 }
 
 // Why links a current-state explanation to recent committed evidence.
