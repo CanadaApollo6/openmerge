@@ -590,6 +590,23 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 				continue
 			}
 			entry := w.ledgerCache.projection.LedgerEntry(n)
+			// Admitted entries were reported above with the canonical queue summary.
+			// Retained checks only need a refresh when no normal report owns them.
+			if w.dependencies != nil {
+				if entry == nil {
+					continue
+				}
+				admitted := false
+				for _, queued := range state.Entries {
+					if queued.PR == n {
+						admitted = true
+						break
+					}
+				}
+				if admitted {
+					continue
+				}
+			}
 			if pin.Authority == authority.GitHub || (entry != nil && entry.Position == 0) {
 				data, err := s.store.Observation(ctx, w.id, fmt.Sprintf("status/%d", n))
 				if err != nil {
@@ -608,9 +625,6 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 					if w.dependencies != nil {
 						// A retained outgoing check is only a dedupe record. Rebuild its
 						// display from today's authorization before a paragraph refresh.
-						if entry == nil {
-							return errors.New("dependency check evidence unavailable")
-						}
 						q := &w.ledgerCache.projection
 						previous.Status.Reason = entry.Reason
 						previous.Status.Summary = checkstatus.WaitingCheckText(q, *entry, s.options.Sanitizer)

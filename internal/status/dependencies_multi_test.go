@@ -158,3 +158,47 @@ func TestDependencyLedgerAttachesCurrentEvidence(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+// Independent transitions must reveal the same response regardless of private progress.
+func TestDependencyIndependentTransitionPrivacy(t *testing.T) {
+	for _, depth := range []int{1, 4} {
+		for _, transition := range []string{"head-changed", "closed", "dequeued", "retargeted"} {
+			t.Run(fmt.Sprintf("depth-%d/%s", depth, transition), func(t *testing.T) {
+				var baseline []byte
+				for _, phase := range []string{"queued", "building", "testing", "invalidating", "discarded"} {
+					j, b, _, _, _ := statusfixture.MultiJournal(t, "dependency-landed", phase, depth, true)
+					var event queue.Event
+					switch transition {
+					case "head-changed":
+						event = queue.PRObserved{PR: 3, HeadSHA: strings.Repeat("e", 40), Eligible: true, Trusted: true}
+					case "closed":
+						event = queue.PRClosed{PR: 3}
+					case "dequeued":
+						event = queue.DequeueRequested{PR: 3}
+					case "retargeted":
+						event = queue.PRObserved{PR: 3, HeadSHA: fmt.Sprintf("%040x", 13), Eligible: false, Trusted: true}
+					}
+					_, payload, err := queue.EncodeEvent(event)
+					if err != nil {
+						t.Fatal(err)
+					}
+					j.Events = append(j.Events, store.JournalEvent{ID: int64(len(j.Events) + 1), RecordedAt: j.Events[0].RecordedAt, Payload: payload, Event: event})
+					j, err = ProjectDependencies(j, b, nil, statusfixture.StatusSources())
+					if err != nil {
+						t.Fatal(err)
+					}
+					q, e, _ := Project(j, 3, 0, nil)
+					raw, err := json.Marshal(Response{Version: Version, Queue: &q, PR: e})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if baseline == nil {
+						baseline = raw
+					} else if !bytes.Equal(baseline, raw) {
+						t.Fatalf("%s leaked: want %s got %s", phase, baseline, raw)
+					}
+				}
+			})
+		}
+	}
+}
