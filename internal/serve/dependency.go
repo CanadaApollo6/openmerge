@@ -2,8 +2,8 @@ package serve
 
 import (
 	"context"
- "crypto/sha256"
- "encoding/json"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"github.com/CanadaApollo6/openmerge/internal/status"
 
@@ -89,13 +89,17 @@ func (s *Server) dependencyDecisionScope(ctx context.Context, key store.QueueKey
 }
 
 // Cache validity follows the complete check-reader scope, independently of the journal.
-func dependencyCheckScope(pass *dependencyPass) ([32]byte,error) {
- if pass==nil{return [32]byte{},nil}
- raw,err:=json.Marshal(struct {
-  Binding dependency.JournalInitialized
-  Audience map[string][]dependency.Grant
-  Sources map[string]dependency.SourceRecord
- }{pass.binding,pass.checkAudience,pass.sources})
- if err!=nil{return [32]byte{},err}
- return sha256.Sum256(raw),nil
+func dependencyCheckScope(pass *dependencyPass) ([32]byte, error) {
+	if pass == nil {
+		return [32]byte{}, nil
+	}
+	raw, err := json.Marshal(struct {
+		Binding  dependency.JournalInitialized
+		Audience map[string][]dependency.Grant
+		Sources  map[string]dependency.SourceRecord
+	}{pass.binding, pass.checkAudience, pass.sources})
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return sha256.Sum256(raw), nil
 }
