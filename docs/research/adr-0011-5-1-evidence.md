@@ -252,3 +252,73 @@ grant without a journal write, then requires the next projection and emitted
 fake-forge check to be generic. Removing the whole audience or source binding
 also fails closed. Cheap status-only tests cover non-admitted hold precedence,
 current-brief warnings and both admitted/fallback ledger attachment.
+
+All **31** mutations (the original 24 plus seven round-one cases) were killed by
+assertion failures with a passing control. The final implementation also passed
+a separate rerun of all seven round-one mutants. The new cases remove masking
+of derived gates, independent co-batch progress, chain suffix progress and cache
+authorization; the remaining three are M3, M9 and M7. M7 now dies in status tests
+without requiring serve. [Recorded mutation results](adr-0011-5-1-round1-mutations.json)
+include the test names and implementation commits.
+
+The three supplied reviewer probes were also run unchanged through Go overlays:
+`TestReviewIndependentEntryPrivacy`, `TestReviewCoBatchLeak` and
+`TestReviewRevokedCheckGrant` each fail by assertion on `ef8d4df` and pass on the
+fixed implementation. Overlay source copies are not checked into the repository.
+
+To rerun only round-one mutations, use:
+
+```sh
+python3 scripts/verify-adr0011-slice5.py --round1-only --output round1-mutations.json
+```
+
+`--status-only` runs the six status mutations when Postgres is unavailable. The
+runner now archives sources as `.go.source` and supplies their virtual `.go`
+paths through a Go overlay. This prevents archived callers from being mistaken
+for production activation by repository-wide filesystem guards. The working
+source is never mutated. Compiler errors, panics, timeouts and connection errors
+still do not count as assertion kills.
+
+### Round 1 validation and timing
+
+Final full race/short suites pass for status, serve, CLI, GitHub driver,
+dependency and journalreader. The three reviewer probes pass on the fix after
+assertion failures on the original head. `golangci-lint run ./...` reports
+**0 issues**. Gofmt and `git diff --check` are clean; formatter changes have
+separate style commits. No inactive compatibility goldens changed. Only the two
+activated dependency API/CLI goldens changed their requested `why.summary`
+wording, alongside twelve new multi-entry privacy goldens.
+
+| Suite | Original PR (`ef8d4df`) | Final implementation (`86d2effa`) | Delta |
+| --- | --- | --- | --- |
+| status | 12.226s | 40.546s | +28.320s |
+| serve | 329.991s | 328.056s | -1.935s |
+
+These are single local wall-clock samples of precompiled race test binaries,
+run from their package directories with `-test.short -test.count=1
+-test.timeout=580s`. The heavy lock, Go 1.27.3, `GOFLAGS=-p=2`, `GOMEMLIMIT=4GiB`
+and both :54329 test database URLs were used. Compilation is excluded on both
+sides, and the race runtime's exit delay is included on both sides. The serve suite includes
+database fixtures and deliberate settlement/poll waits; status adds
+CPU work for the expanded full-render matrix. No production latency or speedup
+claim is made. The initial pre-restoration serve baseline was 319.888s; the first
+fixed candidate took 331.824s after restoration, a +11.936s difference. That
+confounded sample triggered a repeated original-head run against the restored
+database, followed by the final head. The table uses that comparison. These are
+noisy local observations, not statistical CI estimates.
+
+The final status matrix has 320 audience/state/history/layout cells and 15,040
+HTTP renders. CLI adds 880 queue/PR displays, and the loopback GitHub matrix adds
+720 check publications. Every cell compares complete rendered bytes; checked-in
+channel digests preserve the stable baselines compactly.
+
+Excluded runs: an initial binary invocation used the repository root instead of
+package working directories and failed relative fixture reads; a mutation control
+hit a stopped database; one candidate full serve run saw a copied mutation
+checkout as extra runtime callers. None counts as a passing suite, timing sample,
+or mutant kill. The runner now uses overlay-backed archived sources to prevent
+the filesystem-guard collision. The first reader run also caught a direct
+dependency import in the ledger cache; digest construction was moved into the existing private dependency
+boundary, and both unchanged architecture guards then passed on rerun.
+Connection-error runs were repeated after the shared database was restored; this
+work did not stop or restart the database.

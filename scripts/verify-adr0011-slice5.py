@@ -147,7 +147,10 @@ def main():
                 path.write_text(original.replace(old, new) if name.startswith("M7-") else original.replace(old, new, 1))
                 result = run(checkout, [package])
                 failures = re.findall(r'--- FAIL: (\S+)', result.stdout)
-                killed = result.returncode != 0 and bool(failures) and '[build failed]' not in result.stdout and 'panic:' not in result.stdout
+                invalid_run = any(marker in result.stdout for marker in (
+                    '[build failed]', 'panic:', 'connect: connection refused',
+                    'failed to connect to', 'context deadline exceeded'))
+                killed = result.returncode != 0 and bool(failures) and not invalid_run
                 results.append({'mutation': name, 'killed': killed, 'tests': failures})
                 print(f'{name}: {"KILLED" if killed else "SURVIVED"}', flush=True)
                 if not killed:

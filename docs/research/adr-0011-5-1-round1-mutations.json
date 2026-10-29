@@ -1,0 +1,348 @@
+{
+  "original_head": "ef8d4df6c2336d52b4dd333b30d8682581348d08",
+  "final_implementation_head": "86d2effa35c3d52d3c72206868f86d77100b9932",
+  "reproducers": [
+    {
+      "test": "TestReviewIndependentEntryPrivacy",
+      "original": "assertion failure",
+      "fixed": "pass"
+    },
+    {
+      "test": "TestReviewCoBatchLeak",
+      "original": "assertion failure",
+      "fixed": "pass"
+    },
+    {
+      "test": "TestReviewRevokedCheckGrant",
+      "original": "assertion failure",
+      "fixed": "pass"
+    }
+  ],
+  "mutations": [
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "one-bit-landed-success",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyMultiQueuePrivacyGoldens",
+        "TestDependencyPrivacyGoldensNoRenderingFetch",
+        "TestDependencyMissingDiagnosticAndBindingFailClosed",
+        "TestDependencySourceGrantConfusionFailsClosed",
+        "TestDependencyUnstartedProgressPrivacy",
+        "TestDependencySourceBindingGuards"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "first-reader-only",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyPrivacyGoldensNoRenderingFetch"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "denied-reader-accepted",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyMultiQueuePrivacyGoldens",
+        "TestDependencyPrivacyGoldensNoRenderingFetch"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "unrelated-repository-grant",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencySourceGrantConfusionFailsClosed",
+        "TestDependencySourceBindingGuards"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "private-rows-consume-pagination",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyAuthorizedReferencesRemainOriginal"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "clock-rows-consume-pagination",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyAuthorizedReferencesRemainOriginal"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "private-journal-id-gaps",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyMultiQueuePrivacyGoldens",
+        "TestDependencyPrivacyGoldensNoRenderingFetch",
+        "TestDependencyUnstartedProgressPrivacy"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "unstarted-batch-success-signal",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyMultiQueuePrivacyGoldens",
+        "TestDependencyUnstartedProgressPrivacy"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "raw-check-prefix",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyMultiQueuePrivacyGoldens",
+        "TestDependencyPrivacyGoldensNoRenderingFetch",
+        "TestDependencyUnstartedProgressPrivacy"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "api-grant-authorizes-public-check",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyCheckGrantRevocation",
+        "TestDependencyStatusActivationRemainsPrivate"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "historical-current-diagnostic",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyMultiQueuePrivacyGoldens",
+        "TestDependencyHistoricalRevisionWithholdsCurrentDetails"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "stale-consumer-revision",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyHistoricalRevisionWithholdsCurrentDetails"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "diagnostic-code-result-mismatch",
+      "killed": true,
+      "assertion_tests": [
+        "TestDiagnosticTypedCodesAndGuards"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "diagnostic-wrong-observation",
+      "killed": true,
+      "assertion_tests": [
+        "TestDiagnosticTypedCodesAndGuards"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "redacted-explanation-rows",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyMultiQueuePrivacyGoldens",
+        "TestDependencyPrivacyGoldensNoRenderingFetch",
+        "TestDependencyUnstartedProgressPrivacy"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "historical-hold-missing",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyMultiQueuePrivacyGoldens"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "consumer-progress-entry",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyMultiQueuePrivacyGoldens",
+        "TestDependencyUnstartedProgressPrivacy"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "composed-invalidation-lost",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyUnstartedProgressPrivacy"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "unbounded-diagnostic-history",
+      "killed": true,
+      "assertion_tests": [
+        "TestDiagnosticProjectionLimit"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "empty-declaration-hold",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyEmptyDeclarationHasNoPresentation"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "public-watermark-cache-key",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyCheckGrantRevocation",
+        "TestDependencyStatusCacheUsesJournalWatermark"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "raw-retained-decision-pagination",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyMultiQueuePrivacyGoldens",
+        "TestDependencyPrivacyGoldensNoRenderingFetch"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "decision-scope-bypassed",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyStatusCacheUsesJournalWatermark"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "downgrade-inventory-omission",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyDiagnosticRealEventDowngrade"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "one-bit-other-entry-gate",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyMultiQueuePrivacyGoldens",
+        "TestDependencyUnstartedProgressPrivacy"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "one-bit-cobatch-progress",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyMultiQueuePrivacyGoldens"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "one-bit-chain-suffix-invalidation",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyMultiQueuePrivacyGoldens"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "revoked-check-cache",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyCheckGrantRevocation"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "M3-not-queued-dependency-precedence",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyNotQueuedPrecedesDependencyHold"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "M9-current-brief-dependency-warning",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyMultiQueuePrivacyGoldens"
+      ]
+    },
+    {
+      "run": "all-31-at-c318b90e",
+      "mutation": "M7-ledger-dependency-attachment",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyLedgerAttachesCurrentEvidence"
+      ]
+    },
+    {
+      "run": "final-round1-7-at-86d2effa",
+      "mutation": "one-bit-other-entry-gate",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyMultiQueuePrivacyGoldens",
+        "TestDependencyUnstartedProgressPrivacy"
+      ]
+    },
+    {
+      "run": "final-round1-7-at-86d2effa",
+      "mutation": "one-bit-cobatch-progress",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyMultiQueuePrivacyGoldens"
+      ]
+    },
+    {
+      "run": "final-round1-7-at-86d2effa",
+      "mutation": "one-bit-chain-suffix-invalidation",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyMultiQueuePrivacyGoldens"
+      ]
+    },
+    {
+      "run": "final-round1-7-at-86d2effa",
+      "mutation": "revoked-check-cache",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyCheckGrantRevocation"
+      ]
+    },
+    {
+      "run": "final-round1-7-at-86d2effa",
+      "mutation": "M3-not-queued-dependency-precedence",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyNotQueuedPrecedesDependencyHold"
+      ]
+    },
+    {
+      "run": "final-round1-7-at-86d2effa",
+      "mutation": "M9-current-brief-dependency-warning",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyMultiQueuePrivacyGoldens"
+      ]
+    },
+    {
+      "run": "final-round1-7-at-86d2effa",
+      "mutation": "M7-ledger-dependency-attachment",
+      "killed": true,
+      "assertion_tests": [
+        "TestDependencyLedgerAttachesCurrentEvidence"
+      ]
+    }
+  ]
+}
