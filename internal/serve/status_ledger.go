@@ -2,12 +2,9 @@ package serve
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"time"
 
-	"github.com/CanadaApollo6/openmerge/internal/dependency"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/status"
 	"github.com/CanadaApollo6/openmerge/internal/store"
@@ -60,17 +57,9 @@ func (s *Server) ledgerSummary(ctx context.Context, w *worker, pr int) (string, 
 	if err != nil {
 		return "", err
 	}
-	var authorization [32]byte
-	if pass := w.dependencies; pass != nil {
-		raw, err := json.Marshal(struct {
-			Binding  dependency.JournalInitialized
-			Audience map[string][]dependency.Grant
-			Sources  map[string]dependency.SourceRecord
-		}{pass.binding, pass.checkAudience, pass.sources})
-		if err != nil {
-			return "", err
-		}
-		authorization = sha256.Sum256(raw)
+	authorization, err := dependencyCheckScope(w.dependencies)
+	if err != nil {
+		return "", err
 	}
 	if w.ledgerCache == nil || w.ledgerCache.watermark != watermark || w.ledgerCache.authorization != authorization {
 		journals, err := s.store.ReportingJournals(ctx, []store.QueueKey{w.Key})
