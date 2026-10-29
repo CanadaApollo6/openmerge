@@ -445,7 +445,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			summary += "; " + block.Reason + " [" + block.Source + "]: " + block.Detail
 		}
 		summary += "; " + queue.BlockRecovery(s.Blocks(queue.Config{}))
-		if inBatch(s, pr) && s.Active.Phase == queue.Landing {
+		if !j.DependencyRedacted && inBatch(s, pr) && s.Active.Phase == queue.Landing {
 			summary += "; landing outcome is still being resolved through its fence"
 		}
 	} else if e.Position > 0 {

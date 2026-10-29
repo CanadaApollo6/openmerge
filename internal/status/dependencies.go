@@ -93,25 +93,28 @@ func ProjectDependencies(j store.Journal, binding dependency.JournalInitialized,
 	return j, nil
 }
 
-// Batch progress is shared by every queue entry. Withhold pre-landing progress
-// for the whole redacted queue, preserving terminal, settlement and admission gates.
+// maskDependencyEntry constructs the complete public entry from an allowlist.
+// Every queue member can be influenced by a private dependency through batching.
+// Admission identity, public terminal outcomes and independent admission gates are
+// retained; batch progress, CI detail and newly added fields default to absent.
 func maskDependencyEntry(e *Entry) {
-	e.RunLedger = nil
-	e.BatchID = ""
-	e.BatchPosition = 0
-	e.BatchesAhead = nil
+	view := Entry{
+		PR: e.PR, HeadSHA: e.HeadSHA, Position: e.Position, AdmittedAt: e.AdmittedAt,
+		Status: e.Status, Reason: e.Reason, LastDequeueReason: e.LastDequeueReason,
+		Change: e.Change, Dependency: e.Dependency, dependencyWaiting: e.dependencyWaiting,
+	}
 	if e.Landing != nil {
-		landing := *e.Landing
-		landing.BatchID, landing.AttemptID = "", ""
-		e.Landing = &landing
+		view.Landing = &LandingView{Outcome: e.Landing.Outcome, SHA: e.Landing.SHA, EventID: e.Landing.EventID}
 	}
 	switch e.Status {
 	case "queued", "building", "testing", "invalidating":
-		e.Status = "queued"
-		e.Reason, e.Detail, e.Gate, e.BatchID = "", "", "", ""
-		e.BatchPosition = 0
-		e.BatchesAhead = nil
+		view.Status, view.Reason = "queued", ""
+	case "waiting-entry":
+		view.Detail = e.Detail
+	case "dequeue-pending":
+		view.Gate = "dequeue"
 	}
+	*e = view
 }
 
 func maskDependencyBatches(q *Queue, j store.Journal) {
@@ -128,11 +131,31 @@ func maskDependencyBatches(q *Queue, j store.Journal) {
 // DependencyCheckStatus applies the same private hold to the entire check,
 // including the existing prefix, before any driver publishes it.
 func DependencyCheckStatus(q *Queue, e *Entry, previous forge.Status) forge.Status {
-	if e == nil || !q.dependencyRedacted || e.Status != "queued" {
+	if !q.dependencyRedacted {
 		return previous
 	}
+	if e == nil {
+		return forge.Status{State: forge.Queued, Summary: "Waiting for queue status"}
+	}
+	state := forge.Queued
+	switch e.Status {
+	case "merged":
+		state = forge.Merged
+	case "closed", "dequeued", "dequeue-pending":
+		state = forge.Dequeued
+	case "blocked":
+		state = forge.Blocked
+	case "paused":
+		state = forge.Paused
+	case "landing":
+		state = forge.Landing
+	}
 	r := deriveWaitingReason(q, *e, false)
-	return forge.Status{State: forge.Queued, Reason: string(r.Code), Summary: WaitingSummary(r)}
+	reason := string(r.Code)
+	if state == forge.Dequeued || state == forge.Blocked || state == forge.Paused {
+		reason = e.Reason
+	}
+	return forge.Status{State: state, Reason: reason, Summary: WaitingSummary(r)}
 }
 
 // RequireDependencyDecisionScope withholds retained positions that could expose

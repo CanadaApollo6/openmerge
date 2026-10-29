@@ -729,3 +729,12 @@ the opt-in multi-writer warning, wait-age display and additional evidence pagina
 remain slice **5-2**. The existing `events=1..100` limit is unchanged. Retained decision paging returns
 the existing generic 503 response when dependency scope is redacted, before
 querying decision pages or exposing cursor positions. Authorized paging stays unchanged.
+
+When dependency evidence is unavailable to an audience, entry presentation uses an
+allowlist for every queue member: PR and head identity, queue position and admission
+time, public status and reason, last dequeue reason, change/approval metadata,
+ dependency warning, and confirmed landing outcome, SHA and event ID. Waiting-entry
+conditions and the public dequeue gate remain visible. Batch progress is
+normalized to queued; batch IDs, positions, run history, CI provenance and other
+batch-derived details are omitted. New entry fields are withheld by default. Checks,
+waiting reasons and explanations are derived from the same projected entry.
