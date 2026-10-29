@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest/statusfixture"
@@ -41,6 +42,13 @@ func TestDependencyMetamorphicPrivacy(t *testing.T) {
 					for _, path := range paths {
 						w := httptest.NewRecorder()
 						h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+						wantCode := 200
+						if strings.Contains(path, "/decisions") {
+							wantCode = 503
+						}
+						if w.Code != wantCode {
+							t.Fatalf("%s returned %d: %s", path, w.Code, w.Body)
+						}
 						got := append([]byte(fmt.Sprintf("%d\n", w.Code)), w.Body.Bytes()...)
 						if want, ok := baseline[path]; ok {
 							if !bytes.Equal(want, got) {

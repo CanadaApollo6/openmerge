@@ -2,6 +2,7 @@ package serve
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -11,6 +12,21 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
+
+type capturedReport struct {
+	Head   string
+	Status forge.Status
+}
+
+type privacyReportDriver struct {
+	*instructionDriver
+	payloads map[int][]capturedReport
+}
+
+func (d *privacyReportDriver) ReportStatus(ctx context.Context, repo forge.RepoRef, pr int, head string, status forge.Status) error {
+	d.payloads[pr] = append(d.payloads[pr], capturedReport{Head: head, Status: status})
+	return d.instructionDriver.ReportStatus(ctx, repo, pr, head, status)
+}
 
 // Exercise the real report and durable deduplication, including the interval
 // after observation but before the planner executes a pending dequeue.
@@ -140,6 +156,7 @@ func TestDependencyMetamorphicPublication(t *testing.T) {
 		for seed := 0; seed < seeds; seed++ {
 			t.Run(fmt.Sprintf("depth-%d/seed-%d", depth, seed), func(t *testing.T) {
 				var baseline map[int][]byte
+				var baselinePayload []byte
 				baselineWrites := -1
 				for world := 0; world < 7; world++ {
 					j, b, prs := statusfixture.MetamorphicJournal(t, int64(seed), depth, world)
@@ -176,9 +193,14 @@ func TestDependencyMetamorphicPublication(t *testing.T) {
 					for _, e := range state.Entries {
 						w.prs[e.PR] = forge.PullRequest{Number: e.PR, HeadSHA: e.HeadSHA}
 					}
-					driver := &instructionDriver{Driver: w.Driver}
+					driver := &privacyReportDriver{instructionDriver: &instructionDriver{Driver: w.Driver}, payloads: map[int][]capturedReport{}}
 					w.Driver = driver
 					must(t, s.report(t.Context(), w))
+					if driver.writes == 0 {
+						t.Fatal("report published no checks")
+					}
+					payload, err := json.Marshal(driver.payloads)
+					must(t, err)
 					got := map[int][]byte{}
 					for _, pr := range prs {
 						got[pr], err = db.Observation(t.Context(), id, fmt.Sprintf("status/%d", pr))
@@ -186,10 +208,14 @@ func TestDependencyMetamorphicPublication(t *testing.T) {
 					}
 					if baseline == nil {
 						baseline = got
+						baselinePayload = bytes.Clone(payload)
 						baselineWrites = driver.writes
 					} else {
 						if baselineWrites != driver.writes {
 							t.Fatalf("world %d wrote %d checks, want %d", world, driver.writes, baselineWrites)
+						}
+						if !bytes.Equal(baselinePayload, payload) {
+							t.Fatalf("world %d sent different forge payloads:\n%s\n%s", world, baselinePayload, payload)
 						}
 						for _, pr := range prs {
 							if !bytes.Equal(baseline[pr], got[pr]) {
