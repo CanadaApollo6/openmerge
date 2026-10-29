@@ -141,7 +141,7 @@ func DependencyCheckStatus(q *Queue, e *Entry, previous forge.Status) forge.Stat
 	switch e.Status {
 	case "merged":
 		state = forge.Merged
-	case "closed", "dequeued", "dequeue-pending":
+	case "closed", "dequeued":
 		state = forge.Dequeued
 	case "blocked":
 		state = forge.Blocked
@@ -152,7 +152,7 @@ func DependencyCheckStatus(q *Queue, e *Entry, previous forge.Status) forge.Stat
 	}
 	r := deriveWaitingReason(q, *e, false)
 	reason := string(r.Code)
-	if state == forge.Dequeued || state == forge.Blocked || state == forge.Paused {
+	if state == forge.Dequeued || state == forge.Blocked || state == forge.Paused || e.Status == "dequeue-pending" {
 		reason = e.Reason
 	}
 	return forge.Status{State: state, Reason: reason, Summary: WaitingSummary(r)}

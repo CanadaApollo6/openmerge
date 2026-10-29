@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest/statusfixture"
+	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
@@ -80,5 +81,14 @@ func TestDependencyEntryAllowlist(t *testing.T) {
 				t.Fatal("lost public settlement", e)
 			}
 		})
+	}
+}
+
+func TestDependencyPendingCheckKeepsReason(t *testing.T) {
+	q := Queue{dependencyRedacted: true}
+	e := Entry{Status: "dequeue-pending", Reason: "head-changed", Position: 1}
+	got := DependencyCheckStatus(&q, &e, forge.Status{State: forge.Testing, Summary: "Batch b1"})
+	if got.State != forge.Queued || got.Reason != "head-changed" || strings.Contains(got.Summary, "b1") {
+		t.Fatal(got)
 	}
 }
