@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest/statusfixture"
+	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/status"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
@@ -123,50 +124,55 @@ func TestDependencyMultiCLIPrivacyGoldens(t *testing.T) {
 	}
 }
 
+type metamorphicCLIPolicy struct {
+	dependencyCLIJournal
+	cfg queue.Config
+}
+
+func (s metamorphicCLIPolicy) QueuePolicy(store.QueueKey) (queue.Config, bool) { return s.cfg, true }
+
 func TestDependencyMetamorphicCLI(t *testing.T) {
-	seeds := 5
-	if !testing.Short() {
-		seeds = 40
-	}
-	for _, depth := range []int{1, 4} {
-		for seed := 0; seed < seeds; seed++ {
-			t.Run(fmt.Sprintf("depth-%d/seed-%d", depth, seed), func(t *testing.T) {
-				baseline := map[int][]byte{}
-				for world := 0; world < 7; world++ {
-					j, b, prs := statusfixture.MetamorphicJournal(t, int64(seed), depth, world)
-					j, err := status.ProjectDependencies(j, b, nil, statusfixture.StatusSources())
-					if err != nil {
+	for _, c := range statusfixture.MetamorphicCases(testing.Short()) {
+		t.Run(c.String(), func(t *testing.T) {
+			baseline := map[string][]byte{}
+			worlds := map[string]int{}
+			for _, world := range statusfixture.MetamorphicWorlds(testing.Short()) {
+				m := statusfixture.Metamorphic(t, c, world)
+				worlds[m.Group]++
+				j, err := status.ProjectDependencies(m.Journal, m.Binding, nil, statusfixture.StatusSources())
+				if err != nil {
+					t.Fatal(err)
+				}
+				h := status.Handler(metamorphicCLIPolicy{dependencyCLIJournal{j}, statusfixture.MetamorphicPolicy(c.Depth)}, []store.QueueKey{j.Key}, "", nil)
+				for _, pr := range append([]int{0}, m.PRs...) {
+					path := "/v1/queues/acme/client/main"
+					if pr != 0 {
+						path += fmt.Sprintf("/prs/%d?events=100", pr)
+					}
+					w := httptest.NewRecorder()
+					h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+					if w.Code != 200 {
+						t.Fatal(w.Code, w.Body)
+					}
+					var response status.Response
+					if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 						t.Fatal(err)
 					}
-					h := status.Handler(dependencyCLIJournal{j}, []store.QueueKey{j.Key}, "", nil)
-					for _, pr := range append([]int{0}, prs...) {
-						path := "/v1/queues/acme/client/main"
-						if pr != 0 {
-							path += fmt.Sprintf("/prs/%d?events=100", pr)
+					var out bytes.Buffer
+					if err := printStatus(&out, response); err != nil {
+						t.Fatal(err)
+					}
+					key := fmt.Sprintf("%s %d", m.Group, pr)
+					if want, ok := baseline[key]; ok {
+						if !bytes.Equal(want, out.Bytes()) {
+							t.Fatalf("world %d PR %d differs %s", world, pr, statusfixture.Diff(want, out.Bytes()))
 						}
-						w := httptest.NewRecorder()
-						h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
-						if w.Code != 200 {
-							t.Fatal(w.Code, w.Body)
-						}
-						var response status.Response
-						if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-							t.Fatal(err)
-						}
-						var out bytes.Buffer
-						if err := printStatus(&out, response); err != nil {
-							t.Fatal(err)
-						}
-						if want, ok := baseline[pr]; ok {
-							if !bytes.Equal(want, out.Bytes()) {
-								t.Fatalf("world %d PR %d differs:\n%s\n%s", world, pr, want, out.Bytes())
-							}
-						} else {
-							baseline[pr] = bytes.Clone(out.Bytes())
-						}
+					} else {
+						baseline[key] = bytes.Clone(out.Bytes())
 					}
 				}
-			})
-		}
+			}
+			statusfixture.RequireComparedWorlds(t, c, worlds)
+		})
 	}
 }
