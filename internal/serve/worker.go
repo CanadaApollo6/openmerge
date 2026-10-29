@@ -294,6 +294,11 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		if err != nil {
 			return err
 		}
+		if w.dependencies != nil && w.ledgerCache != nil {
+			q := &w.ledgerCache.projection
+			view := checkstatus.DependencyCheckStatus(q, q.LedgerEntry(report.PR), forge.Status{State: forge.StatusState(report.Status), Reason: report.Reason, Summary: report.Detail})
+			report.Status, report.Reason, report.Detail = string(view.State), view.Reason, view.Summary
+		}
 		report.Detail += summary
 		if w.stageA != nil {
 			detail, err := s.stageACheckSummary(actionCtx, w, report.PR)
@@ -600,6 +605,18 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 					}
 				}
 				if len(data) != 0 && (pin.Authority == authority.GitHub || (previous.Head == entry.HeadSHA && (previous.Status.State == forge.Dequeued || previous.Status.State == forge.Merged))) {
+					if w.dependencies != nil {
+						// A retained outgoing check is only a dedupe record. Rebuild its
+						// display from today's authorization before a paragraph refresh.
+						if entry == nil {
+							return errors.New("dependency check evidence unavailable")
+						}
+						q := &w.ledgerCache.projection
+						previous.Status.Reason = entry.Reason
+						previous.Status.Summary = checkstatus.WaitingCheckText(q, *entry, s.options.Sanitizer)
+						previous.Status = checkstatus.DependencyCheckStatus(q, entry, previous.Status)
+						previous.Status.Summary += checkstatus.LedgerSummary(entry)
+					}
 					previous.Status.Summary = checkstatus.RefreshQueueInstructions(previous.Status.Summary, &w.ledgerCache.projection)
 					if err := s.writeStatus(ctx, w, n, previous.Head, previous.Status); err != nil {
 						return err

@@ -197,3 +197,55 @@ microbenchmark or production throughput. No speedup is claimed.
 - Canonical ADR 0008 operator exports retain their existing scope and integrity
   contract. A redacted B-audience export is a separate 5-2 deliverable; this PR
   does not silently modify canonical exports or claim their privacy acceptance.
+
+## Round 1 fixes
+
+The original privacy matrix covered only B. Independent queue entries and
+co-batched changes could reveal private progress or `dependency-changed`
+invalidation; the check projection cache also outlived its authorization.
+
+Redacted views now withhold pre-landing progress, batch membership, derived gates,
+and CI run history across every entry, including independent co-batched changes
+and speculative suffixes. Dependency check prefixes use the queue's redaction
+scope. Terminal outcomes, admission conditions, pauses and durable landings keep
+their existing precedence. The generic dependency hold also appears consistently
+in `why.summary`.
+
+The ledger cache key includes a digest of the dependency binding, complete check
+audience and recorded source bindings, in addition to the private journal
+watermark. Missing, denied or stale authorization rebuilds a fail-closed view.
+Queued check actions use the same prefix redaction as periodic checks. Persisted
+outgoing checks are used for deduplication, but their text is rebuilt from current
+authorization before authority paragraph refreshes.
+
+Cache audit: API reads load journals through `Server.Journals` and reapply
+`dependencyJournals`; briefs derive from those projections. HTTP responses retain
+`Cache-Control: no-store`. Reviewer-check cache reuse refreshes dependency
+projections before use, although Stage A/dependency co-activation remains
+rejected. Governing-content caches contain immutable commit-pinned inputs, not
+dependency audience decisions. Durable outgoing checks are compared with newly
+rendered bytes before deduplication, and the authority refresh path no longer
+reuses their previously authorized display text.
+
+A single unauthorized dependency redacts the **whole queue view**: the public
+watermark becomes zero, `why.events` is empty, `/decisions` returns 503, and
+pre-landing batch progress and run ledgers are withheld for every entry. This is
+an accepted degradation for slice 5-1; revisit audience isolation at activation
+(slice 6). Activation remains test-seam only, with no new public configuration
+or persisted wire changes. Inactive compatibility goldens remain unchanged.
+
+The expanded matrix uses three entries at depth one (independent A, dependent B,
+independent C) and six at depth four (plus three independent suffix changes).
+Both separate-batch and co-batched layouts cover eight private-source states,
+five progress histories and unknown/denied audiences. It compares full response
+bytes for every entry, then retains SHA-256 goldens for each channel: queue list,
+queue detail, PR, change/current and revision-one, brief/current and revision-one
+for reviewer/operator/agent, decisions, policy projection, check state/reason/
+summary and ledger text. CLI tests render the real queue and every PR display.
+The fixture validates actual compositions, suffix invalidations and discards.
+
+Revocation coverage renders and publishes an authorized diagnostic, revokes its
+grant without a journal write, then requires the next projection and emitted
+fake-forge check to be generic. Removing the whole audience or source binding
+also fails closed. Cheap status-only tests cover non-admitted hold precedence,
+current-brief warnings and both admitted/fallback ledger attachment.

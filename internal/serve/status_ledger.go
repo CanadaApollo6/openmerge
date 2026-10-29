@@ -2,6 +2,10 @@ package serve
 
 import (
 	"context"
+ "crypto/sha256"
+ "encoding/json"
+
+ "github.com/CanadaApollo6/openmerge/internal/dependency"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -45,6 +49,7 @@ func (w *worker) lockStatus() bool {
 // The worker mutex serializes reporting and cache updates. Gates depend on
 // current configuration and time and are always recalculated, never cached.
 type ledgerCache struct {
+	authorization [32]byte
 	watermark  int64
 	projection status.Queue
 	journal    store.Journal
@@ -55,7 +60,19 @@ func (s *Server) ledgerSummary(ctx context.Context, w *worker, pr int) (string, 
 	if err != nil {
 		return "", err
 	}
-	if w.ledgerCache == nil || w.ledgerCache.watermark != watermark {
+	var authorization [32]byte
+	if pass := w.dependencies; pass != nil {
+		raw, err := json.Marshal(struct {
+			Binding dependency.JournalInitialized
+			Audience map[string][]dependency.Grant
+			Sources map[string]dependency.SourceRecord
+		}{pass.binding, pass.checkAudience, pass.sources})
+		if err != nil {
+			return "", err
+		}
+		authorization = sha256.Sum256(raw)
+	}
+	if w.ledgerCache == nil || w.ledgerCache.watermark != watermark || w.ledgerCache.authorization != authorization {
 		journals, err := s.store.ReportingJournals(ctx, []store.QueueKey{w.Key})
 		if err != nil {
 			return "", err
@@ -71,7 +88,7 @@ func (s *Server) ledgerSummary(ctx context.Context, w *worker, pr int) (string, 
 		}
 		projection, _, _ := status.Project(journals[0], 0, 0, s.options.Sanitizer)
 		// Cache identity uses the private DB cursor, never a redacted public marker.
-		w.ledgerCache = &ledgerCache{watermark: watermark, projection: projection, journal: journals[0]}
+		w.ledgerCache = &ledgerCache{authorization: authorization, watermark: watermark, projection: projection, journal: journals[0]}
 	}
 	q := &w.ledgerCache.projection
 	q.Readiness = &status.Readiness{Ready: !w.managed || w.ready}

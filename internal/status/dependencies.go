@@ -93,13 +93,11 @@ func ProjectDependencies(j store.Journal, binding dependency.JournalInitialized,
 	return j, nil
 }
 
-// A private source must not turn its consumer's unstarted composition into a
-// success signal. Keep B's own terminal, settlement and admission gates visible.
+// Batch progress is shared by every queue entry. Withhold pre-landing progress
+// for the whole redacted queue, preserving terminal, settlement and admission gates.
 func maskDependencyEntry(e *Entry) {
-	if !e.dependencyWaiting {
-		return
-	}
-	switch e.Status {
+	e.RunLedger = nil
+		switch e.Status {
 	case "queued", "building", "testing", "invalidating":
 		e.Status = "queued"
 		e.Reason, e.Detail, e.Gate, e.BatchID = "", "", "", ""
@@ -123,7 +121,7 @@ func maskDependencyBatches(q *Queue, j store.Journal) {
 // DependencyCheckStatus applies the same private hold to the entire check,
 // including the existing prefix, before any driver publishes it.
 func DependencyCheckStatus(q *Queue, e *Entry, previous forge.Status) forge.Status {
-	if e == nil || !e.dependencyRedacted || e.Status != "queued" {
+	if e == nil || !q.dependencyRedacted || e.Status != "queued" {
 		return previous
 	}
 	r := deriveWaitingReason(q, *e, false)

@@ -51,6 +51,7 @@ type Queue struct {
 	LastWindowFailure *queue.WindowFailure       `json:"last_window_failure,omitempty"`
 	Window            int                        `json:"window,omitempty"`
 	BatchSize         int                        `json:"batch_size,omitempty"`
+	dependencyRedacted bool
 	dependencies      map[int]store.DependencyStatus
 	hasAuthorityPin   bool
 	sanitizer         *diagnostic.Sanitizer
@@ -114,7 +115,6 @@ type BatchPR struct {
 // successful admission, retained on a terminal PR detail response.
 type Entry struct {
 	dependencyWaiting  bool
-	dependencyRedacted bool
 	Dependency         *WaitingReason `json:"dependency,omitempty"`
 	WaitingReason      WaitingReason  `json:"waiting_reason"`
 	Landing            *LandingView   `json:"landing,omitempty"`
@@ -362,6 +362,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 		q.Watermark = j.Events[len(j.Events)-1].ID
 	}
 	q.dependencies = j.DependencyStatus
+	q.dependencyRedacted = j.DependencyRedacted
 	q.state = s
 	q.runLedger = ledger
 	q.sanitizer = sanitizer
@@ -460,7 +461,11 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			summary += "; queue entry conditions are not satisfied"
 		}
 	case "queued":
-		summary += "; waiting for the next test batch"
+		if e.dependencyWaiting {
+			summary += "; " + WaitingSummary(e.WaitingReason)
+		} else {
+			summary += "; waiting for the next test batch"
+		}
 	case "building":
 		summary += "; constructing the batch test ref"
 	case "testing":

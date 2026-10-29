@@ -213,13 +213,12 @@ func waitingText(r WaitingReason) string {
 }
 
 func attachDependency(q *Queue, e *Entry) {
+	if q.dependencyRedacted {
+		maskDependencyEntry(e)
+	}
 	if v, ok := q.dependencies[e.PR]; ok {
 		e.dependencyWaiting = v.Blocking
-		e.dependencyRedacted = v.Redacted
 		e.Dependency = &WaitingReason{Code: WaitingDependencies, Text: v.Text, Details: slices.Clone(v.Details), URL: v.URL}
-		if v.Redacted {
-			maskDependencyEntry(e)
-		}
 		for _, d := range v.Diagnostics {
 			e.Dependency.Diagnostics = append(e.Dependency.Diagnostics, DependencyDiagnostic{Code: d.Code, Source: d.Source})
 		}

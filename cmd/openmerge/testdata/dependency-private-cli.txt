@@ -1,3 +1,3 @@
 REPO         BASE  POS  PR  HEAD          STATUS  REASON  STATE   WAITING
 acme/client  main  1    #2  bbbbbbbbbbbb  queued          active  Dependency cannot be verified
-PR #2: queued; queue position 1; waiting for the next test batch
+PR #2: queued; queue position 1; Dependency cannot be verified

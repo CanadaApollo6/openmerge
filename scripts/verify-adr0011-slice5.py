@@ -12,7 +12,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 GO_ROOT = '/home/riels/.local/share/mise/installs/go/1.27.3'
 TESTS = ('TestDependency(Privacy|Authorized|Missing|Empty|Source|ExplicitPin|Historical|Unstarted|'
-         'Status|DiagnosticReal)|TestDiagnostic')
+         'Status|DiagnosticReal|Multi|NotQueued|Ledger|CheckGrant)|TestDiagnostic')
 PREFIX = ['flock', '/home/riels/.cache/openmerge-heavy.lock', 'env', 'GOFLAGS=-p=2',
           'GOMEMLIMIT=4GiB', f'GOROOT={GO_ROOT}', f'PATH={GO_ROOT}/bin:{os.environ["PATH"]}']
 MUTANTS = [
@@ -33,8 +33,8 @@ MUTANTS = [
     ('unstarted-batch-success-signal', 'internal/status/dependencies.go',
      'if !j.DependencyRedacted {', 'if true || !j.DependencyRedacted {', './internal/status'),
     ('raw-check-prefix', 'internal/status/dependencies.go',
-     'if e == nil || !e.dependencyRedacted || e.Status != "queued" {',
-     'if true || e == nil || !e.dependencyRedacted || e.Status != "queued" {', './internal/status'),
+     'if e == nil || !q.dependencyRedacted || e.Status != "queued" {',
+     'if true || e == nil || !q.dependencyRedacted || e.Status != "queued" {', './internal/status'),
     ('api-grant-authorizes-public-check', 'internal/serve/dependency.go',
      'pass.checkAudience, pass.sources', 'pass.audience, pass.sources', './internal/serve'),
     ('historical-current-diagnostic', 'internal/status/change.go',
@@ -52,7 +52,7 @@ MUTANTS = [
      'j.DependencyStatus[target] = store.DependencyStatus{Text: "Dependency cannot be verified", Redacted: true, Blocking: true}',
      'delete(j.DependencyStatus, target)', './internal/status'),
     ('consumer-progress-entry', 'internal/status/waiting.go',
-     'if v.Redacted {', 'if false && v.Redacted {', './internal/status'),
+     'if q.dependencyRedacted {', 'if false && q.dependencyRedacted {', './internal/status'),
     ('composed-invalidation-lost', 'internal/status/status.go',
      'if j.DependencyQueue != nil {', 'if false && j.DependencyQueue != nil {', './internal/status'),
     ('unbounded-diagnostic-history', 'internal/dependency/diagnostic.go',
@@ -73,6 +73,27 @@ MUTANTS = [
      '"dependency_waits_withheld",', './internal/store'),
 ]
 
+ROUND1_MUTANTS = [
+    ('one-bit-other-entry-gate', 'internal/status/dependencies.go',
+     'e.Reason, e.Detail, e.Gate, e.BatchID = "", "", "", ""',
+     'e.Reason, e.Detail, e.BatchID = "", "", ""', './internal/status'),
+    ('one-bit-cobatch-progress', 'internal/status/waiting.go',
+     'if q.dependencyRedacted {',
+     'if q.dependencyRedacted && q.dependencies[e.PR].Blocking {', './internal/status'),
+    ('one-bit-chain-suffix-invalidation', 'internal/status/waiting.go',
+     'if q.dependencyRedacted {',
+     'if q.dependencyRedacted && e.BatchPosition < 2 {', './internal/status'),
+    ('revoked-check-cache', 'internal/serve/status_ledger.go',
+     '|| w.ledgerCache.authorization != authorization', '', './internal/serve'),
+    ('M3-not-queued-dependency-precedence', 'internal/status/waiting.go',
+     'if e.Position == 0 {',
+     'if e.Dependency != nil && e.dependencyWaiting { return *e.Dependency }; if e.Position == 0 {', './internal/status'),
+    ('M9-current-brief-dependency-warning', 'internal/status/brief.go',
+     'if entry.Dependency != nil {', 'if false && entry.Dependency != nil {', './internal/status'),
+    ('M7-ledger-dependency-attachment', 'internal/status/ledger.go',
+     'attachDependency(q, &entry)', '', './internal/status'),
+]
+
 
 def run(checkout, packages):
     env = os.environ.copy()
@@ -88,9 +109,10 @@ def run(checkout, packages):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--round1-only', action='store_true')
     args = parser.parse_args()
     results = []
-    with tempfile.TemporaryDirectory(prefix='openmerge-slice5-mutants-') as temp:
+    with tempfile.TemporaryDirectory(prefix='.slice5-mutants-', dir=ROOT) as temp:
         archive = Path(temp) / 'head.tar'
         checkout = Path(temp) / 'checkout'
         checkout.mkdir()
@@ -102,13 +124,13 @@ def main():
                                  './internal/serve', './internal/store'])
         if control.returncode:
             raise SystemExit('Control failed:\n' + control.stdout)
-        for name, file, old, new, package in MUTANTS:
+        for name, file, old, new, package in (ROUND1_MUTANTS if args.round1_only else MUTANTS + ROUND1_MUTANTS):
             path = checkout / file
             original = path.read_text()
             if old not in original:
                 raise SystemExit(f'Mutation target missing: {name}')
             try:
-                path.write_text(original.replace(old, new, 1))
+                path.write_text(original.replace(old, new) if name.startswith("M7-") else original.replace(old, new, 1))
                 result = run(checkout, [package])
                 failures = re.findall(r'--- FAIL: (\S+)', result.stdout)
                 killed = result.returncode != 0 and bool(failures) and '[build failed]' not in result.stdout and 'panic:' not in result.stdout
