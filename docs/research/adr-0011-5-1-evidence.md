@@ -213,7 +213,8 @@ in `why.summary`.
 
 The ledger cache key includes a digest of the dependency binding, complete check
 audience and recorded source bindings, in addition to the private journal
-watermark. Missing, denied or stale authorization rebuilds a fail-closed view.
+watermark. Missing, denied or stale authorization rebuilds a fail-closed view. An absent
+reporting journal fails before a check can reuse old display text.
 Queued check actions use the same prefix redaction as periodic checks. Persisted
 outgoing checks are used for deduplication, but their text is rebuilt from current
 authorization before authority paragraph refreshes.
@@ -234,14 +235,16 @@ an accepted degradation for slice 5-1; revisit audience isolation at activation
 (slice 6). Activation remains test-seam only, with no new public configuration
 or persisted wire changes. Inactive compatibility goldens remain unchanged.
 
-The expanded matrix uses three entries at depth one (independent A, dependent B,
-independent C) and six at depth four (plus three independent suffix changes).
+The expanded matrix uses three entries at depth one (an independent change ahead of B, dependent B,
+and independent C behind B) and six at depth four (plus three independent suffix changes).
 Both separate-batch and co-batched layouts cover eight private-source states,
 five progress histories and unknown/denied audiences. It compares full response
 bytes for every entry, then retains SHA-256 goldens for each channel: queue list,
 queue detail, PR, change/current and revision-one, brief/current and revision-one
 for reviewer/operator/agent, decisions, policy projection, check state/reason/
-summary and ledger text. CLI tests render the real queue and every PR display.
+summary and ledger text. CLI tests render the real queue and every PR display. A separate loopback GitHub
+transport matrix compares emitted check titles, summaries and text after the
+driver's final sanitization; it makes no real GitHub calls.
 The fixture validates actual compositions, suffix invalidations and discards.
 
 Revocation coverage renders and publishes an authorized diagnostic, revokes its

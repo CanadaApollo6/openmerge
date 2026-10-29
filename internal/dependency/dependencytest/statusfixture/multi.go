@@ -137,7 +137,7 @@ func MultiJournal(t testing.TB, code, phase string, depth int, cobatch bool) (st
 		}
 		batchIDs = append(batchIDs, id)
 		compositionIDs = append(compositionIDs, composition)
-		if phase != "building" || depth == 4 {
+		if phase != "building" || depth == 4 && n < len(groups)-1 {
 			base = fmt.Sprintf("%040x", n+100)
 			if depth == 4 {
 				appendRecord(queue.ChainedTestRefBuilt{BatchID: id, TestedSHA: base, LandingSHA: base, ParentBatchID: parent, Position: uint64(n + 1), Method: queue.Merge, At: at})
@@ -145,6 +145,9 @@ func MultiJournal(t testing.TB, code, phase string, depth int, cobatch bool) (st
 				appendRecord(queue.TestRefBuilt{BatchID: id, TestedSHA: base, Method: queue.Merge, At: at})
 			}
 		}
+		expected:=queue.Testing
+		if phase=="building" && n==len(groups)-1 {expected=queue.Building}
+		if got:=reader.Queue.Batch(id);got==nil||got.Phase!=expected{t.Fatalf("batch %s did not reach %s: %+v",id,expected,got)}
 		parent = id
 	}
 	if code != "dependency-landed" || phase == "invalidating" || phase == "discarded" {

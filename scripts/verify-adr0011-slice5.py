@@ -12,7 +12,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 GO_ROOT = '/home/riels/.local/share/mise/installs/go/1.27.3'
 TESTS = ('TestDependency(Privacy|Authorized|Missing|Empty|Source|ExplicitPin|Historical|Unstarted|'
-         'Status|DiagnosticReal|Multi|NotQueued|Ledger|CheckGrant)|TestDiagnostic')
+         'Status|DiagnosticReal|Multi|NotQueued|Ledger|CheckGrant|CheckMissing)|TestDiagnostic')
 PREFIX = ['flock', '/home/riels/.cache/openmerge-heavy.lock', 'env', 'GOFLAGS=-p=2',
           'GOMEMLIMIT=4GiB', f'GOROOT={GO_ROOT}', f'PATH={GO_ROOT}/bin:{os.environ["PATH"]}']
 MUTANTS = [
@@ -100,7 +100,7 @@ def run(checkout, packages):
     env.pop('OPENMERGE_UPDATE_REPORTING_GOLDENS', None)
     for key in ('TEST_DATABASE_URL', 'OPENMERGE_TEST_DATABASE_URL'):
         env[key] = 'postgres://postgres@localhost:54329/postgres?sslmode=disable'
-    return subprocess.run(PREFIX + ['go', 'test', '-short', '-count=1', '-timeout=90s',
+    return subprocess.run(PREFIX + ['go', 'test', '-overlay', str(checkout / 'overlay.json'), '-short', '-count=1', '-timeout=90s',
                                    '-run', TESTS] + packages,
                           cwd=checkout, env=env, text=True, stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT, timeout=590)
@@ -110,6 +110,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--round1-only', action='store_true')
+    parser.add_argument('--status-only', action='store_true', help='Run the status/dependency control and status mutants without Postgres')
     args = parser.parse_args()
     results = []
     with tempfile.TemporaryDirectory(prefix='.slice5-mutants-', dir=ROOT) as temp:
@@ -118,14 +119,27 @@ def main():
         checkout.mkdir()
         subprocess.run(['git', 'archive', 'HEAD', '--format=tar', f'--output={archive}'],
                        cwd=ROOT, check=True)
+        # Keep archived Go sources out of repository-wide filesystem guards.
+        # Go compiles their virtual paths; no copied runtime callers exist on disk.
+        replacements = {}
         with tarfile.open(archive) as source:
-            source.extractall(checkout, filter='data')
-        control = run(checkout, ['./internal/status', './internal/dependency',
-                                 './internal/serve', './internal/store'])
+            for member in source.getmembers():
+                if member.isfile() and member.name.endswith('.go'):
+                    virtual = checkout / member.name
+                    member.name += '.source'
+                    replacements[str(virtual)] = str(checkout / member.name)
+                source.extract(member, checkout, filter='data')
+        (checkout / 'overlay.json').write_text(json.dumps({'Replace': replacements}))
+        control_packages = ['./internal/status', './internal/dependency']
+        if not args.status_only:
+            control_packages += ['./internal/serve', './internal/store']
+        control = run(checkout, control_packages)
         if control.returncode:
             raise SystemExit('Control failed:\n' + control.stdout)
         for name, file, old, new, package in (ROUND1_MUTANTS if args.round1_only else MUTANTS + ROUND1_MUTANTS):
-            path = checkout / file
+            if args.status_only and package != './internal/status':
+                continue
+            path = checkout / (file + ".source")
             original = path.read_text()
             if old not in original:
                 raise SystemExit(f'Mutation target missing: {name}')

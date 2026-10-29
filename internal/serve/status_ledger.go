@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+ "errors"
 
 	"github.com/CanadaApollo6/openmerge/internal/dependency"
 	"time"
@@ -78,6 +79,9 @@ func (s *Server) ledgerSummary(ctx context.Context, w *worker, pr int) (string, 
 			return "", err
 		}
 		if len(journals) == 0 {
+			if w.dependencies != nil {
+				return "", errors.New("dependency check evidence unavailable")
+			}
 			return "", nil
 		}
 		if w.dependencies != nil {

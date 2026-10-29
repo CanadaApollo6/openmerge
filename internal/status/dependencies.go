@@ -103,7 +103,6 @@ func maskDependencyEntry(e *Entry) {
 		e.Reason, e.Detail, e.Gate, e.BatchID = "", "", "", ""
 		e.BatchPosition = 0
 		e.BatchesAhead = nil
-		e.RunLedger = nil
 	}
 }
 
