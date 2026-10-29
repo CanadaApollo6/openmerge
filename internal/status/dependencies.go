@@ -96,6 +96,8 @@ func ProjectDependencies(j store.Journal, binding dependency.JournalInitialized,
 // Every queue member can be influenced by a private dependency through batching.
 // Admission identity, public terminal outcomes and independent admission gates are
 // retained; batch progress, CI detail and newly added fields default to absent.
+// LandingStarted precedes any forge call, so an unconfirmed landing is batch
+// progress too: only a confirmed Landed (status merged) is public.
 func maskDependencyEntry(e *Entry) {
 	view := Entry{
 		PR: e.PR, HeadSHA: e.HeadSHA, Position: e.Position, AdmittedAt: e.AdmittedAt,
@@ -106,7 +108,7 @@ func maskDependencyEntry(e *Entry) {
 		view.Landing = &LandingView{Outcome: e.Landing.Outcome, SHA: e.Landing.SHA, EventID: e.Landing.EventID}
 	}
 	switch e.Status {
-	case "queued", "building", "testing", "invalidating":
+	case "queued", "building", "testing", "invalidating", "landing":
 		view.Status, view.Reason = "queued", ""
 	case "waiting-entry":
 		view.Detail = e.Detail
@@ -147,8 +149,6 @@ func DependencyCheckStatus(q *Queue, e *Entry, previous forge.Status) forge.Stat
 		state = forge.Blocked
 	case "paused":
 		state = forge.Paused
-	case "landing":
-		state = forge.Landing
 	}
 	r := deriveWaitingReason(q, *e, false)
 	reason := string(r.Code)

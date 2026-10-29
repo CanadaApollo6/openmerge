@@ -170,7 +170,7 @@ func TestDependencyEntryReflectAllowlist(t *testing.T) {
 					}
 				}
 			}
-			progress := status == "queued" || status == "building" || status == "testing" || status == "invalidating"
+			progress := status == "queued" || status == "building" || status == "testing" || status == "invalidating" || status == "landing"
 			wantStatus, wantReason, wantGate := status, original.Reason, ""
 			if progress {
 				wantStatus, wantReason = "queued", ""

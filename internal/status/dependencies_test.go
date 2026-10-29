@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -494,6 +495,61 @@ func TestDependencySourceBindingGuards(t *testing.T) {
 		_, e, _ := Project(projected, 2, 1, nil)
 		if e.Dependency.Text != "Dependency cannot be verified" || len(e.Dependency.Diagnostics) != 0 {
 			t.Fatal("invalid source binding disclosed diagnostics", name, e.Dependency)
+		}
+	}
+}
+
+// LandingStarted precedes any forge call. Until Landed, the API response,
+// check and summary of every PR must equal those of a world where the private
+// source still waits and nothing is batched.
+func TestDependencyUnconfirmedLandingIsGeneric(t *testing.T) {
+	render := func(landing bool) map[int][]byte {
+		code, phase := "dependency-waiting", "queued"
+		if landing {
+			code, phase = "dependency-landed", "testing"
+		}
+		j, binding, _, _, prs := statusfixture.MultiJournal(t, code, phase, 1, true)
+		if landing {
+			at := j.Events[0].RecordedAt
+			for _, event := range []queue.Event{
+				queue.ChecksCompleted{TestedSHA: fmt.Sprintf("%040x", 100), Success: true},
+				queue.LandingStarted{BatchID: "b1", AttemptID: "attempt", FenceToken: "f", At: at},
+			} {
+				_, raw, err := queue.EncodeEvent(event)
+				if err != nil {
+					t.Fatal(err)
+				}
+				j.Events = append(j.Events, store.JournalEvent{ID: int64(len(j.Events) + 1), RecordedAt: at, Event: event, Payload: raw})
+			}
+		}
+		j, err := ProjectDependencies(j, binding, nil, statusfixture.StatusSources())
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[int][]byte{}
+		for _, pr := range prs {
+			q, e, why := Project(j, pr, 100, nil)
+			if landing && pr == 2 && q.state.Active == nil {
+				t.Fatal("landing was not started")
+			}
+			ApplyPolicy(&q, e, queue.Config{}, j.Events[0].RecordedAt)
+			check := DependencyCheckStatus(&q, q.LedgerEntry(pr), forge.Status{State: forge.Landing, Summary: "Batch b1"})
+			raw, err := json.Marshal(struct {
+				Response
+				Summary string
+				Check   forge.Status
+			}{Response{Version: Version, Queue: &q, PR: e}, why.Summary, check})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got[pr] = raw
+		}
+		return got
+	}
+	waiting, landing := render(false), render(true)
+	for pr, want := range waiting {
+		if !bytes.Equal(want, landing[pr]) {
+			t.Errorf("PR %d unconfirmed landing differs from waiting:\n%s\n%s", pr, want, landing[pr])
 		}
 	}
 }
