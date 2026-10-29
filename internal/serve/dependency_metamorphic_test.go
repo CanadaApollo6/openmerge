@@ -299,11 +299,11 @@ func TestDependencyMetamorphicPublication(t *testing.T) {
 				durable map[int][]byte
 			}
 			baseline := map[string]outcome{}
-			worlds := map[string]int{}
+			var worlds []statusfixture.MetamorphicWorld
 			exposed := false
 			for _, world := range statusfixture.MetamorphicWorlds(testing.Short()) {
 				m := statusfixture.Metamorphic(t, c, world)
-				worlds[m.Group]++
+				worlds = append(worlds, m)
 				var pinEvent []byte
 				if pinned {
 					pinEvent = pin
@@ -316,9 +316,12 @@ func TestDependencyMetamorphicPublication(t *testing.T) {
 				payload, err := json.Marshal(q.driver.payloads)
 				must(t, err)
 				got := outcome{writes, payload, q.durable(t, m.PRs)}
-				if want, ok := baseline[m.Group]; !ok {
+				switch want, ok := baseline[m.Group]; {
+				case !m.Compared():
+					// Rendered and checked below, never a comparison partner.
+				case !ok:
 					baseline[m.Group] = got
-				} else {
+				default:
 					if want.writes != got.writes {
 						t.Fatalf("world %d wrote %d checks, want %d", world, got.writes, want.writes)
 					}

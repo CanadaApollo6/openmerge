@@ -135,10 +135,10 @@ func TestDependencyMetamorphicCLI(t *testing.T) {
 	for _, c := range statusfixture.MetamorphicCases(testing.Short()) {
 		t.Run(c.String(), func(t *testing.T) {
 			baseline := map[string][]byte{}
-			worlds := map[string]int{}
+			var worlds []statusfixture.MetamorphicWorld
 			for _, world := range statusfixture.MetamorphicWorlds(testing.Short()) {
 				m := statusfixture.Metamorphic(t, c, world)
-				worlds[m.Group]++
+				worlds = append(worlds, m)
 				j, err := status.ProjectDependencies(m.Journal, m.Binding, nil, statusfixture.StatusSources())
 				if err != nil {
 					t.Fatal(err)
@@ -163,6 +163,9 @@ func TestDependencyMetamorphicCLI(t *testing.T) {
 						t.Fatal(err)
 					}
 					key := fmt.Sprintf("%s %d", m.Group, pr)
+					if !m.Compared() {
+						continue
+					}
 					if want, ok := baseline[key]; ok {
 						if !bytes.Equal(want, out.Bytes()) {
 							t.Fatalf("world %d PR %d differs %s", world, pr, statusfixture.Diff(want, out.Bytes()))

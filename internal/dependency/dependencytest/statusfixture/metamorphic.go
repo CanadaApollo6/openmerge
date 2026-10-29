@@ -40,29 +40,34 @@ func (c MetamorphicCase) String() string {
 
 // MetamorphicCases is the explicit cross product. The short subset is fixed:
 // every transition, every dimension value and every historical leak shape.
+// Every short case applies its transition in at least one compared world.
 func MetamorphicCases(short bool) []MetamorphicCase {
 	if short {
 		// The first five carry every publication-side shape for the slower
-		// database-backed serve test.
+		// database-backed serve test, including a CI outcome.
 		return []MetamorphicCase{
 			// Pending dequeue batch fields, check bypass and private provenance.
 			{"requested", true, false, true, 3, 1},
 			// Paused batch-derived detail and co-batched dependency-changed reasons.
 			{"paused", true, true, true, 3, 4},
-			// Building dependent predecessor with unbatched independent followers.
-			{"head", false, true, false, 1, 1},
-			// Unconfirmed landing batch metadata.
+			// Passing CI: landing-preflight gate against an unbatched world.
+			{"ci-passed", false, false, true, 3, 1},
+			// Unconfirmed landing: status, gate and batch metadata.
 			{"landing", true, false, true, 3, 1},
 			// Change-left-queue invalidation, dequeue and retained departed checks.
 			{"closed-planned", true, true, true, 2, 4},
+			// Building dependent predecessor with unbatched independent followers.
+			{"head", false, true, false, 1, 1},
 			{"closed", false, false, false, 3, 4},
 			{"retargeted", true, false, true, 2, 1},
 			{"head-planned", false, false, true, 3, 1},
 			{"requested-planned", false, true, false, 3, 1},
 			{"retargeted-planned", true, false, true, 1, 4},
-			{"ci-passed", true, true, true, 3, 1},
-			{"ci-failed", false, false, false, 2, 4},
-			{"check-retry", true, false, true, 3, 1},
+			// A failed multi-PR batch: provisional in a chain, bisected alone.
+			{"ci-failed", false, false, true, 2, 4},
+			{"ci-failed", true, false, true, 1, 1},
+			// A failed retry holds unbatched followers at predecessor-checks.
+			{"check-retry", true, false, false, 3, 1},
 			{"landed", false, false, false, 2, 4},
 		}
 	}
@@ -91,9 +96,19 @@ type MetamorphicWorld struct {
 	Source string
 	Grant  dependency.Grant
 	PRs    []int
-	// Group names the public settlement facts. Only worlds in the same group
-	// observe identical public histories and are compared.
+	// Group names the confirmed public settlement facts: members merged by a
+	// confirmed Landed and members that left the queue because of a public
+	// event on their own PR. Only worlds in the same group are compared.
 	Group string
+	// Applied reports that the public transition changed this world's queue.
+	// CI, retry and landing transitions apply only to a started batch.
+	Applied bool
+	// Preempted reports that a private read before the transition discarded
+	// every batch the transition could have advanced.
+	Preempted bool
+	// Uncompared names a queue exit caused by private state. Such a world is
+	// rendered and checked, but it is never a comparison partner.
+	Uncompared string
 	// Tail is a private-only observation recorded after the journal.
 	Tail []store.JournalEvent
 }
@@ -158,15 +173,18 @@ func Metamorphic(t testing.TB, c MetamorphicCase, w int) MetamorphicWorld {
 		}
 		startBatches(b, c.Depth, c.Cobatch, false, started, 100)
 	}
-	if c.PrivateFirst {
-		b.privateObservation(metamorphicNext(c, w))
-	}
 	head := func() *queue.Batch {
 		batches := b.reader.Queue.Batches()
 		if len(batches) == 0 || batches[0].Phase != queue.Testing || batches[0].InvalidationReason != "" {
 			return nil
 		}
 		return batches[0]
+	}
+	world := MetamorphicWorld{Binding: binding, PRs: prs, Applied: true}
+	if c.PrivateFirst {
+		started := head() != nil
+		b.privateObservation(metamorphicNext(c, w))
+		world.Preempted = started && head() == nil
 	}
 	if c.Provenance {
 		for _, batch := range b.reader.Queue.Batches() {
@@ -176,7 +194,7 @@ func Metamorphic(t testing.TB, c MetamorphicCase, w int) MetamorphicWorld {
 			}
 		}
 	}
-	group := ""
+	var merged []int
 	runs := func(state string) []queue.CheckRun {
 		return []queue.CheckRun{{ID: 7, Attempt: 1, Name: "ci", Source: "app:1", State: state, URL: "https://github.test/acme/client/actions/runs/7"}}
 	}
@@ -193,6 +211,7 @@ func Metamorphic(t testing.TB, c MetamorphicCase, w int) MetamorphicWorld {
 	case "paused":
 		b.add(queue.PauseRequested{Reason: "operator", Detail: "public maintenance"})
 	case "ci-passed", "ci-failed":
+		world.Applied = head() != nil
 		if batch := head(); batch != nil {
 			success := transition == "ci-passed"
 			state := "failure"
@@ -204,21 +223,22 @@ func Metamorphic(t testing.TB, c MetamorphicCase, w int) MetamorphicWorld {
 			planned = !success
 		}
 	case "check-retry":
+		world.Applied = head() != nil
 		if batch := head(); batch != nil {
 			b.add(queue.ChecksObserved{BatchID: batch.ID, TestedSHA: batch.TestedSHA, Runs: runs("failure"), Terminal: true, OriginalDeadline: at.Add(time.Hour), Timeout: time.Hour})
 			b.add(queue.CheckRerunRequested{BatchID: batch.ID, TestedSHA: batch.TestedSHA, Runs: runs("failure"), OriginalDeadline: at.Add(time.Hour), At: at.Add(10 * time.Second), Deadline: at.Add(70 * time.Second), Timeout: time.Minute})
 		}
 	case "landing", "landed":
+		// LandingStarted precedes any forge call: only Landed is public.
+		world.Applied = head() != nil
 		if batch := head(); batch != nil {
-			members := []string{}
-			for _, pin := range batch.PRs {
-				members = append(members, fmt.Sprint(pin.PR))
-			}
-			group = transition + ":" + strings.Join(members, ",")
 			b.add(queue.ChecksObserved{BatchID: batch.ID, TestedSHA: batch.TestedSHA, Runs: runs("success"), Terminal: true, Success: true, OriginalDeadline: at.Add(time.Hour), Timeout: time.Hour})
 			b.add(queue.ChecksCompleted{TestedSHA: batch.TestedSHA, Success: true})
 			b.add(queue.LandingStarted{BatchID: batch.ID, AttemptID: "attempt-" + batch.ID, FenceToken: b.reader.Queue.Fence, At: at})
 			if transition == "landed" {
+				for _, pin := range batch.PRs {
+					merged = append(merged, pin.PR)
+				}
 				b.add(queue.Landed{BatchID: batch.ID, NewBaseSHA: batch.TestedSHA, NewFence: "landed-fence"})
 			}
 		}
@@ -249,18 +269,48 @@ func Metamorphic(t testing.TB, c MetamorphicCase, w int) MetamorphicWorld {
 	if !c.PrivateFirst {
 		b.privateObservation(metamorphicNext(c, w))
 	}
-	// Every queue exit is a public outcome, e.g. a failed solo batch dequeues B.
-	for _, pr := range prs {
-		if !slices.ContainsFunc(b.reader.Queue.Entries, func(e queue.Entry) bool { return e.PR == pr }) {
-			group += fmt.Sprintf(" left:%d", pr)
-		}
-	}
-	world := MetamorphicWorld{Journal: j, Binding: binding, Source: source, Grant: grant, PRs: prs, Group: group}
+	world.Group, world.Uncompared = metamorphicSettlement(c, j, b.reader.Queue, prs, merged)
+	world.Journal, world.Source, world.Grant = j, source, grant
 	world.Journal.Events = slices.Clone(j.Events)
 	n := len(j.Events)
 	b.privateObservation(metamorphicNext(c, w+1))
 	world.Tail = slices.Clone(j.Events[n:])
 	return world
+}
+
+// publicDequeue lists the dequeue reasons whose cause is an event on the PR
+// itself that the forge shows to every reader: closing it, a dequeue command
+// comment, a retarget or a head push. A transition applies them to the same
+// PR in every world, so they never partition worlds by private state.
+var publicDequeue = map[queue.DequeueReason]bool{queue.Closed: true, queue.Requested: true, queue.NotEligible: true, queue.HeadChanged: true}
+
+// metamorphicSettlement names the confirmed public settlement facts. A queue
+// exit for any other reason, such as a failed composition that exists only
+// because of private state, is not a public fact: the world is excluded from
+// comparison rather than given a group of its own.
+func metamorphicSettlement(c MetamorphicCase, j store.Journal, q queue.State, prs, merged []int) (string, string) {
+	var group, uncompared []string
+	for _, pr := range prs {
+		if slices.ContainsFunc(q.Entries, func(e queue.Entry) bool { return e.PR == pr }) {
+			continue
+		}
+		if slices.Contains(merged, pr) {
+			group = append(group, fmt.Sprintf("merged:%d", pr))
+			continue
+		}
+		reason := queue.DequeueReason("")
+		for _, record := range j.Events {
+			if e, ok := record.Event.(queue.Dequeued); ok && e.PR == pr {
+				reason = e.Reason
+			}
+		}
+		if pr == c.Target && publicDequeue[reason] {
+			group = append(group, fmt.Sprintf("left:%d:%s", pr, reason))
+		} else {
+			uncompared = append(uncompared, fmt.Sprintf("PR %d left the queue (%s)", pr, reason))
+		}
+	}
+	return strings.Join(group, " "), strings.Join(uncompared, "; ")
 }
 
 func metamorphicNext(c MetamorphicCase, w int) (string, string) {
@@ -324,22 +374,49 @@ func (b *journalBuilder) followThrough(depth int) {
 	b.t.Fatal("planner follow-through did not settle")
 }
 
-// RequireComparedWorlds fails when a case compares nothing. A private read
-// before the public transition may invalidate a batch before it can land, so
-// only later private reads guarantee two landing worlds.
-func RequireComparedWorlds(t testing.TB, c MetamorphicCase, groups map[string]int) {
+// Compared reports whether the world is a comparison partner.
+func (m MetamorphicWorld) Compared() bool { return m.Uncompared == "" }
+
+// RequireComparedWorlds fails when a case is vacuous: the transition must
+// apply in at least one world that is compared with another. Short cases never
+// skip. The full product skips, by name, exactly two impossible shapes: a
+// private read before the transition discarded every batch, or every world it
+// applies to left the queue for a private cause or landed alone.
+func RequireComparedWorlds(t testing.TB, c MetamorphicCase, worlds []MetamorphicWorld) {
 	t.Helper()
-	compared := false
-	for group, n := range groups {
-		compared = compared || n > 1
-		if group != "" && !c.PrivateFirst && n < 2 {
-			t.Fatalf("settlement group %q has %d world", group, n)
+	groups := map[string]int{}
+	for _, m := range worlds {
+		if m.Compared() {
+			groups[m.Group]++
 		}
 	}
-	landing := c.Transition == "landing" || c.Transition == "landed"
-	if !compared || landing && !c.PrivateFirst && len(groups) < 2 {
-		t.Fatalf("no comparable worlds: %v", groups)
+	applied := false
+	var reasons []string
+	for _, m := range worlds {
+		if m.Group != "" && !c.PrivateFirst && m.Compared() && groups[m.Group] < 2 {
+			t.Fatalf("settlement group %q has 1 world", m.Group)
+		}
+		switch {
+		case !m.Applied:
+		case !m.Compared():
+			reasons = append(reasons, m.Uncompared)
+		case groups[m.Group] < 2:
+			reasons = append(reasons, "sole world in "+m.Group)
+		default:
+			applied = true
+		}
 	}
+	if applied {
+		return
+	}
+	// With no applied world at all, only a preempting private read explains it.
+	if len(reasons) == 0 && slices.ContainsFunc(worlds, func(m MetamorphicWorld) bool { return m.Preempted }) {
+		reasons = []string{"a private read before the transition discarded every batch"}
+	}
+	if testing.Short() || len(reasons) == 0 {
+		t.Fatalf("%s applies in no compared world: groups %v", c.Transition, groups)
+	}
+	t.Skipf("impossible comparison: %s", strings.Join(reasons, "; "))
 }
 
 // Diff reports the first difference with bounded context.

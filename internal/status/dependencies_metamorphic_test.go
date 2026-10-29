@@ -26,10 +26,10 @@ func TestDependencyMetamorphicPrivacy(t *testing.T) {
 	for _, c := range statusfixture.MetamorphicCases(testing.Short()) {
 		t.Run(c.String(), func(t *testing.T) {
 			baseline := map[string][]byte{}
-			worlds := map[string]int{}
+			var worlds []statusfixture.MetamorphicWorld
 			for _, world := range statusfixture.MetamorphicWorlds(testing.Short()) {
 				m := statusfixture.Metamorphic(t, c, world)
-				worlds[m.Group]++
+				worlds = append(worlds, m)
 				j, err := ProjectDependencies(m.Journal, m.Binding, nil, statusfixture.StatusSources())
 				if err != nil {
 					t.Fatal(err)
@@ -59,6 +59,9 @@ func TestDependencyMetamorphicPrivacy(t *testing.T) {
 					}
 					got := append([]byte(fmt.Sprintf("%d\n", w.Code)), w.Body.Bytes()...)
 					key := m.Group + " " + path
+					if !m.Compared() {
+						continue
+					}
 					if want, ok := baseline[key]; ok {
 						if !bytes.Equal(want, got) {
 							t.Fatalf("world %d %s differs %s", world, path, statusfixture.Diff(want, got))
