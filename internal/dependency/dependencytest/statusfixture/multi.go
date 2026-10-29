@@ -145,9 +145,13 @@ func MultiJournal(t testing.TB, code, phase string, depth int, cobatch bool) (st
 				appendRecord(queue.TestRefBuilt{BatchID: id, TestedSHA: base, Method: queue.Merge, At: at})
 			}
 		}
-		expected:=queue.Testing
-		if phase=="building" && n==len(groups)-1 {expected=queue.Building}
-		if got:=reader.Queue.Batch(id);got==nil||got.Phase!=expected{t.Fatalf("batch %s did not reach %s: %+v",id,expected,got)}
+		expected := queue.Testing
+		if phase == "building" && n == len(groups)-1 {
+			expected = queue.Building
+		}
+		if got := reader.Queue.Batch(id); got == nil || got.Phase != expected {
+			t.Fatalf("batch %s did not reach %s: %+v", id, expected, got)
+		}
 		parent = id
 	}
 	if code != "dependency-landed" || phase == "invalidating" || phase == "discarded" {

@@ -1,16 +1,16 @@
 package serve
 
 import (
-	"github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest"
-	"github.com/CanadaApollo6/openmerge/internal/forge"
-	"github.com/CanadaApollo6/openmerge/internal/queue"
-	"github.com/CanadaApollo6/openmerge/internal/status"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/dependency"
+	"github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest"
 	"github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest/statusfixture"
+	"github.com/CanadaApollo6/openmerge/internal/forge"
+	"github.com/CanadaApollo6/openmerge/internal/queue"
+	"github.com/CanadaApollo6/openmerge/internal/status"
 )
 
 func TestDependencyCheckGrantRevocation(t *testing.T) {
@@ -85,11 +85,15 @@ func TestDependencyCheckGrantRevocation(t *testing.T) {
 }
 
 func TestDependencyCheckMissingJournalFailsClosed(t *testing.T) {
- s,w,f,_:=fixture(t,repositoryConfig)
- w.dependencies=&dependencyPass{}
- // Simulate a reporting lookup that no longer contains the worker's partition.
- w.Key.Repository="missing/partition"
- err:=s.status(t.Context(),w,1,strings.Repeat("b",40),forge.Status{State:forge.Testing,Reason:"dependency-closed",Summary:"private source"})
- if err==nil{t.Fatal("missing journal allowed a check without current authorization")}
- if len(f.Statuses(repo,1))!=0{t.Fatal("check emitted without current authorization")}
+	s, w, f, _ := fixture(t, repositoryConfig)
+	w.dependencies = &dependencyPass{}
+	// Simulate a reporting lookup that no longer contains the worker's partition.
+	w.Key.Repository = "missing/partition"
+	err := s.status(t.Context(), w, 1, strings.Repeat("b", 40), forge.Status{State: forge.Testing, Reason: "dependency-closed", Summary: "private source"})
+	if err == nil {
+		t.Fatal("missing journal allowed a check without current authorization")
+	}
+	if len(f.Statuses(repo, 1)) != 0 {
+		t.Fatal("check emitted without current authorization")
+	}
 }
