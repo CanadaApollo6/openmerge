@@ -16,15 +16,35 @@ type DependencyDiagnostic struct {
 	Source string
 }
 
+// DependencySelfAcknowledgement is the distinct completed single-maintainer
+// acknowledgement. EventID is zero when journal positions are withheld.
+type DependencySelfAcknowledgement struct {
+	Kind            string
+	EventID         int64
+	Actor           string
+	Overridden      []string
+	GoverningCommit string
+	Revoked         bool
+}
+
+// DependencyWaitAge is the authorized-only, non-actionable old-wait flag.
+type DependencyWaitAge struct {
+	Since     time.Time
+	Threshold time.Duration
+}
+
 // DependencyStatus is an audience-safe read projection installed only by the
 // private dependency activation seam. It never contains raw source evidence.
 type DependencyStatus struct {
-	Diagnostics []DependencyDiagnostic
-	Text        string
-	Details     []string
-	URL         string
-	Redacted    bool
-	Blocking    bool
+	Diagnostics         []DependencyDiagnostic
+	Text                string
+	Details             []string
+	URL                 string
+	Redacted            bool
+	Blocking            bool
+	SelfAcknowledgement *DependencySelfAcknowledgement
+	Warnings            []string
+	WaitAge             *DependencyWaitAge
 }
 
 // Journal is a queue's immutable seed and committed events at one DB snapshot.

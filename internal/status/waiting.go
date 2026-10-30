@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 )
 
 // WaitingCode classifies the current presentation reason, never queue authority.
@@ -32,14 +33,35 @@ type DependencyDiagnostic struct {
 	Source string `json:"source"`
 }
 
+// SelfAcknowledgement distinctly identifies a completed single-maintainer
+// acknowledgement. EventID is omitted while journal positions are withheld.
+type SelfAcknowledgement struct {
+	Kind            string   `json:"kind"`
+	Actor           string   `json:"actor"`
+	EventID         int64    `json:"event_id,omitempty"`
+	Overridden      []string `json:"overridden"`
+	GoverningCommit string   `json:"governing_commit"`
+	Revoked         bool     `json:"revoked,omitempty"`
+}
+
+// WaitAge is the non-actionable authorized flag for an old dependency wait.
+type WaitAge struct {
+	Since     time.Time `json:"since"`
+	OlderThan string    `json:"older_than"`
+}
+
 // WaitingReason is derived solely from recorded projections and runtime gates.
 // Details and URL remain absent when the recorded evidence cannot identify them.
+// Warnings are nonblocking notices; they never change precedence.
 type WaitingReason struct {
-	Diagnostics []DependencyDiagnostic `json:"diagnostics,omitempty"`
-	Code        WaitingCode            `json:"code"`
-	Text        string                 `json:"text"`
-	Details     []string               `json:"details,omitempty"`
-	URL         string                 `json:"url,omitempty"`
+	Diagnostics         []DependencyDiagnostic `json:"diagnostics,omitempty"`
+	Code                WaitingCode            `json:"code"`
+	Text                string                 `json:"text"`
+	Details             []string               `json:"details,omitempty"`
+	URL                 string                 `json:"url,omitempty"`
+	SelfAcknowledgement *SelfAcknowledgement   `json:"self_acknowledgement,omitempty"`
+	Warnings            []string               `json:"warnings,omitempty"`
+	WaitAge             *WaitAge               `json:"wait_age,omitempty"`
 }
 
 // DeriveWaitingReason chooses one reason in precedence order. Terminal outcomes
@@ -209,6 +231,9 @@ func waitingText(r WaitingReason) string {
 	if r.URL != "" {
 		text += "; " + r.URL
 	}
+	for _, warning := range r.Warnings {
+		text += "; warning: " + warning
+	}
 	return text
 }
 
@@ -218,9 +243,15 @@ func attachDependency(q *Queue, e *Entry) {
 	}
 	if v, ok := q.dependencies[e.PR]; ok {
 		e.dependencyWaiting = v.Blocking
-		e.Dependency = &WaitingReason{Code: WaitingDependencies, Text: v.Text, Details: slices.Clone(v.Details), URL: v.URL}
+		e.Dependency = &WaitingReason{Code: WaitingDependencies, Text: v.Text, Details: slices.Clone(v.Details), URL: v.URL, Warnings: slices.Clone(v.Warnings)}
 		for _, d := range v.Diagnostics {
 			e.Dependency.Diagnostics = append(e.Dependency.Diagnostics, DependencyDiagnostic{Code: d.Code, Source: d.Source})
+		}
+		if a := v.SelfAcknowledgement; a != nil {
+			e.Dependency.SelfAcknowledgement = &SelfAcknowledgement{Kind: a.Kind, Actor: a.Actor, EventID: a.EventID, Overridden: slices.Clone(a.Overridden), GoverningCommit: a.GoverningCommit, Revoked: a.Revoked}
+		}
+		if w := v.WaitAge; w != nil {
+			e.Dependency.WaitAge = &WaitAge{Since: w.Since, OlderThan: w.Threshold.String()}
 		}
 	}
 }
