@@ -1,9 +1,11 @@
 package statusfixture
 
 import (
+	_ "embed"
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -519,13 +521,38 @@ func (b *journalBuilder) followThrough(depth int) {
 // Compared reports whether the world is a comparison partner.
 func (m MetamorphicWorld) Compared() bool { return m.Uncompared == "" }
 
+// MetamorphicSkips is the size of the pinned full-product skip set.
+const MetamorphicSkips = 108
+
+// metamorphicSkipsFile pins every full-product skip: case name, tab, reason.
+//
+//go:embed metamorphic_skips.txt
+var metamorphicSkipsFile string
+
+var metamorphicSkips = sync.OnceValue(func() map[string]string {
+	skips := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSuffix(metamorphicSkipsFile, "\n"), "\n") {
+		if name, reason, ok := strings.Cut(line, "\t"); ok {
+			skips[name] = reason
+		}
+	}
+	return skips
+})
+
 // RequireComparedWorlds fails when a case is vacuous: the transition must
 // apply in at least one world that is compared with another. Short cases never
-// skip. The full product skips, by name, exactly two impossible shapes: a
-// private read before the transition discarded every batch, or every world it
-// applies to left the queue for a private cause or landed alone.
+// skip. The full product skips only the pinned cases, each for its pinned
+// reason: a private read before the transition discarded every batch, B's own
+// checks-failed exit, or every world it applies to landed alone. A new skip, a
+// changed reason or a pinned case that now compares fails, so the skip set
+// cannot grow or drift silently.
 func RequireComparedWorlds(t testing.TB, c MetamorphicCase, worlds []MetamorphicWorld) {
 	t.Helper()
+	skips := metamorphicSkips()
+	if len(skips) != MetamorphicSkips {
+		t.Fatalf("pinned %d metamorphic skips, want %d", len(skips), MetamorphicSkips)
+	}
+	pinned, isPinned := skips[c.String()]
 	groups := map[string]int{}
 	for _, m := range worlds {
 		if m.Compared() {
@@ -549,6 +576,9 @@ func RequireComparedWorlds(t testing.TB, c MetamorphicCase, worlds []Metamorphic
 		}
 	}
 	if applied {
+		if isPinned && !testing.Short() {
+			t.Fatalf("pinned skip now compares; remove it from metamorphic_skips.txt: %s", c)
+		}
 		return
 	}
 	// With no applied world at all, only a preempting private read explains it.
@@ -558,7 +588,11 @@ func RequireComparedWorlds(t testing.TB, c MetamorphicCase, worlds []Metamorphic
 	if testing.Short() || len(reasons) == 0 {
 		t.Fatalf("%s applies in no compared world: groups %v", c.Transition, groups)
 	}
-	t.Skipf("impossible comparison: %s", strings.Join(reasons, "; "))
+	reason := strings.Join(reasons, "; ")
+	if !isPinned || pinned != reason {
+		t.Fatalf("unpinned skip %s: %s (pinned %q)", c, reason, pinned)
+	}
+	t.Skipf("impossible comparison: %s", reason)
 }
 
 // Diff reports the first difference with bounded context.
