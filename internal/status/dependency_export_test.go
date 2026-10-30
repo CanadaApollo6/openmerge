@@ -1,12 +1,15 @@
 package status
 
 import (
+	"bytes"
 	"encoding/json"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+	"unsafe"
 
 	"github.com/CanadaApollo6/openmerge/internal/audit"
 	"github.com/CanadaApollo6/openmerge/internal/dependency"
@@ -147,6 +150,141 @@ func TestDependencyExportReflectAllowlist(t *testing.T) {
 			for _, path := range allowed {
 				if !seen[path] {
 					t.Fatalf("%s lost allowlisted %s: %s", kind, path, raw)
+				}
+			}
+		})
+	}
+}
+
+// redactedEvidenceInputs names every input a redacted projection may depend on:
+// scalar leaves, slice elements ("[]") and slice lengths (no suffix). Paths
+// under "policy" are the governing companion argument.
+var redactedEvidenceInputs = map[string][]string{
+	"declaration":          {".ChangeID", ".Revision", ".Hold.Held", ".Hold.Unknown", ".Hold.Editors", ".Hold.Editors[]", ".Redeclaration"},
+	"policy":               {".Enabled", ".Policy.SingleMaintainer", ".Commit", ".Digest", ".Writers"},
+	"acknowledgement":      {".Writer.SubjectID", ".Exclusions", ".Exclusions[]", ".GoverningCommit", ".PolicyDigest"},
+	"self_acknowledgement": {".Acknowledged.Writer.SubjectID", ".Overridden", ".Overridden[]", ".Acknowledged.GoverningCommit", ".Acknowledged.PolicyDigest", "policy.Enabled", "policy.Policy.SingleMaintainer"},
+}
+
+// inputMutation changes one input: a scalar leaf, or a slice's length.
+type inputMutation struct {
+	path   string
+	toggle bool
+	apply  func()
+}
+
+// inputMutations lists every mutation of v in a fixed order. Each scalar is
+// changed to a different value of its type, and each slice is both emptied and
+// grown, so derived values such as counts are covered as well as copies.
+func inputMutations(t *testing.T, v reflect.Value, path string, out *[]inputMutation) {
+	t.Helper()
+	if !v.CanSet() {
+		v = reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem()
+	}
+	if v.Type() == reflect.TypeFor[time.Time]() {
+		*out = append(*out, inputMutation{path: path, apply: func() { v.Set(reflect.ValueOf(v.Interface().(time.Time).Add(time.Hour))) }})
+		return
+	}
+	switch v.Kind() {
+	case reflect.String:
+		*out = append(*out, inputMutation{path: path, apply: func() { v.SetString(v.String() + "~") }})
+	case reflect.Bool:
+		*out = append(*out, inputMutation{path: path, toggle: true, apply: func() { v.SetBool(!v.Bool()) }})
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		*out = append(*out, inputMutation{path: path, apply: func() { v.SetInt(v.Int() + 1) }})
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		*out = append(*out, inputMutation{path: path, apply: func() { v.SetUint(v.Uint() + 1) }})
+	case reflect.Float32, reflect.Float64:
+		*out = append(*out, inputMutation{path: path, apply: func() { v.SetFloat(v.Float() + 1) }})
+	case reflect.Pointer:
+		if !v.IsNil() {
+			inputMutations(t, v.Elem(), path, out)
+		}
+	case reflect.Slice:
+		*out = append(*out, inputMutation{path: path, apply: func() { v.Set(reflect.Zero(v.Type())) }})
+		if v.Len() > 0 {
+			*out = append(*out, inputMutation{path: path, apply: func() { v.Set(reflect.Append(v, v.Index(0))) }})
+		}
+		for i := range v.Len() {
+			inputMutations(t, v.Index(i), path+"[]", out)
+		}
+	case reflect.Struct:
+		for i := range v.NumField() {
+			inputMutations(t, v.Field(i), path+"."+v.Type().Field(i).Name, out)
+		}
+	default:
+		t.Fatalf("%s: cannot mutate %s", path, v.Type())
+	}
+}
+
+// TestDependencyExportReflectInputs fills every input of every redacted
+// projection, then changes each one alone, whatever its type. An input off the
+// allowlist must leave the projected JSON byte-identical; an allowlisted one
+// must change it. Every boolean is also cleared first, so a projection that
+// derives an allowlisted value from another input is caught in either state.
+func TestDependencyExportReflectInputs(t *testing.T) {
+	events := map[string]func() dependency.Event{
+		"declaration":          func() dependency.Event { return &dependency.DependenciesDeclared{} },
+		"policy":               func() dependency.Event { return &dependency.PolicyApplied{} },
+		"acknowledgement":      func() dependency.Event { return &dependency.Acknowledged{} },
+		"self_acknowledgement": func() dependency.Event { return &dependency.SelfAcknowledged{} },
+	}
+	for kind, allowed := range redactedEvidenceInputs {
+		t.Run(kind, func(t *testing.T) {
+			// build returns filled inputs and their mutations, event first.
+			build := func() (dependency.Event, *dependency.PolicyApplied, []inputMutation) {
+				ptr, policy := events[kind](), &dependency.PolicyApplied{}
+				reflectFill(t, reflect.ValueOf(ptr).Elem(), "", map[reflect.Type]int{})
+				reflectFill(t, reflect.ValueOf(policy).Elem(), "policy", map[reflect.Type]int{})
+				var mutations []inputMutation
+				inputMutations(t, reflect.ValueOf(ptr).Elem(), "", &mutations)
+				inputMutations(t, reflect.ValueOf(policy).Elem(), "policy", &mutations)
+				return ptr, policy, mutations
+			}
+			project := func(event dependency.Event, policy *dependency.PolicyApplied) []byte {
+				entry, ok := redactedEntry(kind, reflect.ValueOf(event).Elem().Interface().(dependency.Event), dependency.State{}, *policy)
+				if !ok {
+					t.Fatalf("%s not projected", kind)
+				}
+				raw, err := json.Marshal(entry.Evidence)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return raw
+			}
+			_, _, mutations := build()
+			seen := map[string]bool{}
+			for _, cleared := range []bool{false, true} {
+				// prepare clears every boolean except the one under test.
+				prepare := func(skip int) (dependency.Event, *dependency.PolicyApplied, []inputMutation) {
+					event, policy, ms := build()
+					for i, m := range ms {
+						if cleared && m.toggle && i != skip {
+							m.apply()
+						}
+					}
+					return event, policy, ms
+				}
+				event, policy, _ := prepare(-1)
+				baseline := project(event, policy)
+				for i, m := range mutations {
+					event, policy, ms := prepare(i)
+					if !cleared || !m.toggle {
+						ms[i].apply()
+					}
+					got := project(event, policy)
+					seen[m.path] = true
+					switch {
+					case !slices.Contains(allowed, m.path) && !bytes.Equal(got, baseline):
+						t.Fatalf("non-allowlisted input %s changed the projection (cleared=%t):\n%s\n%s", m.path, cleared, baseline, got)
+					case slices.Contains(allowed, m.path) && !cleared && bytes.Equal(got, baseline):
+						t.Fatalf("allowlisted input %s does not reach the projection: %s", m.path, got)
+					}
+				}
+			}
+			for _, path := range allowed {
+				if !seen[path] {
+					t.Fatalf("allowlisted input %s is not an input", path)
 				}
 			}
 		})
