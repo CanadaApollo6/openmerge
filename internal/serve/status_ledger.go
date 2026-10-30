@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -45,9 +46,10 @@ func (w *worker) lockStatus() bool {
 // The worker mutex serializes reporting and cache updates. Gates depend on
 // current configuration and time and are always recalculated, never cached.
 type ledgerCache struct {
-	watermark  int64
-	projection status.Queue
-	journal    store.Journal
+	authorization [32]byte
+	watermark     int64
+	projection    status.Queue
+	journal       store.Journal
 }
 
 func (s *Server) ledgerSummary(ctx context.Context, w *worker, pr int) (string, error) {
@@ -55,16 +57,30 @@ func (s *Server) ledgerSummary(ctx context.Context, w *worker, pr int) (string, 
 	if err != nil {
 		return "", err
 	}
-	if w.ledgerCache == nil || w.ledgerCache.watermark != watermark {
+	authorization, err := dependencyCheckScope(w.dependencies)
+	if err != nil {
+		return "", err
+	}
+	if w.ledgerCache == nil || w.ledgerCache.watermark != watermark || w.ledgerCache.authorization != authorization {
 		journals, err := s.store.ReportingJournals(ctx, []store.QueueKey{w.Key})
 		if err != nil {
 			return "", err
 		}
 		if len(journals) == 0 {
+			if w.dependencies != nil {
+				return "", errors.New("dependency check evidence unavailable")
+			}
 			return "", nil
 		}
+		if w.dependencies != nil {
+			journals[0], err = dependencyCheckJournal(journals[0], w.dependencies)
+			if err != nil {
+				return "", err
+			}
+		}
 		projection, _, _ := status.Project(journals[0], 0, 0, s.options.Sanitizer)
-		w.ledgerCache = &ledgerCache{watermark: projection.Watermark, projection: projection, journal: journals[0]}
+		// Cache identity uses the private DB cursor, never a redacted public marker.
+		w.ledgerCache = &ledgerCache{authorization: authorization, watermark: watermark, projection: projection, journal: journals[0]}
 	}
 	q := &w.ledgerCache.projection
 	q.Readiness = &status.Readiness{Ready: !w.managed || w.ready}

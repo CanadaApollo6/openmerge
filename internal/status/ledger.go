@@ -358,6 +358,7 @@ func runLedger(j store.Journal, sanitizer *diagnostic.Sanitizer, visit func(stor
 func (q *Queue) LedgerEntry(pr int) *Entry {
 	for _, entry := range q.Entries {
 		if entry.PR == pr {
+			attachDependency(q, &entry)
 			entry.WaitingReason = DeriveWaitingReason(q, entry)
 			return &entry
 		}
@@ -368,6 +369,7 @@ func (q *Queue) LedgerEntry(pr int) *Entry {
 		}
 		entry.RunLedger = q.runLedger[pr]
 		entry.Change = reportChange(store.QueueKey{Installation: q.Installation, Repository: q.Repository, BaseBranch: q.Base, Lane: q.Lane}, q.state, pr, q.sanitizer)
+		attachDependency(q, &entry)
 		entry.WaitingReason = DeriveWaitingReason(q, entry)
 		return &entry
 	}

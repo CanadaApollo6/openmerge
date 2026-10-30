@@ -45,6 +45,8 @@ func EncodeEvent(event Event) (string, []byte, error) {
 		kind = "dependency_composition_recorded"
 	case DecisionRecorded:
 		kind = "dependency_decision_recorded"
+	case DiagnosticRecorded:
+		kind = "dependency_diagnostic_recorded"
 	default:
 		return "", nil, ErrMalformed
 	}
@@ -99,6 +101,8 @@ func DecodeEvent(raw []byte) (Event, error) {
 		return decodeEventData[CompositionRecorded](env.Data)
 	case "dependency_decision_recorded":
 		return decodeEventData[DecisionRecorded](env.Data)
+	case "dependency_diagnostic_recorded":
+		return decodeEventData[DiagnosticRecorded](env.Data)
 	default:
 		return nil, fmt.Errorf("unknown dependency event %q", env.Type)
 	}

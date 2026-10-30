@@ -693,3 +693,48 @@ interrupted foreground fold advanced its index, that snapshot carries
 This reporting change may merge but **must not deploy until ADR 0009 period B
 has drained**. PR 9 still owns authority activation; PR 11 owns real sandbox HTTP
 acceptance for violation, drift and break-glass warning cases.
+
+### ADR 0011 Hold dependency presentation (test activation only)
+
+Dependency configuration remains rejected by the public loader. The internal
+activation seam can install an optional `dependency` object on an entry, with the
+same `code`, `text`, `details` and `url` contract as `waiting_reason`. Its
+`diagnostics` array contains typed `{code, source}` records only when every
+recorded audience member has identity-bound source read access and the source
+journal binding agrees. Missing source bindings, diagnostics or audience evidence
+fail closed. A bearer token and `audience=operator` do not establish source access.
+The existing v1 rule allowing additive fields applies; inactive responses retain
+their existing bytes. No persisted event is extended.
+
+Unauthorized readers see `code: dependencies` and exactly `Dependency cannot be
+verified`, even for a landed source. There are no source details, links or typed
+diagnostics. Redacted explanation evidence is withheld before pagination.
+Private records cannot change row counts or continuation behavior. Redacted queue views withhold unstarted batch and
+CI evidence, including the check prefix, so build progress cannot disclose a
+private source landing. When private history prevents exposing original
+journal positions, `watermark`, explanation IDs and exposed event references are
+`0` (withheld), never synthetic journal IDs. Authorized views retain original
+positions. This convention is confined to the new, test-only activated view;
+existing deployed v1 queues retain their original reference semantics.
+
+Public checks require a separate complete recorded audience proof; an API reader's
+grant never authorizes the check audience. Current dependency evidence is withheld
+from explicitly selected historical revisions. Redacted historical reads retain a
+generic dependency hold to conceal old unstarted progress. Rendering reads supplied journals only and never calls a
+forge. Terminal B outcomes, landing settlement and B's independent gates retain
+their existing precedence. Dependency presentation does not grant landing authority.
+
+This is slice **5-1**. Scoped audit export, completed self-acknowledgement evidence,
+the opt-in multi-writer warning, wait-age display and additional evidence pagination
+remain slice **5-2**. The existing `events=1..100` limit is unchanged. Retained decision paging returns
+the existing generic 503 response when dependency scope is redacted, before
+querying decision pages or exposing cursor positions. Authorized paging stays unchanged.
+
+When dependency evidence is unavailable to an audience, entry presentation uses an
+allowlist for every queue member: PR and head identity, queue position and admission
+time, public status and reason, last dequeue reason, change/approval metadata,
+ dependency warning, and confirmed landing outcome, SHA and event ID. Waiting-entry
+conditions and the public dequeue gate remain visible. Batch progress is
+normalized to queued; batch IDs, positions, run history, CI provenance and other
+batch-derived details are omitted. New entry fields are withheld by default. Checks,
+waiting reasons and explanations are derived from the same projected entry.

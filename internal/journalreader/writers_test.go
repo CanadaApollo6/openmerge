@@ -62,6 +62,7 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 			"internal/provenance/journal/events.go": true,
 			"internal/provenance/journal/codec.go":  true,
 			"internal/dependency/codec.go":          true,
+			"internal/dependency/diagnostic.go":     true,
 			"internal/dependency/projection.go":     true,
 			"internal/dependency/snapshot.go":       true,
 			"internal/dependency/decision.go":       true,
@@ -218,7 +219,7 @@ func activatedProvenanceCalls(file *ast.File, rel string) map[*ast.SelectorExpr]
 // allowed to import the dependency package: the store start adapter and the
 // private serve activation seam. Neither may encode new events.
 func dependencySeam(rel, value string) bool {
-	return value == "github.com/CanadaApollo6/openmerge/internal/dependency" && (rel == "internal/store/dependency_start.go" || rel == "internal/serve/dependency.go")
+	return value == "github.com/CanadaApollo6/openmerge/internal/dependency" && (rel == "internal/store/dependency_start.go" || rel == "internal/serve/dependency.go" || rel == "internal/status/dependencies.go")
 }
 
 // activatedCalls returns direct calls inside an `if x.<field> != nil` branch of

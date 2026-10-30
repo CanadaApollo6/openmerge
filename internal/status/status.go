@@ -28,37 +28,39 @@ type Response struct {
 
 // Queue describes one served installation/repository/base/lane partition.
 type Queue struct {
-	Authority         *Authority                 `json:"authority,omitempty"`
-	OutsideWarnings   *OutsideWarnings           `json:"outside_warnings,omitempty"`
-	OutsidePushes     []OutsidePush              `json:"outside_pushes,omitempty"`
-	Readiness         *Readiness                 `json:"readiness,omitempty"`
-	State             string                     `json:"state"`
-	Installation      string                     `json:"installation"`
-	Repository        string                     `json:"repo"`
-	Base              string                     `json:"base"`
-	Lane              string                     `json:"lane"`
-	Watermark         int64                      `json:"watermark"`
-	BaseSHA           string                     `json:"base_sha"`
-	Paused            bool                       `json:"paused"`
-	PauseReason       string                     `json:"pause_reason"`
-	PauseDetail       string                     `json:"pause_detail"`
-	Blocks            []Block                    `json:"blocks"`
-	Chain             []*Batch                   `json:"chain,omitempty"`
-	Invalidations     []queue.BatchesInvalidated `json:"invalidations,omitempty"`
-	ActiveBatch       *Batch                     `json:"active_batch"`
-	Entries           []Entry                    `json:"entries"`
-	FailureEstimate   *FailureEstimate           `json:"failure_estimate,omitempty"`
-	LastWindowFailure *queue.WindowFailure       `json:"last_window_failure,omitempty"`
-	Window            int                        `json:"window,omitempty"`
-	BatchSize         int                        `json:"batch_size,omitempty"`
-	hasAuthorityPin   bool
-	sanitizer         *diagnostic.Sanitizer
-	state             queue.State
-	policyPins        []briefPolicyPin
-	eligibilityPins   map[queue.ChangeID]briefEligibilityPin
-	known             map[int]Entry
-	runLedger         map[int][]Run
-	RulesSources      []RulesSource `json:"rules_sources,omitempty"`
+	Authority          *Authority                 `json:"authority,omitempty"`
+	OutsideWarnings    *OutsideWarnings           `json:"outside_warnings,omitempty"`
+	OutsidePushes      []OutsidePush              `json:"outside_pushes,omitempty"`
+	Readiness          *Readiness                 `json:"readiness,omitempty"`
+	State              string                     `json:"state"`
+	Installation       string                     `json:"installation"`
+	Repository         string                     `json:"repo"`
+	Base               string                     `json:"base"`
+	Lane               string                     `json:"lane"`
+	Watermark          int64                      `json:"watermark"`
+	BaseSHA            string                     `json:"base_sha"`
+	Paused             bool                       `json:"paused"`
+	PauseReason        string                     `json:"pause_reason"`
+	PauseDetail        string                     `json:"pause_detail"`
+	Blocks             []Block                    `json:"blocks"`
+	Chain              []*Batch                   `json:"chain,omitempty"`
+	Invalidations      []queue.BatchesInvalidated `json:"invalidations,omitempty"`
+	ActiveBatch        *Batch                     `json:"active_batch"`
+	Entries            []Entry                    `json:"entries"`
+	FailureEstimate    *FailureEstimate           `json:"failure_estimate,omitempty"`
+	LastWindowFailure  *queue.WindowFailure       `json:"last_window_failure,omitempty"`
+	Window             int                        `json:"window,omitempty"`
+	BatchSize          int                        `json:"batch_size,omitempty"`
+	dependencyRedacted bool
+	dependencies       map[int]store.DependencyStatus
+	hasAuthorityPin    bool
+	sanitizer          *diagnostic.Sanitizer
+	state              queue.State
+	policyPins         []briefPolicyPin
+	eligibilityPins    map[queue.ChangeID]briefEligibilityPin
+	known              map[int]Entry
+	runLedger          map[int][]Run
+	RulesSources       []RulesSource `json:"rules_sources,omitempty"`
 
 	ProvenanceCapacity *store.ProvenanceCapacity `json:"provenance_capacity,omitempty"`
 }
@@ -112,22 +114,24 @@ type BatchPR struct {
 // Entry uses position zero for PRs outside the queue; admission is the latest
 // successful admission, retained on a terminal PR detail response.
 type Entry struct {
-	WaitingReason     WaitingReason `json:"waiting_reason"`
-	Landing           *LandingView  `json:"landing,omitempty"`
-	Change            *ChangeReport `json:"change,omitempty"`
-	Gate              string        `json:"gate,omitempty"`
-	RunLedger         []Run         `json:"run_ledger,omitempty"`
-	BatchID           string        `json:"batch_id,omitempty"`
-	BatchPosition     uint64        `json:"batch_position,omitempty"`
-	BatchesAhead      *int          `json:"batches_ahead"`
-	Position          int           `json:"position"`
-	PR                int           `json:"pr"`
-	HeadSHA           string        `json:"head_sha"`
-	AdmittedAt        *time.Time    `json:"admitted_at"`
-	Status            string        `json:"status"`
-	Reason            string        `json:"reason"`
-	LastDequeueReason string        `json:"last_dequeue_reason"`
-	Detail            string        `json:"detail,omitempty"`
+	dependencyWaiting bool
+	Dependency        *WaitingReason `json:"dependency,omitempty"`
+	WaitingReason     WaitingReason  `json:"waiting_reason"`
+	Landing           *LandingView   `json:"landing,omitempty"`
+	Change            *ChangeReport  `json:"change,omitempty"`
+	Gate              string         `json:"gate,omitempty"`
+	RunLedger         []Run          `json:"run_ledger,omitempty"`
+	BatchID           string         `json:"batch_id,omitempty"`
+	BatchPosition     uint64         `json:"batch_position,omitempty"`
+	BatchesAhead      *int           `json:"batches_ahead"`
+	Position          int            `json:"position"`
+	PR                int            `json:"pr"`
+	HeadSHA           string         `json:"head_sha"`
+	AdmittedAt        *time.Time     `json:"admitted_at"`
+	Status            string         `json:"status"`
+	Reason            string         `json:"reason"`
+	LastDequeueReason string         `json:"last_dequeue_reason"`
+	Detail            string         `json:"detail,omitempty"`
 }
 
 // Why links a current-state explanation to recent committed evidence.
@@ -171,6 +175,24 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	var watermark int64
 	visit := func(record store.JournalEvent, before, after queue.State) {
 		s = after
+		originalID := record.ID
+		// Dependency side evidence is filtered before explanation pagination.
+		// Withhold original row references when their gaps disclose private writes.
+		if j.DependencyStatus != nil {
+			if record.Event == nil {
+				return
+			}
+			if _, privateClock := record.Event.(queue.DependencyWaitsWithheld); privateClock {
+				return
+			}
+			if _, privateInvalidation := record.Event.(queue.DependencyCompositionsInvalidated); privateInvalidation {
+				return
+			}
+			if j.DependencyRedacted {
+				record.ID = 0
+			}
+		}
+
 		if e, ok := record.Event.(queue.ConfigApplied); ok && e.Commit == after.ConfigCommit && e.Digest == after.ConfigDigest {
 			configPin = e
 		}
@@ -266,7 +288,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			e.PR, e.HeadSHA, e.AdmittedAt = admitted.PR, admitted.HeadSHA, &admitted.EnqueuedAt
 			known[e.PR] = e
 		}
-		if pr > 0 && (inheritedPause[record.ID] || affects(record.Event, pr, before, s, tested)) {
+		if pr > 0 && !j.DependencyRedacted && (inheritedPause[originalID] || affects(record.Event, pr, before, s, tested)) {
 			kind, _, _ := queue.EncodeEvent(record.Event)
 			evidence := Event{ID: record.ID, Type: kind, At: record.RecordedAt.UTC(), Summary: sanitizer.Sanitize(eventSummary(record.Event, before, s))}
 			evidence.Runs, evidence.RerunState = retryEvidence(record.Event, before, s, sanitizer)
@@ -309,6 +331,9 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			visit(record, frames[i].before, frames[i].after)
 		}
 	}
+	if j.DependencyQueue != nil {
+		s = *j.DependencyQueue
+	}
 	for n, head := range heads {
 		e := known[n]
 		e.HeadSHA = head
@@ -333,6 +358,11 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			q.Authority.Elements[i].Element = sanitizer.Sanitize(q.Authority.Elements[i].Element)
 		}
 	}
+	if j.DependencyStatus != nil && !j.DependencyRedacted && len(j.Events) > 0 {
+		q.Watermark = j.Events[len(j.Events)-1].ID
+	}
+	q.dependencies = j.DependencyStatus
+	q.dependencyRedacted = j.DependencyRedacted
 	q.state = s
 	q.runLedger = ledger
 	q.sanitizer = sanitizer
@@ -352,7 +382,8 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			q.ActiveBatch = item
 		}
 	}
-	q.Invalidations = s.Invalidations
+	q.Invalidations = slices.Clone(s.Invalidations)
+	maskDependencyBatches(&q, j)
 	for i, admitted := range s.Entries {
 		e := known[admitted.PR]
 		e.HeadSHA = admitted.HeadSHA
@@ -388,6 +419,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 		}
 		e.Change = reportChange(j.Key, s, e.PR, sanitizer)
 		e.Gate = holdingGate(&q, e, queue.Config{}, time.Time{})
+		attachDependency(&q, &e)
 		e.WaitingReason = DeriveWaitingReason(&q, e)
 		q.Entries = append(q.Entries, e)
 		known[e.PR] = e
@@ -402,6 +434,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	e.Change = reportChange(j.Key, s, pr, sanitizer)
 	e.RunLedger = ledger[pr]
 	e.Gate = holdingGate(&q, e, queue.Config{}, time.Time{})
+	attachDependency(&q, &e)
 	e.WaitingReason = DeriveWaitingReason(&q, e)
 	summary := fmt.Sprintf("PR #%d: %s", pr, e.Status)
 	if e.Reason != "" {
@@ -412,7 +445,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			summary += "; " + block.Reason + " [" + block.Source + "]: " + block.Detail
 		}
 		summary += "; " + queue.BlockRecovery(s.Blocks(queue.Config{}))
-		if inBatch(s, pr) && s.Active.Phase == queue.Landing {
+		if !j.DependencyRedacted && inBatch(s, pr) && s.Active.Phase == queue.Landing {
 			summary += "; landing outcome is still being resolved through its fence"
 		}
 	} else if e.Position > 0 {
@@ -428,7 +461,11 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			summary += "; queue entry conditions are not satisfied"
 		}
 	case "queued":
-		summary += "; waiting for the next test batch"
+		if e.dependencyWaiting {
+			summary += "; " + WaitingSummary(e.WaitingReason)
+		} else {
+			summary += "; waiting for the next test batch"
+		}
 	case "building":
 		summary += "; constructing the batch test ref"
 	case "testing":

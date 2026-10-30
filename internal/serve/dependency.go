@@ -2,7 +2,10 @@ package serve
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
+	"github.com/CanadaApollo6/openmerge/internal/status"
 
 	"github.com/CanadaApollo6/openmerge/internal/dependency"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -15,6 +18,12 @@ import (
 type dependencyPass struct {
 	// binding is independently verified journal identity, never a snapshot's.
 	binding dependency.JournalInitialized
+	// audience is a complete recorded reader grant set per source, not App access.
+	audience map[string][]dependency.Grant
+	// checkAudience covers every check reader, independently of API readers.
+	checkAudience map[string][]dependency.Grant
+	// sources are recorded source journal bindings, never inferred from audience grants.
+	sources map[string]dependency.SourceRecord
 	// landingStart supplies trusted fresh landing-start reads, completed before
 	// the store transaction opens. It must not emit or mutate journal state.
 	landingStart func(context.Context, queue.Land, queue.LandingStarted) (store.DependencyStart, error)
@@ -30,4 +39,67 @@ func (pass *dependencyPass) complete(w *worker) error {
 		return errors.New("incomplete dependency activation")
 	}
 	return pass.binding.Validate()
+}
+
+func dependencyJournal(j store.Journal, pass *dependencyPass) (store.Journal, error) {
+	if pass == nil {
+		return j, nil
+	}
+	return status.ProjectDependencies(j, pass.binding, pass.audience, pass.sources)
+}
+
+func (s *Server) dependencyJournals(journals []store.Journal) ([]store.Journal, error) {
+	for i, j := range journals {
+		for _, w := range s.workers() {
+			if w.Key == j.Key && w.dependencies != nil {
+				var err error
+				journals[i], err = dependencyJournal(j, w.dependencies)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	return journals, nil
+}
+
+func dependencyCheckJournal(j store.Journal, pass *dependencyPass) (store.Journal, error) {
+	if pass == nil {
+		return j, nil
+	}
+	return status.ProjectDependencies(j, pass.binding, pass.checkAudience, pass.sources)
+}
+
+func (s *Server) dependencyDecisionScope(ctx context.Context, key store.QueueKey) error {
+	for _, w := range s.workers() {
+		if w.Key != key || w.dependencies == nil {
+			continue
+		}
+		journals, err := s.store.ReportingJournals(ctx, []store.QueueKey{key})
+		if err != nil || len(journals) != 1 {
+			return errors.New("dependency evidence unavailable")
+		}
+		j, err := dependencyJournal(journals[0], w.dependencies)
+		if err != nil {
+			return err
+		}
+		return status.RequireDependencyDecisionScope(j)
+	}
+	return nil
+}
+
+// Cache validity follows the complete check-reader scope, independently of the journal.
+func dependencyCheckScope(pass *dependencyPass) ([32]byte, error) {
+	if pass == nil {
+		return [32]byte{}, nil
+	}
+	raw, err := json.Marshal(struct {
+		Binding  dependency.JournalInitialized
+		Audience map[string][]dependency.Grant
+		Sources  map[string]dependency.SourceRecord
+	}{pass.binding, pass.checkAudience, pass.sources})
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return sha256.Sum256(raw), nil
 }

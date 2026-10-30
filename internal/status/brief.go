@@ -225,6 +225,9 @@ func projectBriefFromProjection(j store.Journal, q *Queue, entry *Entry, id, aud
 		appendBriefWarning(&v, audience, "approvals_not_required", "approvals not required by the recorded policy", "", brief.Step{Action: "none"})
 	}
 	appendBriefChangeWarnings(&v, audience, j.Key, s, id, rev, entry, runs, f)
+	if entry.Dependency != nil {
+		appendBriefWarning(&v, audience, "dependencies", WaitingSummary(*entry.Dependency), "Read the recorded dependency view; dependency evidence never waives this change's own gates.", brief.Step{Action: "read_recorded_evidence"})
+	}
 	recovery := queue.BlockRecovery(s.Blocks(queue.Config{}))
 	for _, block := range q.Blocks {
 		source := queue.BlockSource(block.Source)

@@ -862,7 +862,7 @@ func (s *Server) observeStageABase(ctx context.Context, w *worker, state queue.S
 }
 
 func (s *Server) stageACheckSummary(ctx context.Context, w *worker, pr int) (string, error) {
-	if w.ledgerCache == nil {
+	if w.ledgerCache == nil || w.dependencies != nil {
 		if _, err := s.ledgerSummary(ctx, w, pr); err != nil {
 			return "", err
 		}

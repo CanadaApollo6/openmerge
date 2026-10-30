@@ -11,27 +11,35 @@ type WaitingCode string
 
 // Waiting reason codes are stable presentation categories.
 const (
-	WaitingDone      WaitingCode = "done"
-	WaitingPaused    WaitingCode = "paused"
-	WaitingApprovals WaitingCode = "approvals"
-	WaitingTrust     WaitingCode = "trust"
-	WaitingEntry     WaitingCode = "entry-conditions"
-	WaitingOperator  WaitingCode = "operator-action"
-	WaitingQueue     WaitingCode = "queue"
-	WaitingBuild     WaitingCode = "build"
-	WaitingChecks    WaitingCode = "checks"
-	WaitingConflict  WaitingCode = "conflict"
-	WaitingDequeued  WaitingCode = "dequeued"
-	WaitingLanding   WaitingCode = "landing"
+	WaitingDependencies WaitingCode = "dependencies"
+	WaitingDone         WaitingCode = "done"
+	WaitingPaused       WaitingCode = "paused"
+	WaitingApprovals    WaitingCode = "approvals"
+	WaitingTrust        WaitingCode = "trust"
+	WaitingEntry        WaitingCode = "entry-conditions"
+	WaitingOperator     WaitingCode = "operator-action"
+	WaitingQueue        WaitingCode = "queue"
+	WaitingBuild        WaitingCode = "build"
+	WaitingChecks       WaitingCode = "checks"
+	WaitingConflict     WaitingCode = "conflict"
+	WaitingDequeued     WaitingCode = "dequeued"
+	WaitingLanding      WaitingCode = "landing"
 )
+
+// DependencyDiagnostic identifies a source condition in an authorized view.
+type DependencyDiagnostic struct {
+	Code   string `json:"code"`
+	Source string `json:"source"`
+}
 
 // WaitingReason is derived solely from recorded projections and runtime gates.
 // Details and URL remain absent when the recorded evidence cannot identify them.
 type WaitingReason struct {
-	Code    WaitingCode `json:"code"`
-	Text    string      `json:"text"`
-	Details []string    `json:"details,omitempty"`
-	URL     string      `json:"url,omitempty"`
+	Diagnostics []DependencyDiagnostic `json:"diagnostics,omitempty"`
+	Code        WaitingCode            `json:"code"`
+	Text        string                 `json:"text"`
+	Details     []string               `json:"details,omitempty"`
+	URL         string                 `json:"url,omitempty"`
 }
 
 // DeriveWaitingReason chooses one reason in precedence order. Terminal outcomes
@@ -124,6 +132,9 @@ func deriveWaitingReason(q *Queue, e Entry, position bool) WaitingReason {
 	if e.Position == 0 {
 		return reason(WaitingOperator, "Not queued; waiting for a queue request from a writer")
 	}
+	if e.Dependency != nil && e.dependencyWaiting {
+		return *e.Dependency
+	}
 	text := fmt.Sprintf("In queue behind %d changes; waiting for the next test batch", max(0, e.Position-1))
 	if !position {
 		text = "In queue; waiting for the next test batch"
@@ -199,4 +210,17 @@ func waitingText(r WaitingReason) string {
 		text += "; " + r.URL
 	}
 	return text
+}
+
+func attachDependency(q *Queue, e *Entry) {
+	if q.dependencyRedacted {
+		maskDependencyEntry(e)
+	}
+	if v, ok := q.dependencies[e.PR]; ok {
+		e.dependencyWaiting = v.Blocking
+		e.Dependency = &WaitingReason{Code: WaitingDependencies, Text: v.Text, Details: slices.Clone(v.Details), URL: v.URL}
+		for _, d := range v.Diagnostics {
+			e.Dependency.Diagnostics = append(e.Dependency.Diagnostics, DependencyDiagnostic{Code: d.Code, Source: d.Source})
+		}
+	}
 }
