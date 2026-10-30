@@ -101,14 +101,14 @@ func TestDependencyExportStrictRoundTrip(t *testing.T) {
 func TestDependencyExportCompleteEvidenceIsStrict(t *testing.T) {
 	payload := json.RawMessage(`{"version":1,"type":"refresh_requested","data":{}}`)
 	entry := DependencyEntry{Kind: "invalidation", Source: &DependencySource{ID: 9, Type: "dependency_compositions_invalidated", RecordedAt: "2026-01-01T00:00:00.000000Z"}, Evidence: payload}
-	if _, _, _, err := EncodeDependencyExport(dependencyQueue, DependencyAudienceComplete, []DependencyEntry{entry}); err == nil {
+	if _, err := WriteDependencyExport(filepath.Join(t.TempDir(), "x"), dependencyQueue, DependencyAudienceComplete, []DependencyEntry{entry}); err == nil {
 		t.Fatal("accepted evidence of another journal type")
 	}
 	entry.Evidence = json.RawMessage(`{"version":1,"type":"dependency_compositions_invalidated","data":{"batch_ids":["b1"]}}`)
-	if _, _, _, err := EncodeDependencyExport(dependencyQueue, DependencyAudienceComplete, []DependencyEntry{entry}); err == nil {
+	if _, err := WriteDependencyExport(filepath.Join(t.TempDir(), "x"), dependencyQueue, DependencyAudienceComplete, []DependencyEntry{entry}); err == nil {
 		t.Fatal("accepted a malformed journal record")
 	}
-	if _, _, _, err := EncodeDependencyExport(dependencyQueue, DependencyAudienceComplete, redactedEntries()); err == nil {
+	if _, err := WriteDependencyExport(filepath.Join(t.TempDir(), "x"), dependencyQueue, DependencyAudienceComplete, redactedEntries()); err == nil {
 		t.Fatal("complete export accepted records without journal metadata")
 	}
 }

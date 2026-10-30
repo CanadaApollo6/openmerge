@@ -133,7 +133,8 @@ func redactedEvidence(kind string, raw []byte) error {
 }
 
 // EncodeDependencyExport chains entries in order and returns the manifest and
-// stream bytes. Equal inputs always produce equal bytes.
+// stream bytes. Equal inputs always produce equal bytes. Readers must verify
+// with DecodeDependencyExport; WriteDependencyExport does so before publishing.
 func EncodeDependencyExport(queue Key, audience string, entries []DependencyEntry) (DependencyManifest, []byte, []byte, error) {
 	m := DependencyManifest{Format: DependencyExportFormat, Version: DependencyExportVersion, Queue: queue, Audience: audience, Records: dependencyRecordsFile, TerminalSHA256: zeroDigest}
 	var stream bytes.Buffer
@@ -160,17 +161,17 @@ func EncodeDependencyExport(queue Key, audience string, entries []DependencyEntr
 	if err != nil {
 		return m, nil, nil, err
 	}
-	records, err := DecodeDependencyExport(append(manifest, '\n'), stream.Bytes())
-	if err != nil || int64(len(records)) != m.Count {
-		return m, nil, nil, ErrDependencyExport
-	}
 	return m, append(manifest, '\n'), stream.Bytes(), nil
 }
 
-// WriteDependencyExport atomically publishes a new export directory.
+// WriteDependencyExport verifies, then atomically publishes, a new export
+// directory. It never publishes an export its own verifier would refuse.
 func WriteDependencyExport(target string, queue Key, audience string, entries []DependencyEntry) (DependencyManifest, error) {
 	m, manifest, records, err := EncodeDependencyExport(queue, audience, entries)
 	if err != nil {
+		return m, err
+	}
+	if _, err := DecodeDependencyExport(manifest, records); err != nil {
 		return m, err
 	}
 	return m, publish(target, func(dir string) error {

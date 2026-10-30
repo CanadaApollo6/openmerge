@@ -45,7 +45,7 @@ func TestDependencyMetamorphicPrivacy(t *testing.T) {
 				}
 				h := Handler(metamorphicPolicySource{dependencyRenderSource{journal: j}, statusfixture.MetamorphicPolicy(c.Depth)}, []store.QueueKey{j.Key}, "", nil)
 				paths := []string{"/v1/queues", "/v1/queues/acme/client/main"}
-				outputs := metamorphicExport(t, m)
+				outputs, verify := metamorphicExport(t, m)
 				prs := m.PRs
 				if m.SelfAckPR != 0 {
 					prs = append(slices.Clone(prs), m.SelfAckPR)
@@ -88,6 +88,7 @@ func TestDependencyMetamorphicPrivacy(t *testing.T) {
 						baseline[key] = bytes.Clone(got)
 					}
 				}
+				verify()
 			}
 			statusfixture.RequireComparedWorlds(t, c, worlds)
 		})
@@ -100,8 +101,9 @@ func metamorphicClock(j store.Journal) DependencyOptions {
 }
 
 // metamorphicExport renders the unauthorized scoped export and every cursor
-// page of it. A private-only tail must not change a byte.
-func metamorphicExport(t *testing.T, m statusfixture.MetamorphicWorld) map[string][]byte {
+// page of it. A private-only tail must not change a byte. Strict verification
+// runs after the byte comparison, so the differential detects leaks first.
+func metamorphicExport(t *testing.T, m statusfixture.MetamorphicWorld) (map[string][]byte, func()) {
 	t.Helper()
 	manifest, stream, err := DependencyExportBytes(m.Journal, m.Binding, nil, statusfixture.StatusSources())
 	if err != nil {
@@ -117,9 +119,12 @@ func metamorphicExport(t *testing.T, m statusfixture.MetamorphicWorld) map[strin
 		t.Fatalf("private tail changed the export %s", statusfixture.Diff(stream, tailStream))
 	}
 	out := map[string][]byte{"export:manifest": manifest, "export:records": stream}
-	records, err := audit.DecodeDependencyExport(manifest, stream)
-	if err != nil {
-		t.Fatalf("export does not verify: %v", err)
+	var records []audit.DependencyRecord
+	for _, line := range bytes.Split(bytes.TrimSuffix(stream, []byte("\n")), []byte("\n")) {
+		var r audit.DependencyRecord
+		if len(line) > 0 && json.Unmarshal(line, &r) == nil {
+			records = append(records, r)
+		}
 	}
 	for _, limit := range []int{1, 2, 100} {
 		var pages []audit.DependencyPage
@@ -140,7 +145,12 @@ func metamorphicExport(t *testing.T, m statusfixture.MetamorphicWorld) map[strin
 		}
 		out[fmt.Sprintf("export:pages:%d", limit)] = raw
 	}
-	return out
+	return out, func() {
+		t.Helper()
+		if verified, err := audit.DecodeDependencyExport(manifest, stream); err != nil || len(verified) != len(records) {
+			t.Fatalf("export does not verify: %v", err)
+		}
+	}
 }
 
 // requireSelfAckView keeps the self-acknowledgement cases non-vacuous: the
