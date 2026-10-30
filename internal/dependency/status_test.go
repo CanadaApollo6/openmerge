@@ -87,3 +87,24 @@ func TestBoundDetails(t *testing.T) {
 		t.Fatalf("empty summary fabricated %v", got)
 	}
 }
+
+func TestAppendBoundedDetail(t *testing.T) {
+	for n := range MaxStatusDetails + 4 {
+		var details []string
+		for i := range n {
+			details = append(details, fmt.Sprintf("line %d", i))
+		}
+		got := AppendBoundedDetail(BoundDetails(details), "added")
+		if n < MaxStatusDetails {
+			if !slices.Equal(got, append(slices.Clone(details), "added")) {
+				t.Fatalf("%d lines: %v", n, got)
+			}
+			continue
+		}
+		// The added line stays visible and every displaced line is counted.
+		shown := MaxStatusDetails - 2
+		if len(got) != MaxStatusDetails || !slices.Equal(got[:shown], details[:shown]) || got[shown] != "added" || got[shown+1] != fmt.Sprintf("%d more details in the paginated authorized dependency export", n-shown) {
+			t.Fatalf("%d lines: %v", n, got)
+		}
+	}
+}

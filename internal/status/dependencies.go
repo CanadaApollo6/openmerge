@@ -36,8 +36,9 @@ func ProjectDependencies(j store.Journal, binding dependency.JournalInitialized,
 }
 
 // ProjectDependenciesAt also derives the authorized wait-age flag from recorded
-// journal times. Generic views never carry it: a wait can start or end at a
-// private source transition, so its age is source evidence.
+// journal times. It is shown only while the whole queue is unredacted: private
+// reads delay every later record, so any recording time in a redacted queue,
+// even of a public declaration, is private timing.
 func ProjectDependenciesAt(j store.Journal, binding dependency.JournalInitialized, audience map[string][]dependency.Grant, sources map[string]dependency.SourceRecord, opts DependencyOptions) (store.Journal, error) {
 	records := map[uint64][]byte{}
 	for _, e := range j.Events {
@@ -122,7 +123,7 @@ func ProjectDependenciesAt(j store.Journal, binding dependency.JournalInitialize
 		views[pr] = v
 	}
 	for pr, v := range views {
-		j.DependencyStatus[pr] = dependencyItem(v, j.DependencyRedacted, waitAge(reader.Queue, pr, v, waits[pr], opts))
+		j.DependencyStatus[pr] = dependencyItem(v, j.DependencyRedacted, waitAge(reader.Queue, pr, v, waits[pr], opts, j.DependencyRedacted))
 	}
 	return j, nil
 }
@@ -142,14 +143,15 @@ func dependencyItem(v dependency.StatusView, redacted bool, age *store.Dependenc
 	}
 	if age != nil {
 		item.WaitAge = age
-		item.Details = append(item.Details, "dependency wait older than "+age.Threshold.String()+" (non-actionable; for operator review)")
+		item.Details = dependency.AppendBoundedDetail(item.Details, "dependency wait older than "+age.Threshold.String()+" (non-actionable; for operator review)")
 	}
 	return item
 }
 
-// waitAge flags only an authorized, blocking view of a queued change.
-func waitAge(q queue.State, pr int, v dependency.StatusView, w dependencyWait, opts DependencyOptions) *store.DependencyWaitAge {
-	if opts.WaitAge <= 0 || v.Redacted || !v.Blocking || w.since.IsZero() {
+// waitAge flags only a blocking view of a queued change in an unredacted
+// queue. A generic view always redacts its queue.
+func waitAge(q queue.State, pr int, v dependency.StatusView, w dependencyWait, opts DependencyOptions, redacted bool) *store.DependencyWaitAge {
+	if opts.WaitAge <= 0 || redacted || !v.Blocking || w.since.IsZero() {
 		return nil
 	}
 	since := w.since
@@ -167,7 +169,9 @@ func waitAge(q queue.State, pr int, v dependency.StatusView, w dependencyWait, o
 }
 
 // trackDependencyWaits restarts a change's wait on a new revision and clears it
-// whenever recorded admission is satisfied.
+// whenever recorded admission is satisfied. A revision without its own
+// declaration is not waiting yet, so its wait starts at that declaration and
+// never at another change's record.
 func trackDependencyWaits(j store.Journal, reader journalreader.Reader, waits map[int]dependencyWait, at time.Time) error {
 	state, err := reader.Dependencies()
 	if err != nil {
@@ -182,7 +186,7 @@ func trackDependencyWaits(j store.Journal, reader journalreader.Reader, waits ma
 		if w.revision != uint64(rev.Revision) {
 			w = dependencyWait{revision: uint64(rev.Revision)}
 		}
-		if state.Admission(string(id), w.revision).Code == "" {
+		if code := state.Admission(string(id), w.revision).Code; code == "" || code == "dependency-unresolved" {
 			w.since = time.Time{}
 		} else if w.since.IsZero() {
 			w.since = at

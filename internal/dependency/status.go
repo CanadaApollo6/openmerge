@@ -3,6 +3,8 @@ package dependency
 import (
 	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 )
 
 // MaxStatusDetails bounds an authorized summary. Complete evidence remains in
@@ -117,11 +119,28 @@ func (s State) Status(changeID string, revision uint64, p DiagnosticProjection, 
 	return view, true
 }
 
+const omittedDetails = " more details in the paginated authorized dependency export"
+
 // BoundDetails returns at most MaxStatusDetails lines, replacing the excess
 // with a count. It never fabricates a line for a short summary.
 func BoundDetails(details []string) []string {
 	if n := len(details); n > MaxStatusDetails {
-		return append(slices.Clone(details[:MaxStatusDetails-1]), fmt.Sprintf("%d more details in the paginated authorized dependency export", n-MaxStatusDetails+1))
+		return append(slices.Clone(details[:MaxStatusDetails-1]), fmt.Sprintf("%d%s", n-MaxStatusDetails+1, omittedDetails))
 	}
 	return slices.Clone(details)
+}
+
+// AppendBoundedDetail adds line to a bounded summary and keeps it within
+// MaxStatusDetails. The line stays visible: in a full summary it displaces the
+// last shown detail, and the omitted count includes every displaced line.
+func AppendBoundedDetail(details []string, line string) []string {
+	details = BoundDetails(details)
+	if len(details) < MaxStatusDetails {
+		return append(details, line)
+	}
+	omitted := 1
+	if n, err := strconv.Atoi(strings.TrimSuffix(details[MaxStatusDetails-1], omittedDetails)); err == nil && n > 0 && strings.HasSuffix(details[MaxStatusDetails-1], omittedDetails) {
+		omitted = n
+	}
+	return append(details[:MaxStatusDetails-2], line, fmt.Sprintf("%d%s", omitted+1, omittedDetails))
 }
