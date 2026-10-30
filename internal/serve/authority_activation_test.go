@@ -21,13 +21,7 @@ import (
 
 func activationReceipt(t *testing.T, db *store.Store) authority.EmissionReceipt {
 	t.Helper()
-	// Test binaries without VCS metadata use the same explicit fallback as
-	// release tooling. Never replace a revision already embedded by Go.
-	if authority.RunningBinaryRevision() == "" {
-		previous := authority.BuildRevision
-		authority.BuildRevision = "activation-test-revision"
-		t.Cleanup(func() { authority.BuildRevision = previous })
-	}
+	// TestMain installs the release-tooling revision fallback.
 	path := filepath.Join(t.TempDir(), "backup")
 	must(t, os.WriteFile(path, []byte("offline test backup"), 0600))
 	identity, err := db.DatabaseIdentity(t.Context())
