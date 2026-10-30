@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -201,6 +202,43 @@ func TestPageDependencyRecords(t *testing.T) {
 // TestDependencyExportVerifiesLargeStream streams the records file: only each
 // line is bounded, so an export larger than MaxBytes that the writer publishes
 // verifies, while a line over MaxBytes or an unterminated last line does not.
+// trapReader records any read past the stream a verifier should stop in.
+type trapReader struct{ read bool }
+
+func (r *trapReader) Read([]byte) (int, error) {
+	r.read = true
+	return 0, io.ErrUnexpectedEOF
+}
+
+func TestDependencyExportBoundsRecordsByCount(t *testing.T) {
+	_, manifest, stream, err := EncodeDependencyExport(dependencyQueue, DependencyAudienceRedacted, redactedEntries())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A manifest with a valid self-digest that claims fewer records than the
+	// stream holds; every record is canonical and correctly chained.
+	var m DependencyManifest
+	if err := strict(bytes.TrimSuffix(manifest, []byte("\n")), &m); err != nil {
+		t.Fatal(err)
+	}
+	m.Count, m.ManifestSHA256 = 1, ""
+	raw, err := encode(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.ManifestSHA256 = digest(raw)
+	if raw, err = encode(m); err != nil {
+		t.Fatal(err)
+	}
+	trap := &trapReader{}
+	if _, err := decodeDependencyExport(append(raw, '\n'), io.MultiReader(bytes.NewReader(stream), trap)); !errors.Is(err, ErrDependencyExport) {
+		t.Fatal("accepted more records than the manifest counts", err)
+	}
+	if trap.read {
+		t.Fatal("verifier kept reading records past the manifest count")
+	}
+}
+
 func TestDependencyExportVerifiesLargeStream(t *testing.T) {
 	editor := strings.Repeat("e", 64<<10)
 	var entries []DependencyEntry
