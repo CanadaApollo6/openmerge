@@ -108,7 +108,13 @@ func databaseConnection(t *testing.T) (*store.Store, *pgx.Conn) {
 		t.Skip("run make db and set OPENMERGE_TEST_DATABASE_URL")
 	}
 	holdTestSchemaSlot(t)
-	conn, err := pgx.Connect(t.Context(), raw)
+	// Scratch schemas are dropped after each test, so commits need not wait for
+	// a WAL flush. This only changes crash durability, never visibility or
+	// isolation; it matters on CI, whose service database runs with fsync on.
+	admin, err := pgx.ParseConfig(raw)
+	must(t, err)
+	admin.RuntimeParams["synchronous_commit"] = "off"
+	conn, err := pgx.ConnectConfig(t.Context(), admin)
 	must(t, err)
 	var token [12]byte
 	_, err = rand.Read(token[:])
@@ -126,6 +132,7 @@ func databaseConnection(t *testing.T) (*store.Store, *pgx.Conn) {
 	query := u.Query()
 	query.Set("search_path", schema)
 	query.Set("pool_max_conns", testPoolMaxConns)
+	query.Set("synchronous_commit", "off")
 	u.RawQuery = query.Encode()
 	db, err := store.Open(t.Context(), u.String(), store.WithTestLockScope(schema))
 	must(t, err)
