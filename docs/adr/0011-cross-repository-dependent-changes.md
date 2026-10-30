@@ -465,6 +465,17 @@ declaration text is not permission to disclose more. Typed reasons, cycle paths,
 source IDs and full diagnostics appear only in authorized views; rendering uses
 recorded audience authorization and fails closed when it is unknown.
 
+**Accepted residual, 2026-10-30 ([#203](https://github.com/CanadaApollo6/openmerge/issues/203)).**
+Redaction hides A's state, not B's own CI. In Stage A, B is tested only after
+A has landed. If B's own checks then fail, the generic `checks-failed` dequeue
+shows an audience without access to A that B was tested, and therefore that A
+had landed. This is accepted only when B's CI is visible to that same audience;
+for example, repository readers can see B's workflow runs. It is not accepted
+for an audience that cannot see B's CI. The dequeue names no source and reveals
+no private observation newer than the one that let B be tested. The metamorphic
+privacy tests exclude only this exit, B's own `checks-failed`, from byte
+comparison; any other queue exit caused by private state fails them.
+
 ### Status and audit evidence
 
 Reuse the `WaitingReason` projection introduced by the
