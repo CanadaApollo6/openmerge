@@ -45,7 +45,10 @@ func TestDependencyMetamorphicPrivacy(t *testing.T) {
 				}
 				h := Handler(metamorphicPolicySource{dependencyRenderSource{journal: j}, statusfixture.MetamorphicPolicy(c.Depth)}, []store.QueueKey{j.Key}, "", nil)
 				paths := []string{"/v1/queues", "/v1/queues/acme/client/main"}
-				outputs, verify := metamorphicExport(t, m)
+				// A private-only tail replays the journal again; -short checks it in
+				// one world per case, the full product in every world.
+				tail := !testing.Short() || len(worlds) == 1
+				outputs, verify := metamorphicExport(t, m, tail)
 				prs := m.PRs
 				if m.SelfAckPR != 0 {
 					prs = append(slices.Clone(prs), m.SelfAckPR)
@@ -103,20 +106,22 @@ func metamorphicClock(j store.Journal) DependencyOptions {
 // metamorphicExport renders the unauthorized scoped export and every cursor
 // page of it. A private-only tail must not change a byte. Strict verification
 // runs after the byte comparison, so the differential detects leaks first.
-func metamorphicExport(t *testing.T, m statusfixture.MetamorphicWorld) (map[string][]byte, func()) {
+func metamorphicExport(t *testing.T, m statusfixture.MetamorphicWorld, tail bool) (map[string][]byte, func()) {
 	t.Helper()
 	manifest, stream, err := DependencyExportBytes(m.Journal, m.Binding, nil, statusfixture.StatusSources())
 	if err != nil {
 		t.Fatal(err)
 	}
-	tail := m.Journal
-	tail.Events = append(slices.Clone(tail.Events), m.Tail...)
-	tailManifest, tailStream, err := DependencyExportBytes(tail, m.Binding, nil, statusfixture.StatusSources())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(manifest, tailManifest) || !bytes.Equal(stream, tailStream) {
-		t.Fatalf("private tail changed the export %s", statusfixture.Diff(stream, tailStream))
+	if tail {
+		j := m.Journal
+		j.Events = append(slices.Clone(j.Events), m.Tail...)
+		tailManifest, tailStream, err := DependencyExportBytes(j, m.Binding, nil, statusfixture.StatusSources())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(manifest, tailManifest) || !bytes.Equal(stream, tailStream) {
+			t.Fatalf("private tail changed the export %s", statusfixture.Diff(stream, tailStream))
+		}
 	}
 	out := map[string][]byte{"export:manifest": manifest, "export:records": stream}
 	var records []audit.DependencyRecord

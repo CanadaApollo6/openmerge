@@ -84,7 +84,6 @@ func MetamorphicCases(short bool) []MetamorphicCase {
 			// recording times, positions and the warning must stay public.
 			{"requested", true, false, true, 3, 1, true},
 			{"paused", true, true, true, 3, 4, true},
-			{"ci-passed", false, false, true, 3, 1, true},
 			{"landed", false, false, false, 2, 4, true},
 		}
 	}
