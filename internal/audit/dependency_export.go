@@ -1,12 +1,14 @@
 package audit
 
 import (
+	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/journalreader"
@@ -196,6 +198,8 @@ func WriteDependencyExport(target string, queue Key, audience string, entries []
 }
 
 // VerifyDependencyExport reads a published export through regular-file checks.
+// The records file is streamed: only each line is bounded, by MaxBytes like
+// every canonical record, so any export the writer publishes verifies here.
 func VerifyDependencyExport(dir string) (DependencyManifest, []DependencyRecord, error) {
 	var m DependencyManifest
 	root, err := os.OpenRoot(dir)
@@ -203,27 +207,21 @@ func VerifyDependencyExport(dir string) (DependencyManifest, []DependencyRecord,
 		return m, nil, ErrDependencyExport
 	}
 	defer func() { _ = root.Close() }()
-	read := func(name string) ([]byte, error) {
-		f, err := openRegular(root, name)
-		if err != nil {
-			return nil, ErrDependencyExport
-		}
-		defer func() { _ = f.Close() }()
-		raw, err := io.ReadAll(io.LimitReader(f, MaxBytes+1))
-		if err != nil || len(raw) > MaxBytes {
-			return nil, ErrDependencyExport
-		}
-		return raw, nil
-	}
-	manifest, err := read("manifest.json")
+	f, err := openRegular(root, "manifest.json")
 	if err != nil {
-		return m, nil, err
+		return m, nil, ErrDependencyExport
 	}
-	stream, err := read(dependencyRecordsFile)
+	manifest, err := io.ReadAll(io.LimitReader(f, MaxBytes+1))
+	_ = f.Close()
+	if err != nil || len(manifest) > MaxBytes {
+		return m, nil, ErrDependencyExport
+	}
+	f, err = openRegular(root, dependencyRecordsFile)
 	if err != nil {
-		return m, nil, err
+		return m, nil, ErrDependencyExport
 	}
-	records, err := DecodeDependencyExport(manifest, stream)
+	defer func() { _ = f.Close() }()
+	records, err := decodeDependencyExport(manifest, f)
 	if err != nil {
 		return m, nil, err
 	}
@@ -236,6 +234,10 @@ func VerifyDependencyExport(dir string) (DependencyManifest, []DependencyRecord,
 // evidence. Complete-audience evidence must be a strict journal record of the
 // stated type; redacted evidence must be an allowlisted projection.
 func DecodeDependencyExport(manifest, stream []byte) ([]DependencyRecord, error) {
+	return decodeDependencyExport(manifest, bytes.NewReader(stream))
+}
+
+func decodeDependencyExport(manifest []byte, stream io.Reader) ([]DependencyRecord, error) {
 	var m DependencyManifest
 	raw, ok := bytes.CutSuffix(manifest, []byte("\n"))
 	if !ok || !canonicalLine(raw) || strict(raw, &m) != nil || m.Format != DependencyExportFormat || m.Version != DependencyExportVersion || m.Records != dependencyRecordsFile || m.Audience != DependencyAudienceComplete && m.Audience != DependencyAudienceRedacted || !validDigest(m.RecordsSHA256) || !validDigest(m.TerminalSHA256) || !validDigest(m.ManifestSHA256) {
@@ -244,30 +246,48 @@ func DecodeDependencyExport(manifest, stream []byte) ([]DependencyRecord, error)
 	self := m
 	self.ManifestSHA256 = ""
 	check, err := encode(self)
-	if err != nil || digest(check) != m.ManifestSHA256 || digest(stream) != m.RecordsSHA256 {
+	if err != nil || digest(check) != m.ManifestSHA256 {
 		return nil, ErrDependencyExport
 	}
+	h := sha256.New()
+	lines := bufio.NewReaderSize(io.TeeReader(stream, h), 64<<10)
 	var out []DependencyRecord
 	previous, last := zeroDigest, int64(0)
-	for _, line := range strings.SplitAfter(string(stream), "\n") {
-		if line == "" {
-			continue
+	for {
+		line, err := dependencyLine(lines)
+		if err == io.EOF && len(line) == 0 {
+			break
 		}
-		raw, ok := strings.CutSuffix(line, "\n")
+		raw, ok := bytes.CutSuffix(line, []byte("\n"))
 		var r DependencyRecord
-		if !ok || !canonicalLine([]byte(raw)) || strict([]byte(raw), &r) != nil || r.Position != int64(len(out)+1) || r.PreviousSHA256 != previous {
+		if err != nil && err != io.EOF || !ok || !canonicalLine(raw) || strict(raw, &r) != nil || r.Position != int64(len(out)+1) || r.PreviousSHA256 != previous {
 			return nil, ErrDependencyExport
 		}
 		if verifyDependencyEvidence(m.Audience, r, &last) != nil {
 			return nil, ErrDependencyExport
 		}
-		previous = digest([]byte(raw))
+		previous = digest(raw)
 		out = append(out, r)
 	}
-	if int64(len(out)) != m.Count || previous != m.TerminalSHA256 {
+	if hex.EncodeToString(h.Sum(nil)) != m.RecordsSHA256 || int64(len(out)) != m.Count || previous != m.TerminalSHA256 {
 		return nil, ErrDependencyExport
 	}
 	return out, nil
+}
+
+// dependencyLine reads one line, including its newline, of at most MaxBytes.
+func dependencyLine(r *bufio.Reader) ([]byte, error) {
+	var line []byte
+	for {
+		chunk, err := r.ReadSlice('\n')
+		line = append(line, chunk...)
+		if len(line) > MaxBytes+1 {
+			return nil, ErrDependencyExport
+		}
+		if err != bufio.ErrBufferFull {
+			return line, err
+		}
+	}
 }
 
 // canonicalLine requires the exact canonical bytes that the writer chains.

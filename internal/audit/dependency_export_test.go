@@ -197,3 +197,40 @@ func TestPageDependencyRecords(t *testing.T) {
 		}
 	}
 }
+
+// TestDependencyExportVerifiesLargeStream streams the records file: only each
+// line is bounded, so an export larger than MaxBytes that the writer publishes
+// verifies, while a line over MaxBytes or an unterminated last line does not.
+func TestDependencyExportVerifiesLargeStream(t *testing.T) {
+	editor := strings.Repeat("e", 64<<10)
+	var entries []DependencyEntry
+	for range MaxBytes/len(editor) + 2 {
+		entries = append(entries, DependencyEntry{Kind: "declaration", Evidence: DependencyDeclarationEvidence{ChangeID: "chg1_7", Revision: 1, Held: true, Editors: []string{editor}}})
+	}
+	dir := filepath.Join(t.TempDir(), "export")
+	m, err := WriteDependencyExport(dir, dependencyQueue, DependencyAudienceRedacted, entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(dir, dependencyRecordsFile))
+	if err != nil || info.Size() <= MaxBytes {
+		t.Fatalf("records file is not larger than MaxBytes: %v", err)
+	}
+	got, records, err := VerifyDependencyExport(dir)
+	if err != nil || got != m || len(records) != len(entries) {
+		t.Fatal(got, len(records), err)
+	}
+	_, manifest, stream, err := EncodeDependencyExport(dependencyQueue, DependencyAudienceRedacted, redactedEntries())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(stream), "\n"), "\n")
+	lines[0] = strings.Repeat(" ", MaxBytes+1)
+	long, longStream := rechain(t, manifest, lines, DependencyAudienceRedacted)
+	if _, err := DecodeDependencyExport(long, longStream); !errors.Is(err, ErrDependencyExport) {
+		t.Fatal("accepted a line over MaxBytes", err)
+	}
+	if _, err := DecodeDependencyExport(manifest, bytes.TrimSuffix(stream, []byte("\n"))); !errors.Is(err, ErrDependencyExport) {
+		t.Fatal("accepted an unterminated last line", err)
+	}
+}
