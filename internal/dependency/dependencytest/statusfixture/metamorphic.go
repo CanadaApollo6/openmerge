@@ -137,8 +137,9 @@ type MetamorphicWorld struct {
 	// Preempted reports that a private read before the transition discarded
 	// every batch the transition could have advanced.
 	Preempted bool
-	// Uncompared names a queue exit caused by private state. Such a world is
-	// rendered and checked, but it is never a comparison partner.
+	// Uncompared names B's checks-failed exit, the one accepted queue exit
+	// caused by private state. Such a world is rendered and checked, but it is
+	// never a comparison partner.
 	Uncompared string
 	// Tail is a private-only observation recorded after the journal.
 	Tail []store.JournalEvent
@@ -314,7 +315,7 @@ func Metamorphic(t testing.TB, c MetamorphicCase, w int) MetamorphicWorld {
 		b.acknowledge(AckPR)
 		world.ConsumerPRs = []int{SelfAckPR, HeldPR, AckPR}
 	}
-	world.Group, world.Uncompared = metamorphicSettlement(c, j, b.reader.Queue, prs, merged)
+	world.Group, world.Uncompared = metamorphicSettlement(t, c, j, b.reader.Queue, prs, merged)
 	world.Journal, world.Source, world.Grant = j, source, grant
 	world.Journal.Events = slices.Clone(j.Events)
 	n := len(j.Events)
@@ -329,11 +330,17 @@ func Metamorphic(t testing.TB, c MetamorphicCase, w int) MetamorphicWorld {
 // PR in every world, so they never partition worlds by private state.
 var publicDequeue = map[queue.DequeueReason]bool{queue.Closed: true, queue.Requested: true, queue.NotEligible: true, queue.HeadChanged: true}
 
-// metamorphicSettlement names the confirmed public settlement facts. A queue
-// exit for any other reason, such as a failed composition that exists only
-// because of private state, is not a public fact: the world is excluded from
-// comparison rather than given a group of its own.
-func metamorphicSettlement(c MetamorphicCase, j store.Journal, q queue.State, prs, merged []int) (string, string) {
+// dependentPR is B, the change that declares the private dependency.
+const dependentPR = 2
+
+// metamorphicSettlement names the confirmed public settlement facts. The one
+// other accepted exit is B's own checks-failed dequeue: its composition exists
+// only because private state let B be tested, but B's CI is visible to the
+// same audience (ADR 0011, accepted residual). That world is excluded from
+// comparison rather than given a group of its own. Any other exit fails, so a
+// new leaky exit cannot be silently excluded.
+func metamorphicSettlement(t testing.TB, c MetamorphicCase, j store.Journal, q queue.State, prs, merged []int) (string, string) {
+	t.Helper()
 	var group, uncompared []string
 	for _, pr := range prs {
 		if slices.ContainsFunc(q.Entries, func(e queue.Entry) bool { return e.PR == pr }) {
@@ -349,10 +356,13 @@ func metamorphicSettlement(c MetamorphicCase, j store.Journal, q queue.State, pr
 				reason = e.Reason
 			}
 		}
-		if pr == c.Target && publicDequeue[reason] {
+		switch {
+		case pr == c.Target && publicDequeue[reason]:
 			group = append(group, fmt.Sprintf("left:%d:%s", pr, reason))
-		} else {
+		case pr == dependentPR && reason == queue.ChecksFailed:
 			uncompared = append(uncompared, fmt.Sprintf("PR %d left the queue (%s)", pr, reason))
+		default:
+			t.Fatalf("PR %d left the queue (%q) for a cause the comparison does not accept", pr, reason)
 		}
 	}
 	return strings.Join(group, " "), strings.Join(uncompared, "; ")
