@@ -117,17 +117,25 @@ type ObservationView struct {
 // or lacks identity-bound source access, every source state has identical output.
 // These grants are recorded audience facts; rendering performs no forge reads.
 func (o ScopedObservation) View(audience []Grant) ObservationView {
-	generic := ObservationView{Reason: "Dependency cannot be verified"}
-	if len(audience) == 0 || o.repositoryID == "" {
-		return generic
-	}
-	for _, grant := range audience {
-		if !grant.valid(o.repositoryID) {
-			return generic
-		}
+	if !AuthorizedAudience(audience, o.repositoryID) {
+		return ObservationView{Reason: "Dependency cannot be verified"}
 	}
 	e := o.evidence
 	return ObservationView{Reason: e.Code, Code: e.Code, Observation: &e.Observation}
+}
+
+// AuthorizedAudience is View's complete-reader rule: a nonempty recorded grant
+// set in which every reader holds identity-bound access to the source repository.
+func AuthorizedAudience(audience []Grant, repositoryID string) bool {
+	if len(audience) == 0 || repositoryID == "" {
+		return false
+	}
+	for _, grant := range audience {
+		if !grant.valid(repositoryID) {
+			return false
+		}
+	}
+	return true
 }
 
 // validateConsumerScope checks the consumer binding independently of source

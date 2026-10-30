@@ -1,10 +1,12 @@
 package status
 
 import (
+	"encoding/json"
 	"errors"
 	"slices"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/audit"
 	"github.com/CanadaApollo6/openmerge/internal/dependency"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/journalreader"
@@ -270,4 +272,121 @@ func RequireDependencyDecisionScope(j store.Journal) error {
 		return errors.New("dependency evidence unavailable")
 	}
 	return nil
+}
+
+var errDependencyExport = errors.New("dependency export unavailable")
+
+// DependencyExport builds the scoped audit export of one queue's dependency
+// evidence for a recorded audience. It replays only the supplied journal through
+// the real reader and makes no forge, database or clock reads.
+//
+// A complete audience may read every source the journal declares and receives
+// every dependency record with its journal metadata. Any other audience receives
+// a redacted export constructed as new values from consumer-repository facts:
+// governing policy, declaration holds and (self-)acknowledgements. Observations,
+// diagnostics, compositions, decisions and invalidations are withheld entirely,
+// and so are journal IDs and recording times, because private source state
+// decides whether and when those records exist.
+func DependencyExport(j store.Journal, binding dependency.JournalInitialized, audience map[string][]dependency.Grant, sources map[string]dependency.SourceRecord) (string, []audit.DependencyEntry, error) {
+	records := map[uint64][]byte{}
+	for _, e := range j.Events {
+		records[uint64(e.ID)] = e.Payload
+	}
+	reader := journalreader.New(j.Seed, binding, func(id uint64) ([]byte, error) {
+		raw, ok := records[id]
+		if !ok {
+			return nil, journalreader.ErrReference
+		}
+		return raw, nil
+	})
+	reader.WithChangeIdentity(func(pr int) (queue.ChangeID, error) { return j.Key.ChangeID(pr) })
+	scope := dependency.Scope{ForgeInstance: binding.ForgeInstance, Installation: binding.Installation, JournalNamespace: binding.Namespace}
+	complete := true
+	var full, redacted []audit.DependencyEntry
+	var policy dependency.PolicyApplied
+	for _, record := range j.Events {
+		decoded, err := reader.Apply(uint64(record.ID), record.Payload)
+		if err != nil {
+			return "", nil, errDependencyExport
+		}
+		typ, kind, exported := journalreader.ExportKind(record.Payload)
+		if !exported {
+			continue
+		}
+		full = append(full, audit.DependencyEntry{Kind: kind, Source: &audit.DependencySource{ID: record.ID, Type: typ, RecordedAt: record.RecordedAt.UTC().Format("2006-01-02T15:04:05.000000Z")}, Evidence: json.RawMessage(record.Payload)})
+		state, err := reader.Dependencies()
+		if err != nil {
+			return "", nil, errDependencyExport
+		}
+		if d, ok := decoded.Dependency.(dependency.DependenciesDeclared); ok {
+			for _, edge := range d.Edges {
+				complete = complete && sourceAuthorized(edge.Reference, scope, audience, sources)
+			}
+		}
+		if entry, ok := redactedEntry(kind, decoded.Dependency, state, policy); ok {
+			redacted = append(redacted, entry)
+		}
+		if p, ok := decoded.Dependency.(dependency.PolicyApplied); ok {
+			policy = p
+		}
+	}
+	if complete {
+		return audit.DependencyAudienceComplete, full, nil
+	}
+	return audit.DependencyAudienceRedacted, redacted, nil
+}
+
+// redactedEntry constructs new evidence from consumer-repository facts only.
+// Every other kind, including any added later, is withheld by default. policy
+// is the governing companion before event; state includes event.
+func redactedEntry(kind string, event dependency.Event, state dependency.State, policy dependency.PolicyApplied) (audit.DependencyEntry, bool) {
+	var evidence any
+	switch e := event.(type) {
+	case dependency.DependenciesDeclared:
+		evidence = audit.DependencyDeclarationEvidence{ChangeID: e.ChangeID, Revision: e.Revision, Held: e.Hold.Held, UnknownEditor: e.Hold.Unknown, Editors: ids(e.Hold.Editors), Redeclaration: e.Redeclaration}
+	case dependency.PolicyApplied:
+		evidence = audit.DependencyPolicyEvidence{Enabled: e.Enabled, SingleMaintainer: e.Policy.SingleMaintainer, GoverningCommit: e.Commit, PolicyDigest: e.Digest, Writers: len(e.Writers)}
+	case dependency.Acknowledged:
+		d, _ := state.Declaration(e.Alias)
+		evidence = audit.DependencyAcknowledgementEvidence{ChangeID: d.ChangeID, Writer: e.Writer.SubjectID, Exclusions: ids(e.Exclusions), GoverningCommit: e.GoverningCommit, PolicyDigest: e.PolicyDigest}
+	case dependency.SelfAcknowledged:
+		a := e.Acknowledged
+		d, _ := state.Declaration(a.Alias)
+		evidence = audit.DependencySelfAcknowledgementEvidence{ChangeID: d.ChangeID, Writer: a.Writer.SubjectID, Overridden: ids(e.Overridden), SingleMaintainer: policy.Enabled && policy.Policy.SingleMaintainer, GoverningCommit: a.GoverningCommit, PolicyDigest: a.PolicyDigest}
+	default:
+		return audit.DependencyEntry{}, false
+	}
+	return audit.DependencyEntry{Kind: kind, Evidence: evidence}, true
+}
+
+// DependencyExportBytes encodes DependencyExport as manifest and stream bytes.
+func DependencyExportBytes(j store.Journal, binding dependency.JournalInitialized, audience map[string][]dependency.Grant, sources map[string]dependency.SourceRecord) ([]byte, []byte, error) {
+	scope, entries, err := DependencyExport(j, binding, audience, sources)
+	if err != nil {
+		return nil, nil, err
+	}
+	key := audit.Key{Installation: j.Key.Installation, Repository: j.Key.Repository, Base: j.Key.BaseBranch, Lane: j.Key.Lane}
+	_, manifest, stream, err := audit.EncodeDependencyExport(key, scope, entries)
+	return manifest, stream, err
+}
+
+// sourceAuthorized requires the recorded revision-less source binding and a
+// complete recorded audience for that source repository.
+func sourceAuthorized(reference string, scope dependency.Scope, audience map[string][]dependency.Grant, sources map[string]dependency.SourceRecord) bool {
+	ref, err := dependency.ParseReference(reference, scope)
+	if err != nil {
+		return false
+	}
+	source, ok := sources[ref.ChangeID]
+	if !ok || source.Reference.Scope != ref.Scope || source.Reference.ChangeID != ref.ChangeID || source.Reference.Revision != 0 {
+		return false
+	}
+	return dependency.AuthorizedAudience(audience[reference], source.Alias.RepositoryID)
+}
+
+func ids(v []string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return slices.Clone(v)
 }
