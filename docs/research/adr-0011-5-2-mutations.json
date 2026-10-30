@@ -1,15 +1,15 @@
 {
-  "head": "be8713846a5b24fca3f7cbe2d57253c04b0ff92a",
+  "head": "6bdb0e51e973cc26b0fb7dc11149d85aa7992434",
   "command": "python3 scripts/verify-adr0011-slice5-2.py",
   "new": [
     {
       "row": "N1",
-      "leak": "wait-age starting at private eligibility in the generic view",
+      "leak": "wait-age starting at private eligibility in the generic view (no redaction guard)",
       "suite": "status",
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
-      "assertion": "dependencies_metamorphic_test.go:88: world 4 /v1/queues differs at byte 1167:"
+      "assertion": "dependencies_metamorphic_test.go:111: world 4 /v1/queues differs at byte 1167:"
     },
     {
       "row": "N2",
@@ -18,7 +18,7 @@
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
-      "assertion": "dependencies_metamorphic_test.go:51: private tail changed the export at byte 2028:"
+      "assertion": "dependencies_metamorphic_test.go:61: private tail changed the export at byte 2028:"
     },
     {
       "row": "N2b",
@@ -27,7 +27,7 @@
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
-      "assertion": "dependencies_metamorphic_test.go:88: world 4 export:pages:1 differs at byte 176:"
+      "assertion": "dependencies_metamorphic_test.go:111: world 4 export:pages:1 differs at byte 176:"
     },
     {
       "row": "N3",
@@ -36,7 +36,7 @@
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
-      "assertion": "dependencies_metamorphic_test.go:94: export does not verify: audit: dependency export integrity check failed"
+      "assertion": "dependencies_metamorphic_test.go:117: export does not verify: audit: dependency export integrity check failed"
     },
     {
       "row": "N3b",
@@ -44,8 +44,8 @@
       "suite": "status",
       "caught": true,
       "invalid": false,
-      "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1/self-ack",
-      "assertion": "dependencies_metamorphic_test.go:88: world 4 export:manifest differs at byte 99:"
+      "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1/consumer",
+      "assertion": "dependencies_metamorphic_test.go:111: world 4 export:manifest differs at byte 99:"
     },
     {
       "row": "N4",
@@ -53,8 +53,8 @@
       "suite": "status",
       "caught": true,
       "invalid": false,
-      "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1/self-ack",
-      "assertion": "dependencies_metamorphic_test.go:88: world 4 /v1/queues/acme/client/main/changes/chg1_3348793f833f0d121afb78d855ba9de24e58dc824484d5cc74bcb8bc506c22f8 differs at byte 281:"
+      "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1/consumer",
+      "assertion": "dependencies_metamorphic_test.go:111: world 4 /v1/queues/acme/client/main/changes/chg1_3348793f833f0d121afb78d855ba9de24e58dc824484d5cc74bcb8bc506c22f8 differs at byte 281:"
     },
     {
       "row": "N5",
@@ -62,8 +62,8 @@
       "suite": "status",
       "caught": true,
       "invalid": false,
-      "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1/self-ack",
-      "assertion": "dependencies_metamorphic_test.go:88: world 4 /v1/queues differs at byte 1167:"
+      "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1/consumer",
+      "assertion": "dependencies_metamorphic_test.go:111: world 4 /v1/queues differs at byte 1167:"
     },
     {
       "row": "N6",
@@ -72,7 +72,79 @@
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
-      "assertion": "dependencies_metamorphic_test.go:51: private tail changed the export at byte 11133:"
+      "assertion": "dependencies_metamorphic_test.go:61: private tail changed the export at byte 11133:"
+    },
+    {
+      "row": "N7",
+      "leak": "wait-age on a held, queued, edge-free view while the queue is redacted (per-view guard only)",
+      "suite": "status",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1/consumer",
+      "assertion": "dependencies_metamorphic_test.go:78: held view: 200 &{Diagnostics:[] Code:dependencies Text:Dependency declaration requires acknowledgement Details:[dependency-declaration-changed an authenticated writer may self-acknowledge under the singl"
+    },
+    {
+      "row": "N7b",
+      "leak": "N7 with the held-view absence assertion removed (byte differential alone)",
+      "suite": "status",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1/consumer",
+      "assertion": "dependencies_metamorphic_test.go:111: world 4 /v1/queues differs at byte 3300:"
+    },
+    {
+      "row": "N8",
+      "leak": "wait clock started by another change's private read before the change declares",
+      "suite": "unit",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyWaitAgeOwnHistory",
+      "assertion": "dependency_selfack_test.go:158: complete audience: redacted=false &{Since:2026-01-01 00:20:00 +0000 UTC Threshold:1h0m0s}"
+    },
+    {
+      "row": "N9",
+      "leak": "wait-age line appended past the 8-line summary cap",
+      "suite": "unit",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyWaitAgeKeepsDetailBound",
+      "assertion": "dependency_selfack_test.go:78: 8 details: 9 lines [line 0 line 1 line 2 line 3 line 4 line 5 line 6 line 7 dependency wait older than 1h0m0s (non-actionable; for operator review)]"
+    },
+    {
+      "row": "N10a",
+      "leak": "redacted declaration revision derived from the edge count",
+      "suite": "reflect",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyExportReflectInputs/declaration",
+      "assertion": "dependency_export_test.go:281: allowlisted input .Revision does not reach the projection: {\"change_id\":\"filled:.ChangeID\",\"revision\":1,\"held\":true,\"unknown_editor\":true,\"editors\":[\"filled:.Hold.Editors[]\"],\"redeclaration\":true}"
+    },
+    {
+      "row": "N10b",
+      "leak": "redacted redeclaration flag derived from the edges",
+      "suite": "reflect",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyExportReflectInputs/declaration",
+      "assertion": "dependency_export_test.go:281: allowlisted input .Redeclaration does not reach the projection: {\"change_id\":\"filled:.ChangeID\",\"revision\":7,\"held\":true,\"unknown_editor\":true,\"editors\":[\"filled:.Hold.Editors[]\"],\"redeclaration\":true}"
+    },
+    {
+      "row": "N10c",
+      "leak": "redacted hold flag derived from the edge count",
+      "suite": "reflect",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyExportReflectInputs/declaration",
+      "assertion": "dependency_export_test.go:279: non-allowlisted input .Edges changed the projection (cleared=true):"
+    },
+    {
+      "row": "N11",
+      "leak": "whole records file capped at MaxBytes by the scoped verifier",
+      "suite": "audit",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyExportVerifiesLargeStream",
+      "assertion": "dependency_export_test.go:221: {  0 {   }    0 } 0 audit: dependency export integrity check failed"
     }
   ],
   "adr_0011_5_1_round5": [
@@ -83,7 +155,7 @@
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPrivacy/closed-planned/provenance-true/private-first-true/cobatch-true/pr-2/depth-4",
-      "assertion": "dependencies_metamorphic_test.go:88: world 7 /v1/queues/acme/client/main/changes/chg1_c24cf29fee718e9c67af1e4caa748ec3acdc4464b98a2673d86c3e16dbf1f10b?revision=1 differs at byte 710:"
+      "assertion": "dependencies_metamorphic_test.go:111: world 7 /v1/queues/acme/client/main/changes/chg1_c24cf29fee718e9c67af1e4caa748ec3acdc4464b98a2673d86c3e16dbf1f10b?revision=1 differs at byte 710:"
     },
     {
       "row": "2",
@@ -101,7 +173,7 @@
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
-      "assertion": "dependencies_metamorphic_test.go:88: world 5 /v1/queues differs at byte 1064:"
+      "assertion": "dependencies_metamorphic_test.go:111: world 5 /v1/queues differs at byte 1064:"
     },
     {
       "row": "4",
@@ -110,7 +182,7 @@
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
-      "assertion": "dependencies_metamorphic_test.go:88: world 4 /v1/queues differs at byte 2594:"
+      "assertion": "dependencies_metamorphic_test.go:111: world 4 /v1/queues differs at byte 2594:"
     },
     {
       "row": "5",
@@ -137,7 +209,7 @@
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
-      "assertion": "dependencies_metamorphic_test.go:88: world 4 /v1/queues differs at byte 2039:"
+      "assertion": "dependencies_metamorphic_test.go:111: world 4 /v1/queues differs at byte 2039:"
     },
     {
       "row": "8",
@@ -146,7 +218,7 @@
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPrivacy/landing/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
-      "assertion": "dependencies_metamorphic_test.go:88: world 4 /v1/queues differs at byte 241:"
+      "assertion": "dependencies_metamorphic_test.go:111: world 4 /v1/queues differs at byte 241:"
     },
     {
       "row": "9",
@@ -155,7 +227,7 @@
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPrivacy/landing/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
-      "assertion": "dependencies_metamorphic_test.go:88: world 4 /v1/queues differs at byte 298:"
+      "assertion": "dependencies_metamorphic_test.go:111: world 4 /v1/queues differs at byte 298:"
     },
     {
       "row": "9",
@@ -182,7 +254,7 @@
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPrivacy/ci-passed/provenance-false/private-first-false/cobatch-true/pr-3/depth-1",
-      "assertion": "dependencies_metamorphic_test.go:88: world 4 /v1/queues/acme/client/main/changes/chg1_a826a158e570fd462096d86f90b051f3c5e83b50fb7486ab3f5973dcec41134b?revision=1 differs at byte 710:"
+      "assertion": "dependencies_metamorphic_test.go:111: world 4 /v1/queues/acme/client/main/changes/chg1_a826a158e570fd462096d86f90b051f3c5e83b50fb7486ab3f5973dcec41134b?revision=1 differs at byte 710:"
     }
   ]
 }

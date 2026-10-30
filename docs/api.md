@@ -737,12 +737,14 @@ v1 fields to the `dependency` object, all omitted when empty:
   completed self-acknowledgement when the repository records more than one
   writer. Warnings never change precedence or blocking.
 - `wait_age`: `{since, older_than}`, the non-actionable "dependency wait older
-  than N" flag. It appears only in an authorized, blocking view and only when
-  the caller configures a threshold. It never appears in the generic view,
-  because a wait can start or end at a private source transition.
+  than N" flag. It appears only in a blocking view, only when the caller
+  configures a threshold, and only while the whole queue is unredacted for the
+  reader. A wait can start or end at a private source transition, and private
+  reads delay every later record, so in a redacted queue even a public hold's
+  wait timing is withheld. A change's wait starts at its own declaration.
 
-Authorized `details` are bounded to 8 lines; the last line then states how many
-are omitted. The complete evidence is in the scoped audit export below. Opted-in
+Authorized `details` are bounded to 8 lines, including the wait-age line; the
+last line then states how many are omitted. The complete evidence is in the scoped audit export below. Opted-in
 holds also name the self-acknowledgement option. Generic views are unchanged.
 
 The scoped dependency audit export is a library contract, not a new route. Its
