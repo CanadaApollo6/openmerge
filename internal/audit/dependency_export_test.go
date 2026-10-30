@@ -63,11 +63,15 @@ func TestDependencyExportStrictRoundTrip(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimSuffix(string(stream), "\n"), "\n")
 	for name, edit := range map[string]func() ([]byte, []byte){
-		"flipped byte":     func() ([]byte, []byte) { return manifest, bytes.Replace(stream, []byte(`"11"`), []byte(`"12"`), 1) },
-		"manifest digest":  func() ([]byte, []byte) { return bytes.Replace(manifest, []byte(`"count":3`), []byte(`"count":2`), 1), stream },
+		"flipped byte": func() ([]byte, []byte) { return manifest, bytes.Replace(stream, []byte(`"11"`), []byte(`"12"`), 1) },
+		"manifest digest": func() ([]byte, []byte) {
+			return bytes.Replace(manifest, []byte(`"count":3`), []byte(`"count":2`), 1), stream
+		},
 		"unknown manifest": func() ([]byte, []byte) { return bytes.Replace(manifest, []byte(`{`), []byte(`{"extra":1,`), 1), stream },
-		"reordered":        func() ([]byte, []byte) { return rechain(t, manifest, []string{lines[1], lines[0], lines[2]}, DependencyAudienceRedacted) },
-		"dropped":          func() ([]byte, []byte) { return rechain(t, manifest, lines[1:], DependencyAudienceRedacted) },
+		"reordered": func() ([]byte, []byte) {
+			return rechain(t, manifest, []string{lines[1], lines[0], lines[2]}, DependencyAudienceRedacted)
+		},
+		"dropped": func() ([]byte, []byte) { return rechain(t, manifest, lines[1:], DependencyAudienceRedacted) },
 		"unknown evidence field": func() ([]byte, []byte) {
 			return rechain(t, manifest, []string{strings.Replace(lines[0], `{"enabled"`, `{"aaa_secret":"x","enabled"`, 1), lines[1], lines[2]}, DependencyAudienceRedacted)
 		},
