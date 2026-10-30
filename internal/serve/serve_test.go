@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -63,12 +64,50 @@ func database(t *testing.T) *store.Store {
 	return db
 }
 
+// Each scratch schema holds one admin connection plus a store pool capped at
+// testPoolMaxConns (pgx's default on CI's 2-4 core runners). Bound how many
+// top-level tests may hold schemas at once, independently of -parallel and the
+// host CPU count: the shared test database allows 300 connections and CI's
+// service container the default 100. A top-level test and its subtests share
+// one slot, so a fixture never waits on a slot its own test tree holds.
+const (
+	testSchemaSlots  = 16
+	testPoolMaxConns = "4"
+)
+
+var testSchemas = struct {
+	sync.Mutex
+	held  map[string]int
+	slots chan struct{}
+}{held: map[string]int{}, slots: make(chan struct{}, testSchemaSlots)}
+
+func holdTestSchemaSlot(t *testing.T) {
+	root, _, _ := strings.Cut(t.Name(), "/")
+	testSchemas.Lock()
+	first := testSchemas.held[root] == 0
+	testSchemas.held[root]++
+	testSchemas.Unlock()
+	if first {
+		testSchemas.slots <- struct{}{}
+	}
+	// Registered before the schema cleanup, so the slot outlives DROP SCHEMA.
+	t.Cleanup(func() {
+		testSchemas.Lock()
+		defer testSchemas.Unlock()
+		if testSchemas.held[root]--; testSchemas.held[root] == 0 {
+			delete(testSchemas.held, root)
+			<-testSchemas.slots
+		}
+	})
+}
+
 func databaseConnection(t *testing.T) (*store.Store, *pgx.Conn) {
 	t.Helper()
 	raw := os.Getenv("OPENMERGE_TEST_DATABASE_URL")
 	if raw == "" {
 		t.Skip("run make db and set OPENMERGE_TEST_DATABASE_URL")
 	}
+	holdTestSchemaSlot(t)
 	conn, err := pgx.Connect(t.Context(), raw)
 	must(t, err)
 	var token [12]byte
@@ -86,6 +125,7 @@ func databaseConnection(t *testing.T) (*store.Store, *pgx.Conn) {
 	must(t, err)
 	query := u.Query()
 	query.Set("search_path", schema)
+	query.Set("pool_max_conns", testPoolMaxConns)
 	u.RawQuery = query.Encode()
 	db, err := store.Open(t.Context(), u.String(), store.WithTestLockScope(schema))
 	must(t, err)
