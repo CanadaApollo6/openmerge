@@ -32,33 +32,28 @@ type MetamorphicCase struct {
 	Cobatch      bool
 	Target       int
 	Depth        int
-	// Consumer, when set, opts the queue into single-maintainer
-	// self-acknowledgement with two writers and, after the public transition
-	// and private-dependent prefixes, records public consumer-repository history
-	// of that shape for ConsumerPR.
-	Consumer string
+	// Consumer opts the queue into single-maintainer self-acknowledgement with
+	// two writers and, after the public transition and private-dependent
+	// prefixes, records public consumer-repository history: each consumer
+	// change declares an edge, then author 11 removes it (a loosening hold).
+	// SelfAckPR self-acknowledges; HeldPR is queued and stays held, so an
+	// authorized view has a running wait; AckPR is acknowledged independently
+	// by writer 22. A landing start also records a dependency decision for
+	// every member without declared edges.
+	Consumer bool
 }
 
-// Consumer-repository history shapes. Each declares an edge for ConsumerPR,
-// then removes it as author 11 (a loosening hold).
+// The consumer changes. SelfAckPR and AckPR are observed and never queued.
 const (
-	// ConsumerSelfAck: the observed, never-queued change self-acknowledges.
-	ConsumerSelfAck = "self-ack"
-	// ConsumerHeld: the change is queued and stays held, never acknowledged,
-	// so an authorized view has a running dependency wait.
-	ConsumerHeld = "held"
-	// ConsumerAck: writer 22 acknowledges independently, and a landing start
-	// records a dependency decision for every member without declared edges.
-	ConsumerAck = "ack"
+	SelfAckPR = 7
+	HeldPR    = 8
+	AckPR     = 9
 )
-
-// ConsumerPR is the change that carries the consumer-repository history.
-const ConsumerPR = 7
 
 func (c MetamorphicCase) String() string {
 	name := fmt.Sprintf("%s/provenance-%t/private-first-%t/cobatch-%t/pr-%d/depth-%d", c.Transition, c.Provenance, c.PrivateFirst, c.Cobatch, c.Target, c.Depth)
-	if c.Consumer != "" {
-		name += "/" + c.Consumer
+	if c.Consumer {
+		name += "/consumer"
 	}
 	return name
 }
@@ -72,39 +67,35 @@ func MetamorphicCases(short bool) []MetamorphicCase {
 		// database-backed serve test, including a CI outcome.
 		return []MetamorphicCase{
 			// Pending dequeue batch fields, check bypass and private provenance.
-			{"requested", true, false, true, 3, 1, ""},
+			{"requested", true, false, true, 3, 1, false},
 			// Paused batch-derived detail and co-batched dependency-changed reasons.
-			{"paused", true, true, true, 3, 4, ""},
+			{"paused", true, true, true, 3, 4, false},
 			// Passing CI: landing-preflight gate against an unbatched world.
-			{"ci-passed", false, false, true, 3, 1, ""},
+			{"ci-passed", false, false, true, 3, 1, false},
 			// Unconfirmed landing: status, gate and batch metadata.
-			{"landing", true, false, true, 3, 1, ""},
+			{"landing", true, false, true, 3, 1, false},
 			// Change-left-queue invalidation, dequeue and retained departed checks.
-			{"closed-planned", true, true, true, 2, 4, ""},
+			{"closed-planned", true, true, true, 2, 4, false},
 			// Building dependent predecessor with unbatched independent followers.
-			{"head", false, true, false, 1, 1, ""},
-			{"closed", false, false, false, 3, 4, ""},
-			{"retargeted", true, false, true, 2, 1, ""},
-			{"head-planned", false, false, true, 3, 1, ""},
-			{"requested-planned", false, true, false, 3, 1, ""},
-			{"retargeted-planned", true, false, true, 1, 4, ""},
+			{"head", false, true, false, 1, 1, false},
+			{"closed", false, false, false, 3, 4, false},
+			{"retargeted", true, false, true, 2, 1, false},
+			{"head-planned", false, false, true, 3, 1, false},
+			{"requested-planned", false, true, false, 3, 1, false},
+			{"retargeted-planned", true, false, true, 1, 4, false},
 			// A failed multi-PR batch: provisional in a chain, bisected alone.
-			{"ci-failed", false, false, true, 2, 4, ""},
-			{"ci-failed", true, false, true, 1, 1, ""},
+			{"ci-failed", false, false, true, 2, 4, false},
+			{"ci-failed", true, false, true, 1, 1, false},
 			// A failed retry holds unbatched followers at predecessor-checks.
-			{"check-retry", true, false, false, 3, 1, ""},
-			{"landed", false, false, false, 2, 4, ""},
-			// Self-acknowledgement after private-dependent prefixes: journal IDs,
-			// recording times, positions and the warning must stay public.
-			{"requested", true, false, true, 3, 1, ConsumerSelfAck},
-			{"paused", true, true, true, 3, 4, ConsumerSelfAck},
-			{"landed", false, false, false, 2, 4, ConsumerSelfAck},
-			// A queued change still held after its last edge is removed: its
-			// view is not generic, but its wait timing is private.
-			{"requested", true, false, true, 3, 1, ConsumerHeld},
-			{"landed", false, false, false, 2, 4, ConsumerHeld},
-			// Independent acknowledgement and dependency decisions.
-			{"landed", false, false, true, 3, 1, ConsumerAck},
+			{"check-retry", true, false, false, 3, 1, false},
+			{"landed", false, false, false, 2, 4, false},
+			// Consumer history after private-dependent prefixes: journal IDs,
+			// recording times, positions, the warning and a held change's wait
+			// timing must stay public. The landed case co-batches independent
+			// members so that landing records dependency decisions.
+			{"requested", true, false, true, 3, 1, true},
+			{"paused", true, true, true, 3, 4, true},
+			{"landed", false, false, true, 2, 4, true},
 		}
 	}
 	var cases []MetamorphicCase
@@ -114,10 +105,10 @@ func MetamorphicCases(short bool) []MetamorphicCase {
 				for _, cobatch := range []bool{false, true} {
 					for _, target := range []int{1, 2, 3} {
 						for _, depth := range []int{1, 4} {
-							cases = append(cases, MetamorphicCase{transition, provenance, privateFirst, cobatch, target, depth, ""})
+							cases = append(cases, MetamorphicCase{transition, provenance, privateFirst, cobatch, target, depth, false})
 							// Consumer history is independent of the target.
-							if consumer := map[int]string{1: ConsumerHeld, 2: ConsumerSelfAck, 3: ConsumerAck}[target]; consumer != "" {
-								cases = append(cases, MetamorphicCase{transition, provenance, privateFirst, cobatch, target, depth, consumer})
+							if target == 2 {
+								cases = append(cases, MetamorphicCase{transition, provenance, privateFirst, cobatch, target, depth, true})
 							}
 						}
 					}
@@ -151,8 +142,8 @@ type MetamorphicWorld struct {
 	Uncompared string
 	// Tail is a private-only observation recorded after the journal.
 	Tail []store.JournalEvent
-	// ConsumerPR carries the case's consumer history, or is zero.
-	ConsumerPR int
+	// ConsumerPRs carry the case's consumer history, if any.
+	ConsumerPRs []int
 }
 
 type metamorphicWorld struct {
@@ -203,7 +194,7 @@ func Metamorphic(t testing.TB, c MetamorphicCase, w int) MetamorphicWorld {
 	if v.rebuilt {
 		tested = 200
 	}
-	j, binding, source, grant, prs := multiJournal(t, v.code, v.phase, c.Depth, c.Cobatch, tested, c.Consumer != "")
+	j, binding, source, grant, prs := multiJournal(t, v.code, v.phase, c.Depth, c.Cobatch, tested, c.Consumer)
 	b := replay(t, &j, binding)
 	b.grant = grant
 	// Every private read delays later records by a world-dependent amount, so
@@ -280,7 +271,7 @@ func Metamorphic(t testing.TB, c MetamorphicCase, w int) MetamorphicWorld {
 			b.add(queue.ChecksObserved{BatchID: batch.ID, TestedSHA: batch.TestedSHA, Runs: runs("success"), Terminal: true, Success: true, OriginalDeadline: at.Add(time.Hour), Timeout: time.Hour})
 			b.add(queue.ChecksCompleted{TestedSHA: batch.TestedSHA, Success: true})
 			start := b.add(queue.LandingStarted{BatchID: batch.ID, AttemptID: "attempt-" + batch.ID, FenceToken: b.reader.Queue.Fence, At: at})
-			if c.Consumer == ConsumerAck {
+			if c.Consumer {
 				b.decide(batch.ID, start)
 			}
 			if transition == "landed" {
@@ -317,16 +308,11 @@ func Metamorphic(t testing.TB, c MetamorphicCase, w int) MetamorphicWorld {
 	if !c.PrivateFirst {
 		b.privateObservation(metamorphicNext(c, w))
 	}
-	switch c.Consumer {
-	case ConsumerSelfAck:
-		b.selfAcknowledge(ConsumerPR)
-	case ConsumerHeld:
-		b.declareHeld(ConsumerPR, true)
-	case ConsumerAck:
-		b.acknowledge(ConsumerPR)
-	}
-	if c.Consumer != "" {
-		world.ConsumerPR = ConsumerPR
+	if c.Consumer {
+		b.selfAcknowledge(SelfAckPR)
+		b.declareHeld(HeldPR, true)
+		b.acknowledge(AckPR)
+		world.ConsumerPRs = []int{SelfAckPR, HeldPR, AckPR}
 	}
 	world.Group, world.Uncompared = metamorphicSettlement(c, j, b.reader.Queue, prs, merged)
 	world.Journal, world.Source, world.Grant = j, source, grant
