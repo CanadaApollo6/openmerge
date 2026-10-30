@@ -34,9 +34,7 @@ type MetamorphicCase struct {
 	Depth        int
 	// SelfAck opts the queue into single-maintainer self-acknowledgement with
 	// two writers and, after the public transition, records a completed public
-	// self-acknowledgement for SelfAckPR. Private reads then also advance the
-	// recording clock by a world-dependent delay, so every later public record
-	// has a different journal ID and recording time in each world.
+	// self-acknowledgement for SelfAckPR, after private-dependent prefixes.
 	SelfAck bool
 }
 
@@ -189,9 +187,9 @@ func Metamorphic(t testing.TB, c MetamorphicCase, w int) MetamorphicWorld {
 	j, binding, source, grant, prs := multiJournal(t, v.code, v.phase, c.Depth, c.Cobatch, tested, c.SelfAck)
 	b := replay(t, &j, binding)
 	b.grant = grant
-	if c.SelfAck {
-		b.delay = time.Duration(w+1) * time.Minute
-	}
+	// Every private read delays later records by a world-dependent amount, so
+	// public records differ in recording time as well as journal ID.
+	b.delay = time.Duration(w+1) * time.Minute
 	at := j.Events[0].RecordedAt
 	if v.rebuilt {
 		b.privateObservation("landed", "dependency-landed")
