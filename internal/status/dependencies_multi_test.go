@@ -21,6 +21,9 @@ func TestDependencyMultiQueuePrivacyGoldens(t *testing.T) {
 	for _, depth := range []int{1, 4} {
 		for _, cobatch := range []bool{false, true} {
 			t.Run(fmt.Sprintf("depth-%d/cobatch-%t", depth, cobatch), func(t *testing.T) {
+				// Each layout owns its baseline and golden; fixtures share only
+				// read-only globals.
+				t.Parallel()
 				baseline := map[string][]byte{}
 				for _, code := range codes {
 					for _, phase := range []string{"queued", "building", "testing", "invalidating", "discarded"} {

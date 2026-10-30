@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,93 +33,105 @@ func (s metamorphicPolicySource) QueuePolicy(store.QueueKey) (queue.Config, bool
 
 func TestDependencyMetamorphicPrivacy(t *testing.T) {
 	// verified collects the kinds of every strictly verified complete export.
+	// The cases run in parallel; mu guards verified and ran.
+	var mu sync.Mutex
 	verified := map[string]bool{}
 	consumers, ran := 0, 0
-	for _, c := range statusfixture.MetamorphicCases(testing.Short()) {
-		if c.Consumer {
-			consumers++
-		}
-		t.Run(c.String(), func(t *testing.T) {
+	// The wrapper returns only after every parallel case, so the closing kinds
+	// check sees all of them.
+	t.Run("cases", func(t *testing.T) {
+		for _, c := range statusfixture.MetamorphicCases(testing.Short()) {
 			if c.Consumer {
-				ran++
+				consumers++
 			}
-			baseline := map[string][]byte{}
-			var worlds []statusfixture.MetamorphicWorld
-			for _, world := range statusfixture.MetamorphicWorlds(testing.Short()) {
-				m := statusfixture.Metamorphic(t, c, world)
-				worlds = append(worlds, m)
-				// Any authorized wait this old would be flagged; the unauthorized
-				// audience must never see it.
-				j, err := ProjectDependenciesAt(m.Journal, m.Binding, nil, statusfixture.StatusSources(), metamorphicClock(m.Journal))
-				if err != nil {
-					t.Fatal(err)
-				}
-				h := Handler(metamorphicPolicySource{dependencyRenderSource{journal: j}, statusfixture.MetamorphicPolicy(c.Depth)}, []store.QueueKey{j.Key}, "", nil)
-				paths := []string{"/v1/queues", "/v1/queues/acme/client/main"}
-				// A private-only tail replays the journal again; -short checks it in
-				// one world per case, the full product in every world.
-				tail := !testing.Short() || len(worlds) == 1
-				outputs, verify := metamorphicExport(t, m, tail)
-				// The complete-audience export replays and strictly decodes every
-				// record twice; -short checks it in every world of the consumer
-				// cases, which span every exported kind, the full product in all.
-				if !testing.Short() || c.Consumer {
-					for _, kind := range requireCompleteExport(t, c, m, world) {
-						verified[kind] = true
-					}
-				}
-				prs := slices.Clone(m.PRs)
+			t.Run(c.String(), func(t *testing.T) {
+				t.Parallel()
 				if c.Consumer {
-					// AckPR has no dependency view: the export comparisons cover
-					// its acknowledgement.
-					prs = append(prs, statusfixture.SelfAckPR, statusfixture.HeldPR)
+					mu.Lock()
+					ran++
+					mu.Unlock()
 				}
-				if c.Consumer {
-					requireSelfAckView(t, h, statusfixture.SelfAckPR)
-					requireHeldWait(t, h, m, len(worlds) == 1)
-				}
-				for _, pr := range prs {
-					id, err := j.Key.ChangeID(pr)
+				baseline := map[string][]byte{}
+				var worlds []statusfixture.MetamorphicWorld
+				for _, world := range statusfixture.MetamorphicWorlds(testing.Short()) {
+					m := statusfixture.Metamorphic(t, c, world)
+					worlds = append(worlds, m)
+					// Any authorized wait this old would be flagged; the unauthorized
+					// audience must never see it.
+					j, err := ProjectDependenciesAt(m.Journal, m.Binding, nil, statusfixture.StatusSources(), metamorphicClock(m.Journal))
 					if err != nil {
 						t.Fatal(err)
 					}
-					cp := changePath(j.Key, string(id))
-					paths = append(paths, fmt.Sprintf("/v1/queues/acme/client/main/prs/%d?events=100", pr), cp, cp+"?revision=1", cp+"/decisions?limit=1&after=0")
-					for _, audience := range []string{"reviewer", "agent", "operator"} {
-						paths = append(paths, cp+"/brief?audience="+audience, cp+"/brief?audience="+audience+"&revision=1")
-					}
-				}
-				for _, path := range paths {
-					w := httptest.NewRecorder()
-					h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
-					wantCode := 200
-					if strings.Contains(path, "/decisions") {
-						wantCode = 503
-					}
-					if w.Code != wantCode {
-						t.Fatalf("%s returned %d: %s", path, w.Code, w.Body)
-					}
-					outputs[path] = append([]byte(fmt.Sprintf("%d\n", w.Code)), w.Body.Bytes()...)
-				}
-				for _, path := range slices.Sorted(maps.Keys(outputs)) {
-					got := outputs[path]
-					key := m.Group + " " + path
-					if !m.Compared() {
-						continue
-					}
-					if want, ok := baseline[key]; ok {
-						if !bytes.Equal(want, got) {
-							t.Fatalf("world %d %s differs %s", world, path, statusfixture.Diff(want, got))
+					h := Handler(metamorphicPolicySource{dependencyRenderSource{journal: j}, statusfixture.MetamorphicPolicy(c.Depth)}, []store.QueueKey{j.Key}, "", nil)
+					paths := []string{"/v1/queues", "/v1/queues/acme/client/main"}
+					// A private-only tail replays the journal again; -short checks it in
+					// one world per case, the full product in every world.
+					tail := !testing.Short() || len(worlds) == 1
+					outputs, verify := metamorphicExport(t, m, tail)
+					// The complete-audience export replays and strictly decodes every
+					// record twice; -short checks it in every world of the consumer
+					// cases, which span every exported kind, the full product in all.
+					if !testing.Short() || c.Consumer {
+						kinds := requireCompleteExport(t, c, m, world)
+						mu.Lock()
+						for _, kind := range kinds {
+							verified[kind] = true
 						}
-					} else {
-						baseline[key] = bytes.Clone(got)
+						mu.Unlock()
 					}
+					prs := slices.Clone(m.PRs)
+					if c.Consumer {
+						// AckPR has no dependency view: the export comparisons cover
+						// its acknowledgement.
+						prs = append(prs, statusfixture.SelfAckPR, statusfixture.HeldPR)
+					}
+					if c.Consumer {
+						requireSelfAckView(t, h, statusfixture.SelfAckPR)
+						requireHeldWait(t, h, m, len(worlds) == 1)
+					}
+					for _, pr := range prs {
+						id, err := j.Key.ChangeID(pr)
+						if err != nil {
+							t.Fatal(err)
+						}
+						cp := changePath(j.Key, string(id))
+						paths = append(paths, fmt.Sprintf("/v1/queues/acme/client/main/prs/%d?events=100", pr), cp, cp+"?revision=1", cp+"/decisions?limit=1&after=0")
+						for _, audience := range []string{"reviewer", "agent", "operator"} {
+							paths = append(paths, cp+"/brief?audience="+audience, cp+"/brief?audience="+audience+"&revision=1")
+						}
+					}
+					for _, path := range paths {
+						w := httptest.NewRecorder()
+						h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+						wantCode := 200
+						if strings.Contains(path, "/decisions") {
+							wantCode = 503
+						}
+						if w.Code != wantCode {
+							t.Fatalf("%s returned %d: %s", path, w.Code, w.Body)
+						}
+						outputs[path] = append([]byte(fmt.Sprintf("%d\n", w.Code)), w.Body.Bytes()...)
+					}
+					for _, path := range slices.Sorted(maps.Keys(outputs)) {
+						got := outputs[path]
+						key := m.Group + " " + path
+						if !m.Compared() {
+							continue
+						}
+						if want, ok := baseline[key]; ok {
+							if !bytes.Equal(want, got) {
+								t.Fatalf("world %d %s differs %s", world, path, statusfixture.Diff(want, got))
+							}
+						} else {
+							baseline[key] = bytes.Clone(got)
+						}
+					}
+					verify()
 				}
-				verify()
-			}
-			statusfixture.RequireComparedWorlds(t, c, worlds)
-		})
-	}
+				statusfixture.RequireComparedWorlds(t, c, worlds)
+			})
+		}
+	})
 	if ran == consumers {
 		for _, kind := range []string{"journal", "policy", "declaration", "acknowledgement", "self_acknowledgement", "observation", "diagnostic", "composition", "decision", "invalidation"} {
 			if !verified[kind] {

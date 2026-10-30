@@ -258,6 +258,11 @@ func decodeDependencyExport(manifest []byte, stream io.Reader) ([]DependencyReco
 		if err == io.EOF && len(line) == 0 {
 			break
 		}
+		// A record past the manifest's count is rejected before it is decoded,
+		// so a crafted stream cannot make the verifier buffer unbounded records.
+		if int64(len(out)) >= m.Count {
+			return nil, ErrDependencyExport
+		}
 		raw, ok := bytes.CutSuffix(line, []byte("\n"))
 		var r DependencyRecord
 		if err != nil && err != io.EOF || !ok || !canonicalLine(raw) || strict(raw, &r) != nil || r.Position != int64(len(out)+1) || r.PreviousSHA256 != previous {

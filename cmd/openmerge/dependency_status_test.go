@@ -134,6 +134,8 @@ func (s metamorphicCLIPolicy) QueuePolicy(store.QueueKey) (queue.Config, bool) {
 func TestDependencyMetamorphicCLI(t *testing.T) {
 	for _, c := range statusfixture.MetamorphicCases(testing.Short()) {
 		t.Run(c.String(), func(t *testing.T) {
+			// Each case builds its own fixtures and handler; printStatus is pure.
+			t.Parallel()
 			baseline := map[string][]byte{}
 			var worlds []statusfixture.MetamorphicWorld
 			for _, world := range statusfixture.MetamorphicWorlds(testing.Short()) {

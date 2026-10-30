@@ -1,0 +1,108 @@
+check-retry/provenance-false/private-first-true/cobatch-false/pr-1/depth-1	a private read before the transition discarded every batch
+check-retry/provenance-false/private-first-true/cobatch-false/pr-2/depth-4	a private read before the transition discarded every batch
+check-retry/provenance-false/private-first-true/cobatch-false/pr-2/depth-4/consumer	a private read before the transition discarded every batch
+check-retry/provenance-false/private-first-true/cobatch-false/pr-3/depth-1	a private read before the transition discarded every batch
+check-retry/provenance-false/private-first-true/cobatch-true/pr-1/depth-1	a private read before the transition discarded every batch
+check-retry/provenance-false/private-first-true/cobatch-true/pr-3/depth-1	a private read before the transition discarded every batch
+check-retry/provenance-false/private-first-true/cobatch-true/pr-3/depth-4	a private read before the transition discarded every batch
+check-retry/provenance-true/private-first-true/cobatch-false/pr-2/depth-1	a private read before the transition discarded every batch
+check-retry/provenance-true/private-first-true/cobatch-false/pr-2/depth-1/consumer	a private read before the transition discarded every batch
+check-retry/provenance-true/private-first-true/cobatch-false/pr-2/depth-4	a private read before the transition discarded every batch
+check-retry/provenance-true/private-first-true/cobatch-false/pr-2/depth-4/consumer	a private read before the transition discarded every batch
+check-retry/provenance-true/private-first-true/cobatch-false/pr-3/depth-1	a private read before the transition discarded every batch
+check-retry/provenance-true/private-first-true/cobatch-true/pr-1/depth-1	a private read before the transition discarded every batch
+check-retry/provenance-true/private-first-true/cobatch-true/pr-2/depth-4	a private read before the transition discarded every batch
+check-retry/provenance-true/private-first-true/cobatch-true/pr-2/depth-4/consumer	a private read before the transition discarded every batch
+check-retry/provenance-true/private-first-true/cobatch-true/pr-3/depth-1	a private read before the transition discarded every batch
+ci-failed/provenance-false/private-first-false/cobatch-false/pr-1/depth-1	PR 2 left the queue (checks-failed); PR 2 left the queue (checks-failed)
+ci-failed/provenance-false/private-first-false/cobatch-false/pr-2/depth-1	PR 2 left the queue (checks-failed); PR 2 left the queue (checks-failed)
+ci-failed/provenance-false/private-first-false/cobatch-false/pr-2/depth-1/consumer	PR 2 left the queue (checks-failed); PR 2 left the queue (checks-failed)
+ci-failed/provenance-false/private-first-false/cobatch-false/pr-3/depth-1	PR 2 left the queue (checks-failed); PR 2 left the queue (checks-failed)
+ci-failed/provenance-false/private-first-true/cobatch-false/pr-1/depth-1	a private read before the transition discarded every batch
+ci-failed/provenance-false/private-first-true/cobatch-false/pr-1/depth-4	a private read before the transition discarded every batch
+ci-failed/provenance-false/private-first-true/cobatch-false/pr-2/depth-1	a private read before the transition discarded every batch
+ci-failed/provenance-false/private-first-true/cobatch-false/pr-2/depth-1/consumer	a private read before the transition discarded every batch
+ci-failed/provenance-false/private-first-true/cobatch-false/pr-3/depth-1	PR 2 left the queue (checks-failed)
+ci-failed/provenance-false/private-first-true/cobatch-false/pr-3/depth-4	a private read before the transition discarded every batch
+ci-failed/provenance-false/private-first-true/cobatch-true/pr-1/depth-4	a private read before the transition discarded every batch
+ci-failed/provenance-false/private-first-true/cobatch-true/pr-2/depth-1	a private read before the transition discarded every batch
+ci-failed/provenance-false/private-first-true/cobatch-true/pr-2/depth-1/consumer	a private read before the transition discarded every batch
+ci-failed/provenance-true/private-first-false/cobatch-false/pr-1/depth-1	PR 2 left the queue (checks-failed); PR 2 left the queue (checks-failed)
+ci-failed/provenance-true/private-first-false/cobatch-false/pr-2/depth-1	PR 2 left the queue (checks-failed); PR 2 left the queue (checks-failed)
+ci-failed/provenance-true/private-first-false/cobatch-false/pr-2/depth-1/consumer	PR 2 left the queue (checks-failed); PR 2 left the queue (checks-failed)
+ci-failed/provenance-true/private-first-false/cobatch-false/pr-3/depth-1	PR 2 left the queue (checks-failed); PR 2 left the queue (checks-failed)
+ci-failed/provenance-true/private-first-true/cobatch-false/pr-1/depth-1	a private read before the transition discarded every batch
+ci-failed/provenance-true/private-first-true/cobatch-false/pr-2/depth-1	PR 2 left the queue (checks-failed)
+ci-failed/provenance-true/private-first-true/cobatch-false/pr-2/depth-1/consumer	PR 2 left the queue (checks-failed)
+ci-failed/provenance-true/private-first-true/cobatch-false/pr-3/depth-1	a private read before the transition discarded every batch
+ci-failed/provenance-true/private-first-true/cobatch-false/pr-3/depth-4	a private read before the transition discarded every batch
+ci-failed/provenance-true/private-first-true/cobatch-true/pr-1/depth-1	a private read before the transition discarded every batch
+ci-failed/provenance-true/private-first-true/cobatch-true/pr-1/depth-4	a private read before the transition discarded every batch
+ci-failed/provenance-true/private-first-true/cobatch-true/pr-2/depth-1	a private read before the transition discarded every batch
+ci-failed/provenance-true/private-first-true/cobatch-true/pr-2/depth-1/consumer	a private read before the transition discarded every batch
+ci-failed/provenance-true/private-first-true/cobatch-true/pr-3/depth-4	a private read before the transition discarded every batch
+ci-passed/provenance-false/private-first-true/cobatch-false/pr-2/depth-1	a private read before the transition discarded every batch
+ci-passed/provenance-false/private-first-true/cobatch-false/pr-2/depth-1/consumer	a private read before the transition discarded every batch
+ci-passed/provenance-false/private-first-true/cobatch-false/pr-2/depth-4	a private read before the transition discarded every batch
+ci-passed/provenance-false/private-first-true/cobatch-false/pr-2/depth-4/consumer	a private read before the transition discarded every batch
+ci-passed/provenance-false/private-first-true/cobatch-false/pr-3/depth-1	a private read before the transition discarded every batch
+ci-passed/provenance-false/private-first-true/cobatch-true/pr-1/depth-1	a private read before the transition discarded every batch
+ci-passed/provenance-false/private-first-true/cobatch-true/pr-2/depth-4	a private read before the transition discarded every batch
+ci-passed/provenance-false/private-first-true/cobatch-true/pr-2/depth-4/consumer	a private read before the transition discarded every batch
+ci-passed/provenance-false/private-first-true/cobatch-true/pr-3/depth-1	a private read before the transition discarded every batch
+ci-passed/provenance-true/private-first-true/cobatch-false/pr-1/depth-4	a private read before the transition discarded every batch
+ci-passed/provenance-true/private-first-true/cobatch-false/pr-2/depth-1	a private read before the transition discarded every batch
+ci-passed/provenance-true/private-first-true/cobatch-false/pr-2/depth-1/consumer	a private read before the transition discarded every batch
+ci-passed/provenance-true/private-first-true/cobatch-true/pr-2/depth-1	a private read before the transition discarded every batch
+ci-passed/provenance-true/private-first-true/cobatch-true/pr-2/depth-1/consumer	a private read before the transition discarded every batch
+ci-passed/provenance-true/private-first-true/cobatch-true/pr-2/depth-4	a private read before the transition discarded every batch
+ci-passed/provenance-true/private-first-true/cobatch-true/pr-2/depth-4/consumer	a private read before the transition discarded every batch
+ci-passed/provenance-true/private-first-true/cobatch-true/pr-3/depth-1	a private read before the transition discarded every batch
+landed/provenance-false/private-first-true/cobatch-false/pr-1/depth-1	a private read before the transition discarded every batch
+landed/provenance-false/private-first-true/cobatch-false/pr-1/depth-4	sole world in merged:2
+landed/provenance-false/private-first-true/cobatch-false/pr-2/depth-1	sole world in merged:2
+landed/provenance-false/private-first-true/cobatch-false/pr-2/depth-1/consumer	sole world in merged:2
+landed/provenance-false/private-first-true/cobatch-false/pr-2/depth-4	sole world in merged:2
+landed/provenance-false/private-first-true/cobatch-false/pr-2/depth-4/consumer	sole world in merged:2
+landed/provenance-false/private-first-true/cobatch-false/pr-3/depth-1	a private read before the transition discarded every batch
+landed/provenance-false/private-first-true/cobatch-false/pr-3/depth-4	a private read before the transition discarded every batch
+landed/provenance-false/private-first-true/cobatch-true/pr-1/depth-1	a private read before the transition discarded every batch
+landed/provenance-false/private-first-true/cobatch-true/pr-1/depth-4	a private read before the transition discarded every batch
+landed/provenance-false/private-first-true/cobatch-true/pr-2/depth-1	a private read before the transition discarded every batch
+landed/provenance-false/private-first-true/cobatch-true/pr-2/depth-1/consumer	a private read before the transition discarded every batch
+landed/provenance-false/private-first-true/cobatch-true/pr-2/depth-4	sole world in merged:1 merged:2 merged:3
+landed/provenance-false/private-first-true/cobatch-true/pr-2/depth-4/consumer	sole world in merged:1 merged:2 merged:3
+landed/provenance-false/private-first-true/cobatch-true/pr-3/depth-1	sole world in merged:1 merged:2 merged:3
+landed/provenance-false/private-first-true/cobatch-true/pr-3/depth-4	a private read before the transition discarded every batch
+landed/provenance-true/private-first-true/cobatch-false/pr-1/depth-1	a private read before the transition discarded every batch
+landed/provenance-true/private-first-true/cobatch-false/pr-1/depth-4	sole world in merged:2
+landed/provenance-true/private-first-true/cobatch-false/pr-2/depth-1	sole world in merged:2
+landed/provenance-true/private-first-true/cobatch-false/pr-2/depth-1/consumer	sole world in merged:2
+landed/provenance-true/private-first-true/cobatch-false/pr-2/depth-4	a private read before the transition discarded every batch
+landed/provenance-true/private-first-true/cobatch-false/pr-2/depth-4/consumer	a private read before the transition discarded every batch
+landed/provenance-true/private-first-true/cobatch-false/pr-3/depth-1	a private read before the transition discarded every batch
+landed/provenance-true/private-first-true/cobatch-false/pr-3/depth-4	sole world in merged:2
+landed/provenance-true/private-first-true/cobatch-true/pr-1/depth-1	a private read before the transition discarded every batch
+landed/provenance-true/private-first-true/cobatch-true/pr-1/depth-4	sole world in merged:1 merged:2 merged:3
+landed/provenance-true/private-first-true/cobatch-true/pr-2/depth-1	sole world in merged:1 merged:2 merged:3
+landed/provenance-true/private-first-true/cobatch-true/pr-2/depth-1/consumer	sole world in merged:1 merged:2 merged:3
+landed/provenance-true/private-first-true/cobatch-true/pr-2/depth-4	sole world in merged:1 merged:2 merged:3
+landed/provenance-true/private-first-true/cobatch-true/pr-2/depth-4/consumer	sole world in merged:1 merged:2 merged:3
+landed/provenance-true/private-first-true/cobatch-true/pr-3/depth-1	a private read before the transition discarded every batch
+landed/provenance-true/private-first-true/cobatch-true/pr-3/depth-4	a private read before the transition discarded every batch
+landing/provenance-false/private-first-true/cobatch-false/pr-1/depth-4	a private read before the transition discarded every batch
+landing/provenance-false/private-first-true/cobatch-false/pr-2/depth-1	a private read before the transition discarded every batch
+landing/provenance-false/private-first-true/cobatch-false/pr-2/depth-1/consumer	a private read before the transition discarded every batch
+landing/provenance-false/private-first-true/cobatch-true/pr-2/depth-1	a private read before the transition discarded every batch
+landing/provenance-false/private-first-true/cobatch-true/pr-2/depth-1/consumer	a private read before the transition discarded every batch
+landing/provenance-false/private-first-true/cobatch-true/pr-2/depth-4	a private read before the transition discarded every batch
+landing/provenance-false/private-first-true/cobatch-true/pr-2/depth-4/consumer	a private read before the transition discarded every batch
+landing/provenance-false/private-first-true/cobatch-true/pr-3/depth-1	a private read before the transition discarded every batch
+landing/provenance-true/private-first-true/cobatch-false/pr-1/depth-1	a private read before the transition discarded every batch
+landing/provenance-true/private-first-true/cobatch-false/pr-1/depth-4	a private read before the transition discarded every batch
+landing/provenance-true/private-first-true/cobatch-false/pr-2/depth-1	a private read before the transition discarded every batch
+landing/provenance-true/private-first-true/cobatch-false/pr-2/depth-1/consumer	a private read before the transition discarded every batch
+landing/provenance-true/private-first-true/cobatch-false/pr-3/depth-4	a private read before the transition discarded every batch
+landing/provenance-true/private-first-true/cobatch-true/pr-1/depth-4	a private read before the transition discarded every batch
+landing/provenance-true/private-first-true/cobatch-true/pr-2/depth-1	a private read before the transition discarded every batch
+landing/provenance-true/private-first-true/cobatch-true/pr-2/depth-1/consumer	a private read before the transition discarded every batch
