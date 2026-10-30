@@ -77,6 +77,7 @@ func assertLifecyclePair(t *testing.T, s *Server, w *worker, before int64, mode 
 }
 
 func TestAuthorityLifecycleMixedRepositoriesAndBases(t *testing.T) {
+	t.Parallel()
 	s, f := managedFixture(t, releaseConfig, Options{})
 	other := forge.RepoRef{Path: "acme/ordinary"}
 	f.Init(other, "main", "openmerge/fence/main")
@@ -255,6 +256,7 @@ func TestAuthorityLifecycleMixedRepositoriesAndBases(t *testing.T) {
 }
 
 func TestAuthorityLifecycleInvalidatesPolicyChangesAndReenable(t *testing.T) {
+	t.Parallel()
 	for _, change := range []string{"default-branch", "selector", "actor", "method", "queue-rule", "reenable"} {
 		t.Run(change, func(t *testing.T) {
 			s, w, f, _ := fixture(t, repositoryConfig)
@@ -326,6 +328,7 @@ func TestAuthorityLifecycleInvalidatesPolicyChangesAndReenable(t *testing.T) {
 }
 
 func TestAuthorityLifecycleReadFailuresDoNotPublishConfigOrPin(t *testing.T) {
+	t.Parallel()
 	for _, phase := range []string{"resolve", "read", "receipt-expiry"} {
 		t.Run(phase, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -395,6 +398,7 @@ func TestAuthorityLifecycleReadFailuresDoNotPublishConfigOrPin(t *testing.T) {
 }
 
 func TestAuthorityLifecycleAdoptsDraftWithAtomicConfig(t *testing.T) {
+	t.Parallel()
 	s, w, f, _ := fixture(t, repositoryConfig)
 	w.Driver = f
 	must(t, s.configuration(t.Context(), w))
@@ -576,6 +580,7 @@ func TestAuthorityLifecycleAdoptsDraftWithAtomicConfig(t *testing.T) {
 }
 
 func TestAuthorityLifecycleRollbackReceiptAndUnchangedWire(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, _ := fixture(t, repositoryConfig)
 		w.Driver = f
@@ -648,6 +653,7 @@ func TestAuthorityLifecycleRollbackReceiptAndUnchangedWire(t *testing.T) {
 }
 
 func TestAuthorityLifecycleRequiresFlagAndResolver(t *testing.T) {
+	t.Parallel()
 	for _, setup := range []string{"neither", "flag-only", "resolver-only"} {
 		t.Run(setup, func(t *testing.T) {
 			s, w, f, _ := fixture(t, repositoryConfig)
@@ -710,6 +716,7 @@ func TestAuthorityLifecycleDirectConstructorDefersInvalidConfig(t *testing.T) {
 }
 
 func TestAuthorityLifecycleUnchangedApprovalReadiness(t *testing.T) {
+	t.Parallel()
 	s, w, f := shadowFixture(t, 1, "main", "7", false)
 	tip, err := f.ReadRef(t.Context(), repo, "main")
 	must(t, err)

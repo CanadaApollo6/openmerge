@@ -36,6 +36,7 @@ func (d *privacyReportDriver) ReportStatus(ctx context.Context, repo forge.RepoR
 // Exercise the real report and durable deduplication, including the interval
 // after observation but before the planner executes a pending dequeue.
 func TestDependencyPendingPublicationPrivacy(t *testing.T) {
+	t.Parallel()
 	for _, transition := range []string{"head", "closed", "requested", "retargeted", "paused"} {
 		t.Run(transition, func(t *testing.T) {
 			var baseline []byte
@@ -283,6 +284,7 @@ func (q metamorphicServeQueue) report(t *testing.T) int {
 // private worlds; then revoke an authorized check cache at an unchanged journal
 // watermark and require the fresh unauthorized publication.
 func TestDependencyMetamorphicPublication(t *testing.T) {
+	t.Parallel()
 	pin, err := os.ReadFile("../queue/testdata/wire/v1/event_policy_authority_applied.json")
 	must(t, err)
 	cases := statusfixture.MetamorphicCases(testing.Short())
@@ -298,6 +300,7 @@ func TestDependencyMetamorphicPublication(t *testing.T) {
 		}
 		pinned := (base-1)%2 == 0
 		t.Run(fmt.Sprintf("%s/github-pin-%t", c, pinned), func(t *testing.T) {
+			t.Parallel()
 			db, conn := databaseConnection(t)
 			type outcome struct {
 				writes  int

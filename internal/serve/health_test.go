@@ -283,6 +283,7 @@ func TestHealthHTTPWatchedConditionsAndIsolation(t *testing.T) {
 }
 
 func TestHealthActualValidationAndRulesRetryDeadlines(t *testing.T) {
+	t.Parallel()
 	for _, validation := range []bool{false, true} {
 		testSynctest(t, func(t *testing.T) {
 			s, w, _, _ := fixture(t, repositoryConfig)

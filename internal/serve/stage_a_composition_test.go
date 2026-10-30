@@ -91,6 +91,7 @@ func (g *compositionHistorySpy) CommitsBetween(ctx context.Context, repo forge.R
 }
 
 func TestStageARebaseCompositionBeforeCI(t *testing.T) {
+	t.Parallel()
 	limit := forge.MaxFirstParentCommits
 	if testing.Short() {
 		limit = 4
@@ -219,6 +220,7 @@ func TestStageARebaseCompositionBeforeCI(t *testing.T) {
 }
 
 func TestStageARealGitSpeculativeDepthFour(t *testing.T) {
+	t.Parallel()
 	for _, method := range []queue.MergeMethod{queue.Merge, queue.Squash, queue.Rebase} {
 		t.Run(string(method), func(t *testing.T) {
 			f := newCompositionFixture(t, []int{2, 2, 2, 2})

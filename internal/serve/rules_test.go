@@ -72,6 +72,7 @@ func TestStartupMissingLandingGrantBlocksBeforeFenceAndRecovers(t *testing.T) {
 }
 
 func TestRulesStartupPauseSlowRecheckAndAutomaticRecovery(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, _ := fixture(t, repositoryConfig)
 		calls := 0
@@ -206,6 +207,7 @@ func TestRulesRecoveryNeverResumesPoisonOrLandingPause(t *testing.T) {
 }
 
 func TestRulesStartupReadFailureDoesNotStopHealthyWork(t *testing.T) {
+	t.Parallel()
 	s, w, f, _ := fixture(t, repositoryConfig)
 	calls := 0
 	w.CheckRules = func(context.Context) ([]string, []string, error) {
@@ -225,6 +227,7 @@ func TestRulesStartupReadFailureDoesNotStopHealthyWork(t *testing.T) {
 }
 
 func TestRulesDoNotClearUnrelatedPauseAndResolveLandingStillExecutes(t *testing.T) {
+	t.Parallel()
 	s, w, f, _ := fixture(t, repositoryConfig)
 	w.CheckRules = func(context.Context) ([]string, []string, error) { return nil, nil, nil }
 	must(t, s.block(t.Context(), w, queue.LandingNotOnBase, "manual repair needed", "tested"))

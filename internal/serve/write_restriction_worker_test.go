@@ -49,6 +49,7 @@ func hasAuthorityReadError(state queue.State) bool {
 }
 
 func TestAuthorityReaderFailureDoesNotAbortCommandIngestion(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, _ := authorityWorkerFixture(t)
 		s.options.RulesInterval = time.Minute
@@ -102,6 +103,7 @@ func TestAuthorityReaderFailureDoesNotAbortCommandIngestion(t *testing.T) {
 }
 
 func TestAuthorityReaderTimeoutRecordsReadError(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, _, _ := authorityWorkerFixture(t)
 		s.options.RulesInterval = time.Minute
@@ -134,6 +136,7 @@ func TestAuthorityReaderTimeoutRecordsReadError(t *testing.T) {
 }
 
 func TestAuthorityAdmissionTimeoutRecordsReadError(t *testing.T) {
+	t.Parallel()
 	for _, actionExpires := range []bool{false, true} {
 		t.Run(fmt.Sprint(actionExpires), func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -185,6 +188,7 @@ func TestAuthorityAdmissionTimeoutRecordsReadError(t *testing.T) {
 }
 
 func TestAuthorityReaderFailureBackoffAndQuotaCadence(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, _, _ := authorityWorkerFixture(t)
 		s.options.RulesInterval = 10 * time.Minute
@@ -258,6 +262,7 @@ func TestAuthorityReaderFailureBackoffAndQuotaCadence(t *testing.T) {
 }
 
 func TestAuthorityReaderFailureRetainsDefiniteFindings(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, _, _ := authorityWorkerFixture(t)
 		s.options.RulesInterval = time.Minute
@@ -312,6 +317,7 @@ func TestAuthorityReadFailureReasonsAreSanitized(t *testing.T) {
 }
 
 func TestAuthorityMissingReaderAndLogsAreClassified(t *testing.T) {
+	t.Parallel()
 	for _, missing := range []bool{false, true} {
 		t.Run(fmt.Sprint(missing), func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {

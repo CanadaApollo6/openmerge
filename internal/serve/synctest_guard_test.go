@@ -14,6 +14,7 @@ import (
 // Follow local helpers too, so wrapping fixture in another factory cannot hide
 // an outer pool. This guard runs without PostgreSQL.
 func TestSynctestFixtureOwnership(t *testing.T) {
+	t.Parallel()
 	fset := token.NewFileSet()
 	files, err := filepath.Glob("*_test.go")
 	must(t, err)

@@ -16,6 +16,7 @@ import (
 )
 
 func TestStageAMixedRepositoryActivation(t *testing.T) {
+	t.Parallel()
 	for _, depth := range []int{1, 4} {
 		t.Run(fmt.Sprint(depth), func(t *testing.T) {
 			f := fake.New()

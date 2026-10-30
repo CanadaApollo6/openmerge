@@ -32,6 +32,7 @@ func activationReceipt(t *testing.T, db *store.Store) authority.EmissionReceipt 
 }
 
 func TestAuthorityActivationReceiptBeforeIO(t *testing.T) {
+	t.Parallel()
 	for name, want := range map[string]string{
 		"no-opt-in":                    "internal authority activation opt-in required",
 		"zero-age":                     "maximum age must be positive",
@@ -104,6 +105,7 @@ func TestAuthorityActivationReceiptBeforeIO(t *testing.T) {
 }
 
 func TestAuthorityActivationReportsDurableOutcome(t *testing.T) {
+	t.Parallel()
 	for _, adopted := range []bool{true, false} {
 		t.Run(fmt.Sprint(adopted), func(t *testing.T) {
 			s, w, _, _ := fixture(t, repositoryConfig)
@@ -200,6 +202,7 @@ func completeEmissionOperations(r *authority.EmissionReceipt) {
 }
 
 func TestPublicAuthorityActivationEmissionDefenseInDepth(t *testing.T) {
+	t.Parallel()
 	for _, configPair := range []bool{false, true} {
 		t.Run(fmt.Sprint(configPair), func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {

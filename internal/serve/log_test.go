@@ -28,6 +28,7 @@ func logRows(t *testing.T, output *bytes.Buffer) []map[string]any {
 }
 
 func TestOperationalLogsCommittedLanding(t *testing.T) {
+	t.Parallel()
 	s, w, f, _ := fixture(t, repositoryConfig)
 	var output bytes.Buffer
 	s.options.Logger = slog.New(slog.NewJSONHandler(&output, nil))
@@ -81,6 +82,7 @@ func TestOperationalLogsIgnoreStaleRulesEvents(t *testing.T) {
 }
 
 func TestOperationalLogsDequeueAndPause(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, _ := fixture(t, repositoryConfig)
 		var output bytes.Buffer
@@ -181,6 +183,7 @@ func (h cancelOnQuota) Handle(ctx context.Context, record slog.Record) error {
 }
 
 func TestOperationalLogsOutsidePush(t *testing.T) {
+	t.Parallel()
 	s, w, f, _ := fixture(t, repositoryConfig)
 	var output bytes.Buffer
 	s.options.Logger = slog.New(slog.NewJSONHandler(&output, nil))

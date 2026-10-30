@@ -156,6 +156,7 @@ func TestDiscoveryAndBranchRedeliveriesDoNotRepeatSweeps(t *testing.T) {
 }
 
 func TestIgnoredNotificationWakesAndRefreshesWithoutDurableWrites(t *testing.T) {
+	t.Parallel()
 	s, w, f, d := fixture(t, repositoryConfig)
 	s.options.PollInterval = time.Hour
 	f.AddComment(repo, 1, "writer", "@openmerge queue")
@@ -356,6 +357,7 @@ func TestHealthyIdleLoopUsesBackstopAndDeliveryInterruptsTimer(t *testing.T) {
 }
 
 func TestBackstopDetectsAnotherServerStartingTesting(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, _ := fixture(t, repositoryConfig)
 		target := w.Target
@@ -377,6 +379,7 @@ func TestBackstopDetectsAnotherServerStartingTesting(t *testing.T) {
 }
 
 func TestIdleActivityChecksPreserveForgeBackstopDeadline(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, _, _ := fixture(t, repositoryConfig)
 		polls := startIdleBackstop(t, s, w)

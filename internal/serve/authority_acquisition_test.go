@@ -30,6 +30,7 @@ func (g incompleteGoverningGit) GoverningFiles(ctx context.Context, repo forge.R
 }
 
 func TestAuthorityGoverningAcquisitionBoundaries(t *testing.T) {
+	t.Parallel()
 	for _, boundary := range []string{"discovery", "configuration"} {
 		for _, failure := range []string{"none", "missing-owners", "uncovered", "unresolved", "incomplete-files", "wrong-commit", "incomplete-protection", "missing-protection", "read-secret"} {
 			t.Run(boundary+"/"+failure, func(t *testing.T) {
@@ -99,6 +100,7 @@ func TestAuthorityGoverningAcquisitionBoundaries(t *testing.T) {
 }
 
 func TestAuthorityInvalidLandedConfigurationBlocks(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, _ := authorityWorkerFixture(t)
 		must(t, s.configuration(t.Context(), w))

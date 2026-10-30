@@ -81,6 +81,7 @@ func TestRunInstallationQuotaAllowsLaterValidationWake(t *testing.T) {
 }
 
 func TestDeniedWaitingBoundaryCommentChecksPermissionOnce(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"waiting diagnostics", "commands"} {
 		t.Run(mode, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {

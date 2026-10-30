@@ -11,6 +11,7 @@ import (
 )
 
 func TestAuthorityGithubAccountableIdentityRetriesEveryCycle(t *testing.T) {
+	t.Parallel()
 	for _, optedIn := range []bool{false, true} {
 		name := "ordinary"
 		if optedIn {

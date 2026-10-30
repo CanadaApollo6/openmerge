@@ -17,6 +17,7 @@ import (
 )
 
 func TestDiscoveryColdCanonicalFenceObservation(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"owner", "read failure", "conflicting evidence"} {
 		t.Run(mode, func(t *testing.T) {
 			db, conn := databaseConnection(t)
@@ -163,6 +164,7 @@ func TestRunAppQuotaRetainsGlobalDeadline(t *testing.T) {
 }
 
 func TestWaitingBoundaryCommentChecksPermissionOnce(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"waiting diagnostics", "commands"} {
 		t.Run(mode, func(t *testing.T) {
 			s, w, f, driver := fixture(t, repositoryConfig)

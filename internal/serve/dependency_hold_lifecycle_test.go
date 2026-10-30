@@ -19,6 +19,7 @@ import (
 // dequeue followed by a fresh request may admit the same head, but neither
 // route can clear the alias-scoped declaration hold.
 func TestDependencyDeclarationHoldSurvivesHeldRequestLifecycle(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		dequeue bool
@@ -27,6 +28,7 @@ func TestDependencyDeclarationHoldSurvivesHeldRequestLifecycle(t *testing.T) {
 		{name: "dequeue-and-re-request", dequeue: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			ctx := t.Context()
 			db, _ := databaseConnection(t)
 			s, w, f, _ := fixtureWithStore(t, repositoryConfig+"    enter_when: [check-success = sign-off]\n", db)

@@ -12,6 +12,7 @@ import (
 )
 
 func TestStageAApprovalWindowTransitions(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name      string
 		old, next int
@@ -90,6 +91,7 @@ func TestLegacySerialWindowWireUnchanged(t *testing.T) {
 }
 
 func TestStageAIdentityPinBudgetConfigError(t *testing.T) {
+	t.Parallel()
 	for _, owners := range []bool{false, true} {
 		t.Run(fmt.Sprint("governing owners=", owners), func(t *testing.T) {
 			s, w, f := shadowFixture(t, 1, "main", "7", false)
@@ -145,6 +147,7 @@ func TestStageAEmptyPolicyKeysDoNotActivate(t *testing.T) {
 }
 
 func TestStageAAccountableIdentityDiagnosticExact(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f := shadowFixture(t, 1, "main", "7", false)
 		f.SetIdentity(forge.UserIdentity{ID: 30, Login: "robot", Kind: forge.BotAccount})

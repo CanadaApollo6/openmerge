@@ -6,6 +6,7 @@ import (
 )
 
 func TestReview4RealRollbackToLandedTip(t *testing.T) {
+	t.Parallel()
 	for _, method := range []string{"merge", "fast-forward"} {
 		t.Run(method, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {

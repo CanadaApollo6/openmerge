@@ -10,6 +10,7 @@ import (
 )
 
 func TestServeFastForwardExactHeadAndDivergence(t *testing.T) {
+	t.Parallel()
 	for _, diverged := range []bool{false, true} {
 		t.Run(map[bool]string{false: "land", true: "base-moved"}[diverged], func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -77,6 +78,7 @@ func TestServeFastForwardExactHeadAndDivergence(t *testing.T) {
 }
 
 func TestServeFastForwardBatchSelection(t *testing.T) {
+	t.Parallel()
 	for _, linear := range []bool{true, false} {
 		t.Run(map[bool]string{true: "linear", false: "siblings"}[linear], func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -120,6 +122,7 @@ func TestServeFastForwardBatchSelection(t *testing.T) {
 }
 
 func TestServeFastForwardPRChecksCannotReplaceQueueCI(t *testing.T) {
+	t.Parallel()
 	for _, source := range []string{"app:11", "status:ci"} {
 		t.Run(source, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -161,6 +164,7 @@ func TestServeFastForwardPRChecksCannotReplaceQueueCI(t *testing.T) {
 }
 
 func TestServeFastForwardMergeHeadDequeuedBeforeCI(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, _ := fixture(t, repositoryConfig+"    merge_method: fast-forward\n")
 		base, err := f.ReadRef(t.Context(), repo, "main")

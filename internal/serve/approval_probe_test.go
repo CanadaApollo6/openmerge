@@ -10,6 +10,7 @@ import (
 )
 
 func TestApprovalIdleReconciliationProbesChangesOnly(t *testing.T) {
+	t.Parallel()
 	s, w, _, d := fixture(t, repositoryConfig)
 	must(t, s.reconcile(t.Context(), w, false))
 	pr := w.prs[1]

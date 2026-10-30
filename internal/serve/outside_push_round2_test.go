@@ -39,6 +39,7 @@ func outsidePushRound2Attempt(t *testing.T, method string, depth bool) (*Server,
 }
 
 func TestOutsidePushRound2FurtherOutsidePushWhileLandingHeld(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, before, req := outsidePushRound2Attempt(t, "merge", true)
 		_, err := f.Land(t.Context(), repo, req, forge.PushOptions{})
@@ -78,6 +79,7 @@ func TestOutsidePushRound2FurtherOutsidePushWhileLandingHeld(t *testing.T) {
 }
 
 func TestOutsidePushRound2AwayAndBackBeforeAbandonment(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, before, _ := outsidePushRound2Attempt(t, "merge", true)
 		middle, err := f.PushBase(repo, "main", "outside before abandonment", nil)
@@ -128,6 +130,7 @@ func (g *outsidePushRound2HistoryHook) CommitsBetween(ctx context.Context, r for
 }
 
 func TestOutsidePushRound2AbandonmentWatermarkChangesSettlement(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, before, req := outsidePushRound2Attempt(t, "merge", true)
 		_, err := f.PushBase(repo, "main", "outside before abandonment", nil)
@@ -185,6 +188,7 @@ func (g *outsidePushRound2FenceHook) AdvanceFence(ctx context.Context, r forge.R
 	return g.Forge.AdvanceFence(ctx, r, ref, expected, next, opts)
 }
 func TestOutsidePushRound2PushWinsAbandonmentThenRollback(t *testing.T) {
+	t.Parallel()
 	for _, method := range []string{"merge", "fast-forward"} {
 		t.Run(method, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -218,6 +222,7 @@ func TestOutsidePushRound2PushWinsAbandonmentThenRollback(t *testing.T) {
 }
 
 func TestOutsidePushRound2UnreadableLandingAncestry(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, before, req := outsidePushRound2Attempt(t, "merge", true)
 		_, err := f.Land(t.Context(), repo, req, forge.PushOptions{})

@@ -96,8 +96,10 @@ func (c *completionCallCounts) assert(t *testing.T, rounds int) {
 }
 
 func TestPublicAuthorityEveryPushConsultsCompletion(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []forge.PushOperation{forge.PushBuild, forge.PushLand, forge.PushEnsureFence, forge.PushAdvanceFence, forge.PushDeleteBranch} {
 		t.Run(string(operation), func(t *testing.T) {
+			t.Parallel()
 			testSynctest(t, func(t *testing.T) {
 				f := newPublicFixture(t, true)
 				must(t, f.s.configuration(t.Context(), f.w))
@@ -131,6 +133,7 @@ func TestPublicAuthorityEveryPushConsultsCompletion(t *testing.T) {
 }
 
 func TestPublicAuthorityCompletionRealLandCallBudget(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		f := acceptanceGitFixture(t, queue.Merge, 0)
 		enableAcceptancePublic(t, f)
@@ -149,6 +152,7 @@ func TestPublicAuthorityCompletionRealLandCallBudget(t *testing.T) {
 }
 
 func TestPublicAuthorityCompletionPartitionRace(t *testing.T) {
+	t.Parallel()
 	for _, change := range []string{"register", "append"} {
 		t.Run(change, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -233,9 +237,11 @@ type completionQuotaError struct{ retry time.Time }
 func (*completionQuotaError) Error() string           { return "SECRET https://token.invalid" }
 func (e *completionQuotaError) RetryAfter() time.Time { return e.retry }
 func TestPublicAuthorityCompletionErrorClasses(t *testing.T) {
+	t.Parallel()
 	for _, path := range []string{"installations", "repositories", "branches", "branches-final", "default", "default-final", "ref", "ref-final", "durable"} {
 		for _, kind := range []string{"quota", "canceled", "deadline"} {
 			t.Run(path+"/"+kind, func(t *testing.T) {
+				t.Parallel()
 				testSynctest(t, func(t *testing.T) {
 					f := newPublicFixture(t, true)
 					must(t, f.s.configuration(t.Context(), f.w))
@@ -330,6 +336,7 @@ func (p *reconcileGitProbe) ReadRef(ctx context.Context, repo forge.RepoRef, ref
 }
 
 func TestPublicAuthorityReconcileInventoryBudget(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		p := newPublicFixture(t, true)
 		must(t, p.s.configuration(t.Context(), p.w))

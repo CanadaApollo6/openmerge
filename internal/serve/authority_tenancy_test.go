@@ -29,6 +29,7 @@ func addOtherInstallation(t *testing.T, p publicFixture) {
 }
 
 func TestPublicAuthorityTenancyLifecycle(t *testing.T) {
+	t.Parallel()
 	for _, verified := range []bool{false, true} {
 		t.Run(map[bool]string{false: "before-boundary", true: "after-boundary"}[verified], func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -48,6 +49,7 @@ func TestPublicAuthorityTenancyLifecycle(t *testing.T) {
 }
 
 func TestPublicAuthorityTenancyPushAndRollback(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		p := newPublicFixture(t, true)
 		must(t, p.s.configuration(t.Context(), p.w))
@@ -79,6 +81,7 @@ func TestPublicAuthorityTenancyPushAndRollback(t *testing.T) {
 }
 
 func TestPublicAuthorityTenancyFinalInventory(t *testing.T) {
+	t.Parallel()
 	for _, sameRepository := range []bool{false, true} {
 		t.Run(map[bool]string{false: "other-repository", true: "completion-race"}[sameRepository], func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {

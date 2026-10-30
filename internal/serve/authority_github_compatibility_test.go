@@ -27,6 +27,7 @@ const githubApprovalsConfig = "version: 1\nqueues:\n  - name: default\n    merge
 // the legacy export below independent of the checked-in candidate goldens: the
 // offline ADR verifier only compares the legacy GitHub projection bytes.
 func TestAuthorityGithubProjectionBytes(t *testing.T) {
+	t.Parallel()
 	if path := os.Getenv("ADR_GITHUB_PROJECTIONS"); path != "" {
 		testSynctest(t, func(t *testing.T) {
 			output := legacyGithubProjection(t)

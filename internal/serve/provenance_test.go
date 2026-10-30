@@ -135,6 +135,7 @@ func TestProvenanceNoNetworkPassAndCheckpointMovement(t *testing.T) {
 }
 
 func TestProvenancePerChangePreCIExclusion(t *testing.T) {
+	t.Parallel()
 	dir, scratch, tree, base, pair := provenanceGitFixture(t)
 	oversized := provenanceGit(t, dir, "more work\n", "commit-tree", tree, "-p", pair[0])
 	limits := p.DefaultInventoryLimits()
@@ -329,6 +330,7 @@ func TestProvenanceSeamTripwire(t *testing.T) {
 }
 
 func TestProvenanceSeamHasNoRuntimeCallerOrWriter(t *testing.T) {
+	t.Parallel()
 	root := filepath.Join("..", "..")
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {

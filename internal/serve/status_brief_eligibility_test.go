@@ -164,6 +164,7 @@ func readEligibilityBrief(t *testing.T, src *journalBriefSource, audience string
 }
 
 func TestBriefEligibilitySandboxCasesRealGit(t *testing.T) {
+	t.Parallel()
 	for _, receipt := range []bool{true, false} {
 		t.Run(fmt.Sprint("receipt=", receipt), func(t *testing.T) {
 			src, policy, fresh, _ := briefEligibilityFixture(t, receipt)
@@ -282,6 +283,7 @@ func replayBriefJournal(j store.Journal) queue.State {
 }
 
 func TestBriefEligibilitySurfacesAfterConfigChange(t *testing.T) {
+	t.Parallel()
 	src, policy, fresh, _ := briefEligibilityFixture(t, false)
 	appendBriefEvents(&src.journal, fresh)
 	before := readEligibilityBrief(t, src, "reviewer")
@@ -322,6 +324,7 @@ func TestBriefEligibilitySurfacesAfterConfigChange(t *testing.T) {
 }
 
 func TestBriefEligibilityAcceptedInputChangeRenewsPin(t *testing.T) {
+	t.Parallel()
 	src, policy, fresh, _ := briefEligibilityFixture(t, false)
 	denied := fresh
 	denied.Actors = map[string]cp.Actor{}
@@ -373,6 +376,7 @@ func TestBriefEligibilityAcceptedInputChangeRenewsPin(t *testing.T) {
 }
 
 func TestBriefEligibilityBareObservationCannotRenewChangedApprovals(t *testing.T) {
+	t.Parallel()
 	src, oldPolicy, fresh, _ := briefEligibilityFixture(t, false)
 	appendBriefEvents(&src.journal, fresh)
 	before := readEligibilityBrief(t, src, "reviewer")
@@ -410,6 +414,7 @@ func TestBriefEligibilityBareObservationCannotRenewChangedApprovals(t *testing.T
 // always fail TryLock on that same mutex and report policy_busy. Keeping this
 // surface divergence is a deliberate fail-closed choice.
 func TestBriefEligibilityGoverningCommitSurfaceDivergence(t *testing.T) {
+	t.Parallel()
 	for _, changed := range []bool{false, true} {
 		t.Run(fmt.Sprint("component-changed=", changed), func(t *testing.T) {
 			src, policy, fresh, _ := briefEligibilityFixture(t, false)

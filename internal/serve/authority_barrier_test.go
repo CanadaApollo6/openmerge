@@ -17,6 +17,7 @@ import (
 )
 
 func TestAuthorityBarrierPinCannotSelectAuthorityCheckGate(t *testing.T) {
+	t.Parallel()
 	for _, depth := range []int{1, 4} {
 		t.Run(strconv.Itoa(depth), func(t *testing.T) {
 			s, w, _ := shadowFixture(t, depth, "main", "7", false)
@@ -47,6 +48,7 @@ func TestAuthorityBarrierPinCannotSelectAuthorityCheckGate(t *testing.T) {
 // exercises the normal config path with both setup's candidate and journal data
 // available, rather than relying only on the public parser's rejection.
 func TestAuthorityBarrierJournalCannotInstallRuntimeAuthority(t *testing.T) {
+	t.Parallel()
 	for _, history := range []string{"draft", "pin", "raw-activation"} {
 		t.Run(history, func(t *testing.T) {
 			s, w, f, _ := fixture(t, repositoryConfig)

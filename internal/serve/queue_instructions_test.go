@@ -36,6 +36,7 @@ func (d *instructionDriver) Comment(ctx context.Context, r forge.RepoRef, pr int
 }
 
 func TestQueueInstructionsReportingPathsDedupeRetryRollback(t *testing.T) {
+	t.Parallel()
 	for _, approval := range []bool{false, true} {
 		t.Run(map[bool]string{false: "legacy", true: "approval"}[approval], func(t *testing.T) {
 			var s *Server
@@ -149,6 +150,7 @@ func TestQueueInstructionsReportingPathsDedupeRetryRollback(t *testing.T) {
 }
 
 func TestQueueInstructionsBeforeAdmissionAndTerminalPreservation(t *testing.T) {
+	t.Parallel()
 	for _, eligible := range []bool{true, false} {
 		t.Run(map[bool]string{true: "eligible", false: "ineligible"}[eligible], func(t *testing.T) {
 			s, w, _, _ := fixture(t, repositoryConfig)
@@ -248,6 +250,7 @@ func TestQueueInstructionsBeforeAdmissionAndTerminalPreservation(t *testing.T) {
 }
 
 func TestQueueInstructionsDequeuedActivationRollback(t *testing.T) {
+	t.Parallel()
 	for _, terminal := range []string{"dequeued", "merged"} {
 		for _, closed := range []bool{false, true} {
 			t.Run(terminal+"/"+map[bool]string{false: "open", true: "closed"}[closed], func(t *testing.T) {

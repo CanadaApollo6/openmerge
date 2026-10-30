@@ -168,6 +168,7 @@ func recordLanding(t *testing.T, s *Server, w *worker, f *fake.Forge, landed boo
 }
 
 func TestRecreatedBranchSettlesBeforeReactivation(t *testing.T) {
+	t.Parallel()
 	s, f := managedFixture(t, releaseConfig, Options{})
 	w := baseWorker(t, s, "release/v1")
 	tested := recordLanding(t, s, w, f, true)
@@ -198,6 +199,7 @@ func TestRecreatedBranchSettlesBeforeReactivation(t *testing.T) {
 }
 
 func TestRetirementAndRestartOutsideAllowlistsSettleRealOutcome(t *testing.T) {
+	t.Parallel()
 	for _, landed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "abandoned", true: "landed"}[landed], func(t *testing.T) {
 			s, f := managedFixture(t, releaseConfig, Options{})
@@ -312,6 +314,7 @@ func TestMainDeploymentReusesExactStoredKeyAndHistory(t *testing.T) {
 }
 
 func TestBranchRefreshFailuresNeverRetireAndAllowlistOnlyNarrows(t *testing.T) {
+	t.Parallel()
 	s, f := managedFixture(t, releaseConfig, Options{BaseAllowlist: []string{"release/*", "unconfigured"}})
 	if len(s.Keys()) != 1 || s.Keys()[0].BaseBranch != "release/v1" {
 		t.Fatal("base flag created an unconfigured queue or failed to narrow")
@@ -336,6 +339,7 @@ func TestBranchRefreshFailuresNeverRetireAndAllowlistOnlyNarrows(t *testing.T) {
 }
 
 func TestBranchRefreshFailureAndRecoveryPreserveSafetyBlocks(t *testing.T) {
+	t.Parallel()
 	for _, block := range []string{"landing-not-on-base", "action-poisoned", "both"} {
 		t.Run(block, func(t *testing.T) {
 			s, f := managedFixture(t, releaseConfig, Options{})
@@ -379,6 +383,7 @@ func TestBranchRefreshFailureAndRecoveryPreserveSafetyBlocks(t *testing.T) {
 }
 
 func TestStartupValidationIsInMemoryUntilSuccessful(t *testing.T) {
+	t.Parallel()
 	for _, failure := range []string{"listing", "rules"} {
 		t.Run(failure, func(t *testing.T) {
 			s, f := managedFixture(t, repositoryConfig, Options{})
@@ -439,6 +444,7 @@ func TestStartupValidationIsInMemoryUntilSuccessful(t *testing.T) {
 }
 
 func TestBranchRefreshHonorsRulesCacheAndReadFailuresKeepActive(t *testing.T) {
+	t.Parallel()
 	s, f := managedFixture(t, releaseConfig, Options{})
 	r := managedRepository(f, repo.Path)
 	original := r.Target
@@ -547,6 +553,7 @@ func TestBroadSelectorExcludesInternalRefsAndRepositoryStatusListsBases(t *testi
 }
 
 func TestStartupSettlementIgnoresInvalidConfigurationAndMissingCredentials(t *testing.T) {
+	t.Parallel()
 	for _, failRead := range []bool{false, true} {
 		t.Run(map[bool]string{false: "invalid-config", true: "credentials-unavailable"}[failRead], func(t *testing.T) {
 			s, f := managedFixture(t, releaseConfig, Options{})
@@ -572,6 +579,7 @@ func TestStartupSettlementIgnoresInvalidConfigurationAndMissingCredentials(t *te
 }
 
 func TestIndependentBaseWorkersLandUnderDefaultBranchPolicy(t *testing.T) {
+	t.Parallel()
 	s, f := managedFixture(t, releaseConfig, Options{})
 	_, err := f.PushBase(repo, "release/v1", "release-only policy is ignored", map[string]string{".openmerge.yml": "version: invalid"})
 	must(t, err)
@@ -612,6 +620,7 @@ func TestIndependentBaseWorkersLandUnderDefaultBranchPolicy(t *testing.T) {
 }
 
 func TestManagedStartupClassicProtectionUnavailable(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"unavailable", "previous problem", "read failure"} {
 		t.Run(mode, func(t *testing.T) {
 			db := database(t)

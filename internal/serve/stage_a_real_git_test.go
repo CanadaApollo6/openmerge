@@ -24,10 +24,12 @@ import (
 // object probe needs no GitHub driver. With the test DB configured, it also
 // persists the atomic start and reads the checks back after real-git settlement.
 func TestStageAGateRealGitAcquisition(t *testing.T) {
+	t.Parallel()
 	for _, depth := range []int{1, 4} {
 		for _, restart := range []bool{false, true} {
 			for _, method := range []queue.MergeMethod{queue.Merge, queue.Squash, queue.Rebase, queue.FastForward} {
 				t.Run(fmt.Sprintf("depth-%d/restart-%t/%s", depth, restart, method), func(t *testing.T) {
+					t.Parallel()
 					dir := t.TempDir()
 					remote := filepath.Join(dir, "remote.git")
 					git := func(input string, args ...string) string {

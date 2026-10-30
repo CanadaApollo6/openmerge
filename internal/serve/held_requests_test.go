@@ -38,6 +38,7 @@ func TestHeldQueueRequestPendingToPass(t *testing.T) {
 }
 
 func TestHeldQueueRequestBlockedLifecycleStatus(t *testing.T) {
+	t.Parallel()
 	for _, lifecycle := range []string{"dormant", "retired", "overlapping"} {
 		t.Run(lifecycle, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -74,10 +75,12 @@ func TestHeldQueueRequestBlockedLifecycleStatus(t *testing.T) {
 }
 
 func TestHeldQueueRequestLifecycleReactivation(t *testing.T) {
+	t.Parallel()
 	for _, authorityMode := range []bool{false, true} {
 		for _, managed := range []bool{false, true} {
 			for _, lifecycle := range []string{"dormant", "retired", "overlapping"} {
 				t.Run(fmt.Sprintf("authority=%v/managed=%v/%s", authorityMode, managed, lifecycle), func(t *testing.T) {
+					t.Parallel()
 					testSynctest(t, func(t *testing.T) {
 						raw := repositoryConfig + "    enter_when: [check-success = sign-off]\n"
 						var s *Server
@@ -138,9 +141,11 @@ func TestHeldQueueRequestLifecycleReactivation(t *testing.T) {
 }
 
 func TestHeldQueueRequestLifecycle(t *testing.T) {
+	t.Parallel()
 	for _, authorityMode := range []bool{false, true} {
 		for _, outcome := range []string{"pass", "missing", "fail", "push", "dequeue", "closed", "draft", "restart", "restart-closed", "writer-revoked", "stale-approval", "already-true", "already-false", "unknown-and-false"} {
 			t.Run(fmt.Sprintf("authority=%v/%s", authorityMode, outcome), func(t *testing.T) {
+				t.Parallel()
 				testSynctest(t, func(t *testing.T) {
 					raw := repositoryConfig + "    enter_when: ['-draft', check-success = sign-off]\n"
 					var s *Server

@@ -14,6 +14,7 @@ import (
 )
 
 func TestDependencyCheckGrantRevocation(t *testing.T) {
+	t.Parallel()
 	s, w, f, driver := fixture(t, repositoryConfig)
 	_, binding, _, _ := statusfixture.StatusJournal(t, "dependency-waiting", 1)
 	r := dependencytest.Request()

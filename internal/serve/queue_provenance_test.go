@@ -9,9 +9,11 @@ import (
 )
 
 func TestMergeWhenRequiresQueueCheckProvenance(t *testing.T) {
+	t.Parallel()
 	for _, method := range []queue.MergeMethod{queue.Merge, queue.Squash, queue.Rebase, queue.FastForward} {
 		for _, scenario := range []string{"foreign branch", "unknown branch", "commit status"} {
 			t.Run(string(method)+"/"+scenario, func(t *testing.T) {
+				t.Parallel()
 				testSynctest(t, func(t *testing.T) {
 					s, w, f, _ := fixture(t, repositoryConfig+"    merge_method: "+string(method)+"\n")
 					base, err := f.ReadRef(t.Context(), repo, "main")

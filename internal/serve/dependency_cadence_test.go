@@ -52,6 +52,7 @@ func astraCadenceFixture(t *testing.T) (*Server, *worker, *instructionDriver, de
 }
 
 func TestAstraR2PersistedCadence(t *testing.T) {
+	t.Parallel()
 	for _, pinGitHub := range []bool{false, true} {
 		t.Run(fmt.Sprint(pinGitHub), func(t *testing.T) {
 			s, w, driver, binding, o, oid, alias, grant := astraCadenceFixture(t)
@@ -97,6 +98,7 @@ func TestAstraR2PersistedCadence(t *testing.T) {
 }
 
 func TestAstraR2RevocationBytes(t *testing.T) {
+	t.Parallel()
 	s, w, _, _, o, _, _, grant := astraCadenceFixture(t)
 	generic, err := s.ledgerSummary(t.Context(), w, 1)
 	must(t, err)
@@ -145,6 +147,7 @@ func cadenceGitHubPin(t *testing.T, s *Server, w *worker) {
 }
 
 func TestDependencyRetainedCheckRevocation(t *testing.T) {
+	t.Parallel()
 	s, w, _, _, o, _, _, grant := astraCadenceFixture(t)
 	cadenceGitHubPin(t, s, w)
 	state, _, err := s.store.Load(t.Context(), w.id)
@@ -173,6 +176,7 @@ func TestDependencyRetainedCheckRevocation(t *testing.T) {
 }
 
 func TestDependencyMissingLedgerEntryDoesNotAbortReport(t *testing.T) {
+	t.Parallel()
 	s, w, driver, _, _, _, _, _ := astraCadenceFixture(t)
 	cadenceGitHubPin(t, s, w)
 	w.prs[99] = forge.PullRequest{Number: 99, HeadSHA: strings.Repeat("f", 40)}

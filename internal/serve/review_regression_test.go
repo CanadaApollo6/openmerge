@@ -102,6 +102,7 @@ func TestNonCommandsAreSilentlyIgnored(t *testing.T) {
 }
 
 func TestQueueCommandPinsHead(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"stale unpinned", "stale full", "matching full", "matching uppercase", "first observation"} {
 		t.Run(mode, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -169,6 +170,7 @@ func TestQueueCommandPinsHead(t *testing.T) {
 }
 
 func TestUnpinnedCommandCannotApproveNewForkHead(t *testing.T) {
+	t.Parallel()
 	s, w, f, _ := fixture(t, repositoryConfig)
 	base, err := f.ReadRef(t.Context(), repo, "main")
 	must(t, err)
@@ -205,6 +207,7 @@ func TestUnpinnedCommandCannotApproveNewForkHead(t *testing.T) {
 }
 
 func TestUnsafeMergeConditionsCannotLand(t *testing.T) {
+	t.Parallel()
 	for _, tt := range []struct {
 		name, rule string
 		checks     []forge.CheckRun
@@ -246,6 +249,7 @@ func TestUnsafeMergeConditionsCannotLand(t *testing.T) {
 }
 
 func TestORCheckFailureWaitsForAlternative(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, _ := fixture(t, "version: 1\nqueues:\n  - name: default\n    merge_when:\n      - check-success = ci\n      - or: [check-success = linux, check-success = fallback]\n")
 		f.AddComment(repo, 1, "writer", "@openmerge queue")
@@ -273,6 +277,7 @@ func TestORCheckFailureWaitsForAlternative(t *testing.T) {
 }
 
 func TestDeferredBacklogDoesNotStarvePausedWork(t *testing.T) {
+	t.Parallel()
 	s, w, f, _ := fixture(t, repositoryConfig)
 	must(t, s.reconcile(t.Context(), w, true))
 	pr, err := f.PullRequest(t.Context(), repo, 1)

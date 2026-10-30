@@ -22,8 +22,10 @@ import (
 )
 
 func TestAuthorityAcceptanceIntegratedObjectRefusal(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"intermediate", "marker", "fence"} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			testSynctest(t, func(t *testing.T) {
 				method := queue.Rebase
 				if kind == "marker" {
@@ -165,6 +167,7 @@ func TestAuthorityAcceptanceBaseAdvanceBeforeBuild(t *testing.T) {
 // During repository-wide propagation a GitHub worker can coexist with an
 // adopted authority worker. Both Git clients below address the same bare origin.
 func TestAuthorityAcceptanceMixedRealGit(t *testing.T) {
+	// Not parallel: pins the process-wide crypto/rand.Reader below.
 	testSynctest(t, func(t *testing.T) {
 		f := acceptanceGitFixture(t, queue.Merge, 0)
 		s := f.s

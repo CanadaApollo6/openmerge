@@ -43,6 +43,7 @@ func TestDependencyActivationStillRefusesStageAAndProvenance(t *testing.T) {
 // The candidate remains unenforced public config. Reviewing the change to its
 // policy file uses the existing governing owners, before adoption is possible.
 func TestDependencySingleMaintainerOptInRequiresGoverningOwnerReview(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, _ := authorityWorkerFixture(t)
 		must(t, s.reconcile(t.Context(), w, true))

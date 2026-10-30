@@ -26,8 +26,10 @@ import (
 )
 
 func TestProvenanceFreshGateFakeForgeRealGitAllMethods(t *testing.T) {
+	t.Parallel()
 	for _, method := range []queue.MergeMethod{queue.Merge, queue.Squash, queue.Rebase, queue.FastForward} {
 		t.Run(string(method), func(t *testing.T) {
+			t.Parallel()
 			dir, scratch, _, base, heads := provenanceGitFixture(t)
 			expression, err := condition.Parse("check-success = ci")
 			must(t, err)
@@ -209,6 +211,7 @@ func TestProvenanceFreshGateFakeForgeRealGitAllMethods(t *testing.T) {
 }
 
 func TestProvenanceReceiptExecutorAndWorkerRecovery(t *testing.T) {
+	t.Parallel()
 	for _, method := range []queue.MergeMethod{queue.Merge} {
 		t.Run(string(method), func(t *testing.T) {
 			dir, scratch, _, base, heads := provenanceGitFixture(t)
@@ -397,6 +400,7 @@ func TestProvenanceReceiptExecutorAndWorkerRecovery(t *testing.T) {
 }
 
 func TestProvenanceRequiresCompleteInternalActivation(t *testing.T) {
+	t.Parallel()
 	// The private pass requires both a stable local object read and trusted
 	// composer output; a baseline policy alone cannot activate a writer.
 	s, w, _ := shadowFixture(t, 1, "main", "7", false)

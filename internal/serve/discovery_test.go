@@ -44,6 +44,7 @@ func newDiscoveryFixture(t *testing.T) (*Server, *discoveryFixture) {
 }
 
 func TestDiscoveryRemovalSuspensionAndReinstatement(t *testing.T) {
+	t.Parallel()
 	for _, change := range []string{"repository", "installation", "suspension", "allowlist", "config deletion"} {
 		t.Run(change, func(t *testing.T) {
 			s, d := newDiscoveryFixture(t)
@@ -110,6 +111,7 @@ func TestDiscoveryRemovalSuspensionAndReinstatement(t *testing.T) {
 }
 
 func TestFailedDiscoveryReadsPreserveDurableState(t *testing.T) {
+	t.Parallel()
 	for _, failure := range []string{"app", "repository listing", "metadata", "file", "branches"} {
 		t.Run(failure, func(t *testing.T) {
 			s, d := newDiscoveryFixture(t)

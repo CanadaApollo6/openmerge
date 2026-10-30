@@ -34,6 +34,7 @@ func depPolicy(b dependency.JournalInitialized, alias dependency.SourceAlias, q 
 // sanctioned dependency writer, and drains landed recovery before every cycle
 // and execution: deleting either recover call lets a blocked worker admit work.
 func TestDependencyWorkerGateStartAndRecoveryBeforeAdmission(t *testing.T) {
+	t.Parallel()
 	db, conn := databaseConnection(t)
 	s, w, f, _ := fixtureWithStore(t, repositoryConfig, db)
 	ctx := t.Context()

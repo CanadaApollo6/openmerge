@@ -79,6 +79,7 @@ func TestValidationLoopHonorsIdleAndBackoffDeadlines(t *testing.T) {
 }
 
 func TestInactiveLifecyclesDoNotRefreshDiscovery(t *testing.T) {
+	t.Parallel()
 	for _, lifecycle := range []string{"dormant", "retired", "overlapping"} {
 		t.Run(lifecycle, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -142,6 +143,7 @@ func TestInactiveLifecyclesDoNotRefreshDiscovery(t *testing.T) {
 }
 
 func TestLifecycleCycleDiscoveryRefreshEligibility(t *testing.T) {
+	t.Parallel()
 	for _, lifecycle := range []string{"active", "dormant", "retired", "overlapping"} {
 		t.Run(lifecycle, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -210,6 +212,7 @@ func TestRefreshNotificationsHaveMinimumSweepInterval(t *testing.T) {
 }
 
 func TestWaitingPreservesPolicyAndDefersCommandsOnce(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, _ := fixture(t, repositoryConfig)
 		must(t, s.cycle(t.Context(), w))
