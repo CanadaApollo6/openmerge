@@ -145,7 +145,7 @@ func metamorphicExport(t *testing.T, m statusfixture.MetamorphicWorld) map[strin
 
 // requireSelfAckView keeps the self-acknowledgement cases non-vacuous: the
 // distinct status and its nonblocking warning render for the unauthorized
-// audience without a journal reference.
+// audience. Byte comparison, not this check, catches a leaked journal reference.
 func requireSelfAckView(t *testing.T, h http.Handler, pr int) {
 	t.Helper()
 	w := httptest.NewRecorder()
@@ -159,7 +159,7 @@ func requireSelfAckView(t *testing.T, h http.Handler, pr int) {
 		t.Fatal(err)
 	}
 	d := body.PR.Dependency
-	if w.Code != 200 || d == nil || d.SelfAcknowledgement == nil || d.SelfAcknowledgement.Actor != "11" || d.SelfAcknowledgement.EventID != 0 || len(d.Warnings) != 1 {
+	if w.Code != 200 || d == nil || d.SelfAcknowledgement == nil || d.SelfAcknowledgement.Actor != "11" || len(d.Warnings) != 1 {
 		t.Fatalf("self-acknowledgement view: %d %+v", w.Code, d)
 	}
 }
