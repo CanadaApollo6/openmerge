@@ -9,6 +9,9 @@ import (
 
 const maxProjectionEntries = 4096
 
+// selfAcknowledgementKind distinguishes the audited override in projections.
+const selfAcknowledgementKind = "dependency_declaration_self_acknowledged"
+
 type declarationProjection struct {
 	EventID uint64               `json:"event_id"`
 	Event   DependenciesDeclared `json:"event"`

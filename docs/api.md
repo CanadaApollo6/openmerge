@@ -724,9 +724,43 @@ generic dependency hold to conceal old unstarted progress. Rendering reads suppl
 forge. Terminal B outcomes, landing settlement and B's independent gates retain
 their existing precedence. Dependency presentation does not grant landing authority.
 
-This is slice **5-1**. Scoped audit export, completed self-acknowledgement evidence,
-the opt-in multi-writer warning, wait-age display and additional evidence pagination
-remain slice **5-2**. The existing `events=1..100` limit is unchanged. Retained decision paging returns
+Slice **5-1** introduced this view; slice **5-2** adds the following optional
+v1 fields to the `dependency` object, all omitted when empty:
+
+- `self_acknowledgement`: a completed single-maintainer self-acknowledgement,
+  shown distinctly even after its hold clears, as
+  `{kind, actor, event_id, overridden, governing_commit, revoked}`. `kind` is
+  always `dependency_declaration_self_acknowledged`. `event_id` is omitted
+  while the queue's journal positions are withheld. A revoked opt-in keeps the
+  audited entry with `revoked: true` and restores the hold.
+- `warnings`: the nonblocking multi-writer warning, on an opted-in hold or a
+  completed self-acknowledgement when the repository records more than one
+  writer. Warnings never change precedence or blocking.
+- `wait_age`: `{since, older_than}`, the non-actionable "dependency wait older
+  than N" flag. It appears only in a blocking view, only when the caller
+  configures a threshold, and only while the whole queue is unredacted for the
+  reader. A wait can start or end at a private source transition, and private
+  reads delay every later record, so in a redacted queue even a public hold's
+  wait timing is withheld. A change's wait starts at its own declaration.
+
+Authorized `details` are bounded to 8 lines, including the wait-age line; the
+last line then states how many are omitted. The complete evidence is in the scoped audit export below. Opted-in
+holds also name the self-acknowledgement option. Generic views are unchanged.
+
+The scoped dependency audit export is a library contract, not a new route. Its
+manifest has `format: openmerge.dependency.scoped-export` and `version: 3`, over a
+hash-chained `dependency_records.jsonl`. A complete audience can read every
+source the queue declares. It receives decisions, compositions, invalidations,
+observations, diagnostics, declarations, policy and (self-)acknowledgements as
+strict journal records with their IDs and recording times. Any other audience
+receives only new consumer-repository projections: policy, declaration holds,
+and independent and self-acknowledgements as distinct kinds. These have no
+journal IDs or times. Cursor pages (`after`, `limit` 1..100, `next`, `total`)
+count export positions only, so withheld records cannot shift them. Canonical
+ADR 0008 v1/v2 verifiers reject a scoped export, and the scoped verifier rejects
+canonical manifests.
+
+The existing `events=1..100` limit is unchanged. Retained decision paging returns
 the existing generic 503 response when dependency scope is redacted, before
 querying decision pages or exposing cursor positions. Authorized paging stays unchanged.
 

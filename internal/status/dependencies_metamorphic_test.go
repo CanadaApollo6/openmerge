@@ -2,11 +2,19 @@ package status
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"maps"
+	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/audit"
+	"github.com/CanadaApollo6/openmerge/internal/dependency"
 	"github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest/statusfixture"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -23,20 +31,53 @@ type metamorphicPolicySource struct {
 func (s metamorphicPolicySource) QueuePolicy(store.QueueKey) (queue.Config, bool) { return s.cfg, true }
 
 func TestDependencyMetamorphicPrivacy(t *testing.T) {
+	// verified collects the kinds of every strictly verified complete export.
+	verified := map[string]bool{}
+	consumers, ran := 0, 0
 	for _, c := range statusfixture.MetamorphicCases(testing.Short()) {
+		if c.Consumer {
+			consumers++
+		}
 		t.Run(c.String(), func(t *testing.T) {
+			if c.Consumer {
+				ran++
+			}
 			baseline := map[string][]byte{}
 			var worlds []statusfixture.MetamorphicWorld
 			for _, world := range statusfixture.MetamorphicWorlds(testing.Short()) {
 				m := statusfixture.Metamorphic(t, c, world)
 				worlds = append(worlds, m)
-				j, err := ProjectDependencies(m.Journal, m.Binding, nil, statusfixture.StatusSources())
+				// Any authorized wait this old would be flagged; the unauthorized
+				// audience must never see it.
+				j, err := ProjectDependenciesAt(m.Journal, m.Binding, nil, statusfixture.StatusSources(), metamorphicClock(m.Journal))
 				if err != nil {
 					t.Fatal(err)
 				}
 				h := Handler(metamorphicPolicySource{dependencyRenderSource{journal: j}, statusfixture.MetamorphicPolicy(c.Depth)}, []store.QueueKey{j.Key}, "", nil)
 				paths := []string{"/v1/queues", "/v1/queues/acme/client/main"}
-				for _, pr := range m.PRs {
+				// A private-only tail replays the journal again; -short checks it in
+				// one world per case, the full product in every world.
+				tail := !testing.Short() || len(worlds) == 1
+				outputs, verify := metamorphicExport(t, m, tail)
+				// The complete-audience export replays and strictly decodes every
+				// record twice; -short checks it in every world of the consumer
+				// cases, which span every exported kind, the full product in all.
+				if !testing.Short() || c.Consumer {
+					for _, kind := range requireCompleteExport(t, c, m, world) {
+						verified[kind] = true
+					}
+				}
+				prs := slices.Clone(m.PRs)
+				if c.Consumer {
+					// AckPR has no dependency view: the export comparisons cover
+					// its acknowledgement.
+					prs = append(prs, statusfixture.SelfAckPR, statusfixture.HeldPR)
+				}
+				if c.Consumer {
+					requireSelfAckView(t, h, statusfixture.SelfAckPR)
+					requireHeldWait(t, h, m, len(worlds) == 1)
+				}
+				for _, pr := range prs {
 					id, err := j.Key.ChangeID(pr)
 					if err != nil {
 						t.Fatal(err)
@@ -57,7 +98,10 @@ func TestDependencyMetamorphicPrivacy(t *testing.T) {
 					if w.Code != wantCode {
 						t.Fatalf("%s returned %d: %s", path, w.Code, w.Body)
 					}
-					got := append([]byte(fmt.Sprintf("%d\n", w.Code)), w.Body.Bytes()...)
+					outputs[path] = append([]byte(fmt.Sprintf("%d\n", w.Code)), w.Body.Bytes()...)
+				}
+				for _, path := range slices.Sorted(maps.Keys(outputs)) {
+					got := outputs[path]
 					key := m.Group + " " + path
 					if !m.Compared() {
 						continue
@@ -70,9 +114,158 @@ func TestDependencyMetamorphicPrivacy(t *testing.T) {
 						baseline[key] = bytes.Clone(got)
 					}
 				}
+				verify()
 			}
 			statusfixture.RequireComparedWorlds(t, c, worlds)
 		})
+	}
+	if ran == consumers {
+		for _, kind := range []string{"journal", "policy", "declaration", "acknowledgement", "self_acknowledgement", "observation", "diagnostic", "composition", "decision", "invalidation"} {
+			if !verified[kind] {
+				t.Fatalf("no verified complete export carried a %s record", kind)
+			}
+		}
+	}
+}
+
+// metamorphicClock flags every authorized wait older than a minute.
+func metamorphicClock(j store.Journal) DependencyOptions {
+	return DependencyOptions{Now: j.Events[0].RecordedAt.Add(48 * time.Hour), WaitAge: time.Minute}
+}
+
+// metamorphicExport renders the unauthorized scoped export and every cursor
+// page of it. A private-only tail must not change a byte. Strict verification
+// runs after the byte comparison, so the differential detects leaks first.
+func metamorphicExport(t *testing.T, m statusfixture.MetamorphicWorld, tail bool) (map[string][]byte, func()) {
+	t.Helper()
+	manifest, stream, err := DependencyExportBytes(m.Journal, m.Binding, nil, statusfixture.StatusSources())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tail {
+		j := m.Journal
+		j.Events = append(slices.Clone(j.Events), m.Tail...)
+		tailManifest, tailStream, err := DependencyExportBytes(j, m.Binding, nil, statusfixture.StatusSources())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(manifest, tailManifest) || !bytes.Equal(stream, tailStream) {
+			t.Fatalf("private tail changed the export %s", statusfixture.Diff(stream, tailStream))
+		}
+	}
+	out := map[string][]byte{"export:manifest": manifest, "export:records": stream}
+	var records []audit.DependencyRecord
+	for _, line := range bytes.Split(bytes.TrimSuffix(stream, []byte("\n")), []byte("\n")) {
+		var r audit.DependencyRecord
+		if len(line) > 0 && json.Unmarshal(line, &r) == nil {
+			records = append(records, r)
+		}
+	}
+	for _, limit := range []int{1, 2, 100} {
+		var pages []audit.DependencyPage
+		for after := int64(0); ; {
+			page, err := audit.PageDependencyRecords(records, after, limit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pages = append(pages, page)
+			if page.Next == 0 {
+				break
+			}
+			after = page.Next
+		}
+		raw, err := json.Marshal(pages)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[fmt.Sprintf("export:pages:%d", limit)] = raw
+	}
+	return out, func() {
+		t.Helper()
+		if verified, err := audit.DecodeDependencyExport(manifest, stream); err != nil || len(verified) != len(records) {
+			t.Fatalf("export does not verify: %v", err)
+		}
+	}
+}
+
+// requireCompleteExport strictly verifies the complete-audience export of a
+// world, and keeps the consumer cases non-vacuous: both acknowledgement kinds
+// are exported, and so is a decision once a co-batched landing starts.
+func requireCompleteExport(t *testing.T, c statusfixture.MetamorphicCase, m statusfixture.MetamorphicWorld, world int) []string {
+	t.Helper()
+	audience := map[string][]dependency.Grant{m.Source: {m.Grant}}
+	scope, entries, err := DependencyExport(m.Journal, m.Binding, audience, statusfixture.StatusSources())
+	if err != nil || scope != audit.DependencyAudienceComplete {
+		t.Fatalf("complete export: %s %v", scope, err)
+	}
+	key := audit.Key{Installation: m.Journal.Key.Installation, Repository: m.Journal.Key.Repository, Base: m.Journal.Key.BaseBranch, Lane: m.Journal.Key.Lane}
+	dir := filepath.Join(t.TempDir(), fmt.Sprintf("complete-%d", world))
+	if _, err := audit.WriteDependencyExport(dir, key, scope, entries); err != nil {
+		t.Fatal(err)
+	}
+	manifest, records, err := audit.VerifyDependencyExport(dir)
+	if err != nil || manifest.Audience != scope || len(records) != len(entries) {
+		t.Fatalf("complete export does not verify: %v", err)
+	}
+	kinds := map[string]int{}
+	for _, r := range records {
+		kinds[r.Kind]++
+	}
+	landing := c.Transition == "landing" || c.Transition == "landed"
+	if c.Consumer && (kinds["acknowledgement"] != 1 || kinds["self_acknowledgement"] != 1 || landing && m.Applied && c.Cobatch && kinds["decision"] == 0) {
+		t.Fatalf("world %d consumer records %v", world, kinds)
+	}
+	return slices.Collect(maps.Keys(kinds))
+}
+
+// requireHeldWait keeps the held change non-vacuous: its own hold renders for
+// the unauthorized audience in every world and, when authorized is set, its
+// wait is old enough that a reader of the unredacted queue sees the flag.
+func requireHeldWait(t *testing.T, h http.Handler, m statusfixture.MetamorphicWorld, authorized bool) {
+	t.Helper()
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", fmt.Sprintf("/v1/queues/acme/client/main/prs/%d", statusfixture.HeldPR), nil))
+	var body struct {
+		PR struct {
+			Dependency *WaitingReason `json:"dependency"`
+		} `json:"pr"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if d := body.PR.Dependency; w.Code != 200 || d == nil || d.Text != "Dependency declaration requires acknowledgement" || d.WaitAge != nil {
+		t.Fatalf("held view: %d %+v", w.Code, d)
+	}
+	if !authorized {
+		return
+	}
+	j, err := ProjectDependenciesAt(m.Journal, m.Binding, map[string][]dependency.Grant{m.Source: {m.Grant}}, statusfixture.StatusSources(), metamorphicClock(m.Journal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := j.DependencyStatus[statusfixture.HeldPR]; j.DependencyRedacted || v.WaitAge == nil {
+		t.Fatalf("authorized held wait: redacted=%t %+v", j.DependencyRedacted, v)
+	}
+}
+
+// requireSelfAckView keeps the self-acknowledgement cases non-vacuous: the
+// distinct status and its nonblocking warning render for the unauthorized
+// audience. Byte comparison, not this check, catches a leaked journal reference.
+func requireSelfAckView(t *testing.T, h http.Handler, pr int) {
+	t.Helper()
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", fmt.Sprintf("/v1/queues/acme/client/main/prs/%d", pr), nil))
+	var body struct {
+		PR struct {
+			Dependency *WaitingReason `json:"dependency"`
+		} `json:"pr"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	d := body.PR.Dependency
+	if w.Code != 200 || d == nil || d.SelfAcknowledgement == nil || d.SelfAcknowledgement.Actor != "11" || len(d.Warnings) != 1 {
+		t.Fatalf("self-acknowledgement view: %d %+v", w.Code, d)
 	}
 }
 

@@ -289,8 +289,14 @@ func TestDependencyMetamorphicPublication(t *testing.T) {
 	if testing.Short() {
 		cases = cases[:5]
 	}
-	for i, c := range cases {
-		pinned := i%2 == 0
+	base := 0
+	for _, c := range cases {
+		// Alternate pins over the 5-1 cases exactly as before; a
+		// consumer-history variant shares its base case's pin.
+		if !c.Consumer {
+			base++
+		}
+		pinned := (base-1)%2 == 0
 		t.Run(fmt.Sprintf("%s/github-pin-%t", c, pinned), func(t *testing.T) {
 			db, conn := databaseConnection(t)
 			type outcome struct {

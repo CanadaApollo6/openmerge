@@ -54,6 +54,28 @@ func DecodeEvent(raw []byte) (Event, error) {
 	return e, err
 }
 
+// exportKinds names the dependency evidence an ADR 0011 scoped audit export
+// carries, by journal type. It classifies stored records; it writes nothing.
+var exportKinds = map[string]string{
+	"dependency_journal_initialized": "journal", "dependency_policy_applied": "policy",
+	"change_dependencies_declared": "declaration", "dependency_declaration_acknowledged": "acknowledgement",
+	"dependency_declaration_self_acknowledged": "self_acknowledgement", "dependency_observed": "observation",
+	"dependency_diagnostic_recorded": "diagnostic", "dependency_composition_recorded": "composition",
+	"dependency_decision_recorded": "decision", "dependency_compositions_invalidated": "invalidation",
+}
+
+// ExportKind returns the scoped-export kind of a stored record's envelope type.
+func ExportKind(raw []byte) (typ, kind string, ok bool) {
+	var header struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(raw, &header) != nil {
+		return "", "", false
+	}
+	kind, ok = exportKinds[header.Type]
+	return header.Type, kind, ok
+}
+
 // QueueEvent is for evidence-only scans. Authorization readers use Reader.Apply
 // to validate references and folds as well. New evidence has no queue effect.
 func QueueEvent(raw []byte) (queue.Event, error) {

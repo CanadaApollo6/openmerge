@@ -1,0 +1,260 @@
+{
+  "head": "6bdb0e51e973cc26b0fb7dc11149d85aa7992434",
+  "command": "python3 scripts/verify-adr0011-slice5-2.py",
+  "new": [
+    {
+      "row": "N1",
+      "leak": "wait-age starting at private eligibility in the generic view (no redaction guard)",
+      "suite": "status",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
+      "assertion": "dependencies_metamorphic_test.go:111: world 4 /v1/queues differs at byte 1167:"
+    },
+    {
+      "row": "N2",
+      "leak": "private-dependent records in the redacted export (counts, order, cursors, totals)",
+      "suite": "status",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
+      "assertion": "dependencies_metamorphic_test.go:61: private tail changed the export at byte 2028:"
+    },
+    {
+      "row": "N2b",
+      "leak": "N2 with only cursor pages compared (pagination channel alone)",
+      "suite": "status",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
+      "assertion": "dependencies_metamorphic_test.go:111: world 4 export:pages:1 differs at byte 176:"
+    },
+    {
+      "row": "N3",
+      "leak": "recording times on redacted export records",
+      "suite": "status",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
+      "assertion": "dependencies_metamorphic_test.go:117: export does not verify: audit: dependency export integrity check failed"
+    },
+    {
+      "row": "N3b",
+      "leak": "N3 with strict verification bypassed (timestamp channel alone)",
+      "suite": "status",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1/consumer",
+      "assertion": "dependencies_metamorphic_test.go:111: world 4 export:manifest differs at byte 99:"
+    },
+    {
+      "row": "N4",
+      "leak": "journal event reference on the unauthorized self-acknowledgement",
+      "suite": "status",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1/consumer",
+      "assertion": "dependencies_metamorphic_test.go:111: world 4 /v1/queues/acme/client/main/changes/chg1_3348793f833f0d121afb78d855ba9de24e58dc824484d5cc74bcb8bc506c22f8 differs at byte 281:"
+    },
+    {
+      "row": "N5",
+      "leak": "multi-writer warning present only while the private wait blocks",
+      "suite": "status",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1/consumer",
+      "assertion": "dependencies_metamorphic_test.go:111: world 4 /v1/queues differs at byte 1167:"
+    },
+    {
+      "row": "N6",
+      "leak": "complete export granted without complete source authorization",
+      "suite": "status",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
+      "assertion": "dependencies_metamorphic_test.go:61: private tail changed the export at byte 11133:"
+    },
+    {
+      "row": "N7",
+      "leak": "wait-age on a held, queued, edge-free view while the queue is redacted (per-view guard only)",
+      "suite": "status",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1/consumer",
+      "assertion": "dependencies_metamorphic_test.go:78: held view: 200 &{Diagnostics:[] Code:dependencies Text:Dependency declaration requires acknowledgement Details:[dependency-declaration-changed an authenticated writer may self-acknowledge under the singl"
+    },
+    {
+      "row": "N7b",
+      "leak": "N7 with the held-view absence assertion removed (byte differential alone)",
+      "suite": "status",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1/consumer",
+      "assertion": "dependencies_metamorphic_test.go:111: world 4 /v1/queues differs at byte 3300:"
+    },
+    {
+      "row": "N8",
+      "leak": "wait clock started by another change's private read before the change declares",
+      "suite": "unit",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyWaitAgeOwnHistory",
+      "assertion": "dependency_selfack_test.go:158: complete audience: redacted=false &{Since:2026-01-01 00:20:00 +0000 UTC Threshold:1h0m0s}"
+    },
+    {
+      "row": "N9",
+      "leak": "wait-age line appended past the 8-line summary cap",
+      "suite": "unit",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyWaitAgeKeepsDetailBound",
+      "assertion": "dependency_selfack_test.go:78: 8 details: 9 lines [line 0 line 1 line 2 line 3 line 4 line 5 line 6 line 7 dependency wait older than 1h0m0s (non-actionable; for operator review)]"
+    },
+    {
+      "row": "N10a",
+      "leak": "redacted declaration revision derived from the edge count",
+      "suite": "reflect",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyExportReflectInputs/declaration",
+      "assertion": "dependency_export_test.go:281: allowlisted input .Revision does not reach the projection: {\"change_id\":\"filled:.ChangeID\",\"revision\":1,\"held\":true,\"unknown_editor\":true,\"editors\":[\"filled:.Hold.Editors[]\"],\"redeclaration\":true}"
+    },
+    {
+      "row": "N10b",
+      "leak": "redacted redeclaration flag derived from the edges",
+      "suite": "reflect",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyExportReflectInputs/declaration",
+      "assertion": "dependency_export_test.go:281: allowlisted input .Redeclaration does not reach the projection: {\"change_id\":\"filled:.ChangeID\",\"revision\":7,\"held\":true,\"unknown_editor\":true,\"editors\":[\"filled:.Hold.Editors[]\"],\"redeclaration\":true}"
+    },
+    {
+      "row": "N10c",
+      "leak": "redacted hold flag derived from the edge count",
+      "suite": "reflect",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyExportReflectInputs/declaration",
+      "assertion": "dependency_export_test.go:279: non-allowlisted input .Edges changed the projection (cleared=true):"
+    },
+    {
+      "row": "N11",
+      "leak": "whole records file capped at MaxBytes by the scoped verifier",
+      "suite": "audit",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyExportVerifiesLargeStream",
+      "assertion": "dependency_export_test.go:221: {  0 {   }    0 } 0 audit: dependency export integrity check failed"
+    }
+  ],
+  "adr_0011_5_1_round5": [
+    {
+      "row": "1",
+      "leak": "`predecessor-build` gate on an independent PR",
+      "suite": "status",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPrivacy/closed-planned/provenance-true/private-first-true/cobatch-true/pr-2/depth-4",
+      "assertion": "dependencies_metamorphic_test.go:111: world 7 /v1/queues/acme/client/main/changes/chg1_c24cf29fee718e9c67af1e4caa748ec3acdc4464b98a2673d86c3e16dbf1f10b?revision=1 differs at byte 710:"
+    },
+    {
+      "row": "2",
+      "leak": "check cache survives revocation",
+      "suite": "serve",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPublication/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1/github-pin-true",
+      "assertion": "dependency_metamorphic_test.go:365: world 0 PR 1 kept authorized output after revocation at byte 88:"
+    },
+    {
+      "row": "3",
+      "leak": "co-batched `dependency-changed` reason",
+      "suite": "status",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
+      "assertion": "dependencies_metamorphic_test.go:111: world 5 /v1/queues differs at byte 1064:"
+    },
+    {
+      "row": "4",
+      "leak": "`dequeue-pending` batch ID, position and ahead",
+      "suite": "status",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
+      "assertion": "dependencies_metamorphic_test.go:111: world 4 /v1/queues differs at byte 2594:"
+    },
+    {
+      "row": "5",
+      "leak": "duplicate publication under the authority pin",
+      "suite": "serve",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPublication/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1/github-pin-true",
+      "assertion": "dependency_metamorphic_test.go:344: world 0 republished 6 unchanged checks"
+    },
+    {
+      "row": "6",
+      "leak": "`DependencyCheckStatus` bypass for `dequeue-pending`",
+      "suite": "serve",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPublication/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1/github-pin-true",
+      "assertion": "dependency_metamorphic_test.go:335: world 4 sent different forge payloads at byte 607:"
+    },
+    {
+      "row": "7",
+      "leak": "batch-derived `Detail`",
+      "suite": "status",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
+      "assertion": "dependencies_metamorphic_test.go:111: world 4 /v1/queues differs at byte 2039:"
+    },
+    {
+      "row": "8",
+      "leak": "landing-batch metadata before a confirmed merge",
+      "suite": "status",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPrivacy/landing/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
+      "assertion": "dependencies_metamorphic_test.go:111: world 4 /v1/queues differs at byte 241:"
+    },
+    {
+      "row": "9",
+      "leak": "unconfirmed landing status (revert 9176c96b)",
+      "suite": "status",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPrivacy/landing/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
+      "assertion": "dependencies_metamorphic_test.go:111: world 4 /v1/queues differs at byte 298:"
+    },
+    {
+      "row": "9",
+      "leak": "unconfirmed landing status (revert 9176c96b)",
+      "suite": "cli",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicCLI/landing/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
+      "assertion": "dependency_status_test.go:171: world 4 PR 0 differs at byte 50:"
+    },
+    {
+      "row": "9",
+      "leak": "unconfirmed landing status (revert 9176c96b)",
+      "suite": "serve",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPublication/landing/provenance-true/private-first-false/cobatch-true/pr-3/depth-1/github-pin-false",
+      "assertion": "dependency_metamorphic_test.go:335: world 4 sent different forge payloads at byte 76:"
+    },
+    {
+      "row": "10",
+      "leak": "CI gates `landing-preflight` / `bisection`",
+      "suite": "status",
+      "caught": true,
+      "invalid": false,
+      "test": "TestDependencyMetamorphicPrivacy/ci-passed/provenance-false/private-first-false/cobatch-true/pr-3/depth-1",
+      "assertion": "dependencies_metamorphic_test.go:111: world 4 /v1/queues/acme/client/main/changes/chg1_a826a158e570fd462096d86f90b051f3c5e83b50fb7486ab3f5973dcec41134b?revision=1 differs at byte 710:"
+    }
+  ]
+}
