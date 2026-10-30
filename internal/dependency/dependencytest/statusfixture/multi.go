@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/dependency"
 	"github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest"
@@ -16,12 +17,13 @@ import (
 // and at depth four appends three real speculative suffix compositions.
 func MultiJournal(t testing.TB, code, phase string, depth int, cobatch bool) (store.Journal, dependency.JournalInitialized, string, dependency.Grant, []int) {
 	t.Helper()
-	return multiJournal(t, code, phase, depth, cobatch, 100)
+	return multiJournal(t, code, phase, depth, cobatch, 100, false)
 }
 
 // multiJournal numbers tested commits from tested, so a later rebuilt
 // composition can reuse the canonical commits of an equivalent public history.
-func multiJournal(t testing.TB, code, phase string, depth int, cobatch bool, tested int) (store.Journal, dependency.JournalInitialized, string, dependency.Grant, []int) {
+// optIn governs the queue with the single-maintainer opt-in and two writers.
+func multiJournal(t testing.TB, code, phase string, depth int, cobatch bool, tested int, optIn bool) (store.Journal, dependency.JournalInitialized, string, dependency.Grant, []int) {
 	t.Helper()
 	initial := code
 	if phase != "queued" {
@@ -31,6 +33,21 @@ func multiJournal(t testing.TB, code, phase string, depth int, cobatch bool, tes
 	// Delay B's admission so an independent change is genuinely ahead of it.
 	_, j.Events[1].Payload, _ = queue.EncodeEvent(queue.RefreshRequested{})
 	j.Events[1].Event = queue.RefreshRequested{}
+	if optIn {
+		e, err := dependency.DecodeEvent(j.Events[3].Payload)
+		policy, ok := e.(dependency.PolicyApplied)
+		if err != nil || !ok {
+			t.Fatalf("fixture policy: %v", err)
+		}
+		policy.Policy.SingleMaintainer = true
+		policy.Digest = dependency.PolicyDigest(policy.Policy, policy.Enabled)
+		for _, writer := range []string{"11", "22"} {
+			policy.Writers = append(policy.Writers, dependency.Grant{SubjectID: writer, ReturnedID: writer, RepositoryID: policy.Alias.RepositoryID, ReadID: "writers", Fresh: true, Allowed: true})
+		}
+		if _, j.Events[3].Payload, err = dependency.EncodeEvent(policy); err != nil {
+			t.Fatal(err)
+		}
+	}
 	b := replay(t, &j, binding)
 	var observed dependency.Observed
 	var observedID uint64
@@ -192,7 +209,11 @@ func startBatches(b *journalBuilder, depth int, cobatch, building bool, offset, 
 }
 
 // journalBuilder appends events only after the real reader accepts them.
+// Records are stamped offset after the first record; delay, when set, is
+// added to offset by each private observation.
 type journalBuilder struct {
+	offset  time.Duration
+	delay   time.Duration
 	t       testing.TB
 	j       *store.Journal
 	binding dependency.JournalInitialized
@@ -238,6 +259,6 @@ func (b *journalBuilder) add(event any) uint64 {
 	if _, err := b.reader.Apply(id, raw); err != nil {
 		t.Fatalf("%T rejected: %v", event, err)
 	}
-	b.j.Events = append(b.j.Events, store.JournalEvent{ID: int64(id), RecordedAt: b.j.Events[0].RecordedAt, Payload: raw, Event: qe})
+	b.j.Events = append(b.j.Events, store.JournalEvent{ID: int64(id), RecordedAt: b.j.Events[0].RecordedAt.Add(b.offset), Payload: raw, Event: qe})
 	return id
 }
