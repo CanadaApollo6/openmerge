@@ -1,5 +1,5 @@
 {
-  "head": "596a5301ea40b3c14e98c0693270b2bc971f7377",
+  "head": "be8713846a5b24fca3f7cbe2d57253c04b0ff92a",
   "command": "python3 scripts/verify-adr0011-slice5-2.py",
   "new": [
     {
@@ -83,7 +83,7 @@
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPrivacy/closed-planned/provenance-true/private-first-true/cobatch-true/pr-2/depth-4",
-      "assertion": "dependencies_metamorphic_test.go:85: world 7 /v1/queues/acme/client/main/changes/chg1_c24cf29fee718e9c67af1e4caa748ec3acdc4464b98a2673d86c3e16dbf1f10b?revision=1 differs at byte 710:"
+      "assertion": "dependencies_metamorphic_test.go:88: world 7 /v1/queues/acme/client/main/changes/chg1_c24cf29fee718e9c67af1e4caa748ec3acdc4464b98a2673d86c3e16dbf1f10b?revision=1 differs at byte 710:"
     },
     {
       "row": "2",
@@ -92,7 +92,7 @@
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPublication/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1/github-pin-true",
-      "assertion": "dependency_metamorphic_test.go:359: world 0 PR 1 kept authorized output after revocation at byte 88:"
+      "assertion": "dependency_metamorphic_test.go:365: world 0 PR 1 kept authorized output after revocation at byte 88:"
     },
     {
       "row": "3",
@@ -101,7 +101,7 @@
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
-      "assertion": "dependencies_metamorphic_test.go:85: world 5 /v1/queues differs at byte 1064:"
+      "assertion": "dependencies_metamorphic_test.go:88: world 5 /v1/queues differs at byte 1064:"
     },
     {
       "row": "4",
@@ -110,7 +110,7 @@
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
-      "assertion": "dependencies_metamorphic_test.go:85: world 4 /v1/queues differs at byte 2594:"
+      "assertion": "dependencies_metamorphic_test.go:88: world 4 /v1/queues differs at byte 2594:"
     },
     {
       "row": "5",
@@ -119,7 +119,7 @@
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPublication/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1/github-pin-true",
-      "assertion": "dependency_metamorphic_test.go:338: world 0 republished 6 unchanged checks"
+      "assertion": "dependency_metamorphic_test.go:344: world 0 republished 6 unchanged checks"
     },
     {
       "row": "6",
@@ -128,7 +128,7 @@
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPublication/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1/github-pin-true",
-      "assertion": "dependency_metamorphic_test.go:329: world 4 sent different forge payloads at byte 607:"
+      "assertion": "dependency_metamorphic_test.go:335: world 4 sent different forge payloads at byte 607:"
     },
     {
       "row": "7",
@@ -137,7 +137,7 @@
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPrivacy/requested/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
-      "assertion": "dependencies_metamorphic_test.go:85: world 4 /v1/queues differs at byte 2039:"
+      "assertion": "dependencies_metamorphic_test.go:88: world 4 /v1/queues differs at byte 2039:"
     },
     {
       "row": "8",
@@ -146,7 +146,7 @@
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPrivacy/landing/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
-      "assertion": "dependencies_metamorphic_test.go:85: world 4 /v1/queues differs at byte 241:"
+      "assertion": "dependencies_metamorphic_test.go:88: world 4 /v1/queues differs at byte 241:"
     },
     {
       "row": "9",
@@ -155,7 +155,7 @@
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPrivacy/landing/provenance-true/private-first-false/cobatch-true/pr-3/depth-1",
-      "assertion": "dependencies_metamorphic_test.go:85: world 4 /v1/queues differs at byte 298:"
+      "assertion": "dependencies_metamorphic_test.go:88: world 4 /v1/queues differs at byte 298:"
     },
     {
       "row": "9",
@@ -173,7 +173,7 @@
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPublication/landing/provenance-true/private-first-false/cobatch-true/pr-3/depth-1/github-pin-false",
-      "assertion": "dependency_metamorphic_test.go:329: world 4 sent different forge payloads at byte 76:"
+      "assertion": "dependency_metamorphic_test.go:335: world 4 sent different forge payloads at byte 76:"
     },
     {
       "row": "10",
@@ -182,7 +182,7 @@
       "caught": true,
       "invalid": false,
       "test": "TestDependencyMetamorphicPrivacy/ci-passed/provenance-false/private-first-false/cobatch-true/pr-3/depth-1",
-      "assertion": "dependencies_metamorphic_test.go:85: world 4 /v1/queues/acme/client/main/changes/chg1_a826a158e570fd462096d86f90b051f3c5e83b50fb7486ab3f5973dcec41134b?revision=1 differs at byte 710:"
+      "assertion": "dependencies_metamorphic_test.go:88: world 4 /v1/queues/acme/client/main/changes/chg1_a826a158e570fd462096d86f90b051f3c5e83b50fb7486ab3f5973dcec41134b?revision=1 differs at byte 710:"
     }
   ]
 }
