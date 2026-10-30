@@ -292,8 +292,8 @@ func TestDependencyMetamorphicPublication(t *testing.T) {
 	base := 0
 	for _, c := range cases {
 		// Alternate pins over the 5-1 cases exactly as before; a
-		// self-acknowledgement variant shares its base case's pin.
-		if !c.SelfAck {
+		// consumer-history variant shares its base case's pin.
+		if c.Consumer == "" {
 			base++
 		}
 		pinned := (base-1)%2 == 0

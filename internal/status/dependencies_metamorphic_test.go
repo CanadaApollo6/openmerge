@@ -7,13 +7,14 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/audit"
-
+	"github.com/CanadaApollo6/openmerge/internal/dependency"
 	"github.com/CanadaApollo6/openmerge/internal/dependency/dependencytest/statusfixture"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -49,10 +50,16 @@ func TestDependencyMetamorphicPrivacy(t *testing.T) {
 				// one world per case, the full product in every world.
 				tail := !testing.Short() || len(worlds) == 1
 				outputs, verify := metamorphicExport(t, m, tail)
+				requireCompleteExport(t, c, m, world)
 				prs := m.PRs
-				if m.SelfAckPR != 0 {
-					prs = append(slices.Clone(prs), m.SelfAckPR)
-					requireSelfAckView(t, h, m.SelfAckPR)
+				if m.ConsumerPR != 0 {
+					prs = append(slices.Clone(prs), m.ConsumerPR)
+				}
+				switch c.Consumer {
+				case statusfixture.ConsumerSelfAck:
+					requireSelfAckView(t, h, m.ConsumerPR)
+				case statusfixture.ConsumerHeld:
+					requireHeldWait(t, h, m)
 				}
 				for _, pr := range prs {
 					id, err := j.Key.ChangeID(pr)
@@ -155,6 +162,65 @@ func metamorphicExport(t *testing.T, m statusfixture.MetamorphicWorld, tail bool
 		if verified, err := audit.DecodeDependencyExport(manifest, stream); err != nil || len(verified) != len(records) {
 			t.Fatalf("export does not verify: %v", err)
 		}
+	}
+}
+
+// requireCompleteExport strictly verifies the complete-audience export of every
+// world, and keeps the consumer cases non-vacuous: an independent
+// acknowledgement is exported, and so is a decision once landing starts.
+func requireCompleteExport(t *testing.T, c statusfixture.MetamorphicCase, m statusfixture.MetamorphicWorld, world int) {
+	t.Helper()
+	audience := map[string][]dependency.Grant{m.Source: {m.Grant}}
+	scope, entries, err := DependencyExport(m.Journal, m.Binding, audience, statusfixture.StatusSources())
+	if err != nil || scope != audit.DependencyAudienceComplete {
+		t.Fatalf("complete export: %s %v", scope, err)
+	}
+	key := audit.Key{Installation: m.Journal.Key.Installation, Repository: m.Journal.Key.Repository, Base: m.Journal.Key.BaseBranch, Lane: m.Journal.Key.Lane}
+	dir := filepath.Join(t.TempDir(), fmt.Sprintf("complete-%d", world))
+	if _, err := audit.WriteDependencyExport(dir, key, scope, entries); err != nil {
+		t.Fatal(err)
+	}
+	manifest, records, err := audit.VerifyDependencyExport(dir)
+	if err != nil || manifest.Audience != scope || len(records) != len(entries) {
+		t.Fatalf("complete export does not verify: %v", err)
+	}
+	kinds := map[string]int{}
+	for _, r := range records {
+		kinds[r.Kind]++
+	}
+	if c.Consumer != statusfixture.ConsumerAck {
+		return
+	}
+	landing := strings.HasPrefix(c.Transition, "landing") || c.Transition == "landed"
+	if kinds["acknowledgement"] != 1 || landing && m.Applied && c.Cobatch && kinds["decision"] == 0 {
+		t.Fatalf("world %d consumer records %v", world, kinds)
+	}
+}
+
+// requireHeldWait keeps the held cases non-vacuous: the queued change's own
+// hold renders for the unauthorized audience, and its wait is old enough that
+// an authorized reader of an unredacted queue sees the flag.
+func requireHeldWait(t *testing.T, h http.Handler, m statusfixture.MetamorphicWorld) {
+	t.Helper()
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", fmt.Sprintf("/v1/queues/acme/client/main/prs/%d", m.ConsumerPR), nil))
+	var body struct {
+		PR struct {
+			Dependency *WaitingReason `json:"dependency"`
+		} `json:"pr"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if d := body.PR.Dependency; w.Code != 200 || d == nil || d.Text != "Dependency declaration requires acknowledgement" || d.WaitAge != nil {
+		t.Fatalf("held view: %d %+v", w.Code, d)
+	}
+	j, err := ProjectDependenciesAt(m.Journal, m.Binding, map[string][]dependency.Grant{m.Source: {m.Grant}}, statusfixture.StatusSources(), metamorphicClock(m.Journal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := j.DependencyStatus[m.ConsumerPR]; j.DependencyRedacted || v.WaitAge == nil {
+		t.Fatalf("authorized held wait: redacted=%t %+v", j.DependencyRedacted, v)
 	}
 }
 

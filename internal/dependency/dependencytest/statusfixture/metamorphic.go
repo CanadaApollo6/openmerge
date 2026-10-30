@@ -32,19 +32,33 @@ type MetamorphicCase struct {
 	Cobatch      bool
 	Target       int
 	Depth        int
-	// SelfAck opts the queue into single-maintainer self-acknowledgement with
-	// two writers and, after the public transition, records a completed public
-	// self-acknowledgement for SelfAckPR, after private-dependent prefixes.
-	SelfAck bool
+	// Consumer, when set, opts the queue into single-maintainer
+	// self-acknowledgement with two writers and, after the public transition
+	// and private-dependent prefixes, records public consumer-repository history
+	// of that shape for ConsumerPR.
+	Consumer string
 }
 
-// SelfAckPR is the observed, never-queued change that self-acknowledges.
-const SelfAckPR = 7
+// Consumer-repository history shapes. Each declares an edge for ConsumerPR,
+// then removes it as author 11 (a loosening hold).
+const (
+	// ConsumerSelfAck: the observed, never-queued change self-acknowledges.
+	ConsumerSelfAck = "self-ack"
+	// ConsumerHeld: the change is queued and stays held, never acknowledged,
+	// so an authorized view has a running dependency wait.
+	ConsumerHeld = "held"
+	// ConsumerAck: writer 22 acknowledges independently, and a landing start
+	// records a dependency decision for every member without declared edges.
+	ConsumerAck = "ack"
+)
+
+// ConsumerPR is the change that carries the consumer-repository history.
+const ConsumerPR = 7
 
 func (c MetamorphicCase) String() string {
 	name := fmt.Sprintf("%s/provenance-%t/private-first-%t/cobatch-%t/pr-%d/depth-%d", c.Transition, c.Provenance, c.PrivateFirst, c.Cobatch, c.Target, c.Depth)
-	if c.SelfAck {
-		name += "/self-ack"
+	if c.Consumer != "" {
+		name += "/" + c.Consumer
 	}
 	return name
 }
@@ -58,33 +72,39 @@ func MetamorphicCases(short bool) []MetamorphicCase {
 		// database-backed serve test, including a CI outcome.
 		return []MetamorphicCase{
 			// Pending dequeue batch fields, check bypass and private provenance.
-			{"requested", true, false, true, 3, 1, false},
+			{"requested", true, false, true, 3, 1, ""},
 			// Paused batch-derived detail and co-batched dependency-changed reasons.
-			{"paused", true, true, true, 3, 4, false},
+			{"paused", true, true, true, 3, 4, ""},
 			// Passing CI: landing-preflight gate against an unbatched world.
-			{"ci-passed", false, false, true, 3, 1, false},
+			{"ci-passed", false, false, true, 3, 1, ""},
 			// Unconfirmed landing: status, gate and batch metadata.
-			{"landing", true, false, true, 3, 1, false},
+			{"landing", true, false, true, 3, 1, ""},
 			// Change-left-queue invalidation, dequeue and retained departed checks.
-			{"closed-planned", true, true, true, 2, 4, false},
+			{"closed-planned", true, true, true, 2, 4, ""},
 			// Building dependent predecessor with unbatched independent followers.
-			{"head", false, true, false, 1, 1, false},
-			{"closed", false, false, false, 3, 4, false},
-			{"retargeted", true, false, true, 2, 1, false},
-			{"head-planned", false, false, true, 3, 1, false},
-			{"requested-planned", false, true, false, 3, 1, false},
-			{"retargeted-planned", true, false, true, 1, 4, false},
+			{"head", false, true, false, 1, 1, ""},
+			{"closed", false, false, false, 3, 4, ""},
+			{"retargeted", true, false, true, 2, 1, ""},
+			{"head-planned", false, false, true, 3, 1, ""},
+			{"requested-planned", false, true, false, 3, 1, ""},
+			{"retargeted-planned", true, false, true, 1, 4, ""},
 			// A failed multi-PR batch: provisional in a chain, bisected alone.
-			{"ci-failed", false, false, true, 2, 4, false},
-			{"ci-failed", true, false, true, 1, 1, false},
+			{"ci-failed", false, false, true, 2, 4, ""},
+			{"ci-failed", true, false, true, 1, 1, ""},
 			// A failed retry holds unbatched followers at predecessor-checks.
-			{"check-retry", true, false, false, 3, 1, false},
-			{"landed", false, false, false, 2, 4, false},
+			{"check-retry", true, false, false, 3, 1, ""},
+			{"landed", false, false, false, 2, 4, ""},
 			// Self-acknowledgement after private-dependent prefixes: journal IDs,
 			// recording times, positions and the warning must stay public.
-			{"requested", true, false, true, 3, 1, true},
-			{"paused", true, true, true, 3, 4, true},
-			{"landed", false, false, false, 2, 4, true},
+			{"requested", true, false, true, 3, 1, ConsumerSelfAck},
+			{"paused", true, true, true, 3, 4, ConsumerSelfAck},
+			{"landed", false, false, false, 2, 4, ConsumerSelfAck},
+			// A queued change still held after its last edge is removed: its
+			// view is not generic, but its wait timing is private.
+			{"requested", true, false, true, 3, 1, ConsumerHeld},
+			{"landed", false, false, false, 2, 4, ConsumerHeld},
+			// Independent acknowledgement and dependency decisions.
+			{"landed", false, false, true, 3, 1, ConsumerAck},
 		}
 	}
 	var cases []MetamorphicCase
@@ -94,10 +114,10 @@ func MetamorphicCases(short bool) []MetamorphicCase {
 				for _, cobatch := range []bool{false, true} {
 					for _, target := range []int{1, 2, 3} {
 						for _, depth := range []int{1, 4} {
-							cases = append(cases, MetamorphicCase{transition, provenance, privateFirst, cobatch, target, depth, false})
-							// Self-acknowledgement is independent of the target.
-							if target == 2 {
-								cases = append(cases, MetamorphicCase{transition, provenance, privateFirst, cobatch, target, depth, true})
+							cases = append(cases, MetamorphicCase{transition, provenance, privateFirst, cobatch, target, depth, ""})
+							// Consumer history is independent of the target.
+							if consumer := map[int]string{1: ConsumerHeld, 2: ConsumerSelfAck, 3: ConsumerAck}[target]; consumer != "" {
+								cases = append(cases, MetamorphicCase{transition, provenance, privateFirst, cobatch, target, depth, consumer})
 							}
 						}
 					}
@@ -131,8 +151,8 @@ type MetamorphicWorld struct {
 	Uncompared string
 	// Tail is a private-only observation recorded after the journal.
 	Tail []store.JournalEvent
-	// SelfAckPR is the self-acknowledging change, or zero.
-	SelfAckPR int
+	// ConsumerPR carries the case's consumer history, or is zero.
+	ConsumerPR int
 }
 
 type metamorphicWorld struct {
@@ -183,7 +203,7 @@ func Metamorphic(t testing.TB, c MetamorphicCase, w int) MetamorphicWorld {
 	if v.rebuilt {
 		tested = 200
 	}
-	j, binding, source, grant, prs := multiJournal(t, v.code, v.phase, c.Depth, c.Cobatch, tested, c.SelfAck)
+	j, binding, source, grant, prs := multiJournal(t, v.code, v.phase, c.Depth, c.Cobatch, tested, c.Consumer != "")
 	b := replay(t, &j, binding)
 	b.grant = grant
 	// Every private read delays later records by a world-dependent amount, so
@@ -259,7 +279,10 @@ func Metamorphic(t testing.TB, c MetamorphicCase, w int) MetamorphicWorld {
 		if batch := head(); batch != nil {
 			b.add(queue.ChecksObserved{BatchID: batch.ID, TestedSHA: batch.TestedSHA, Runs: runs("success"), Terminal: true, Success: true, OriginalDeadline: at.Add(time.Hour), Timeout: time.Hour})
 			b.add(queue.ChecksCompleted{TestedSHA: batch.TestedSHA, Success: true})
-			b.add(queue.LandingStarted{BatchID: batch.ID, AttemptID: "attempt-" + batch.ID, FenceToken: b.reader.Queue.Fence, At: at})
+			start := b.add(queue.LandingStarted{BatchID: batch.ID, AttemptID: "attempt-" + batch.ID, FenceToken: b.reader.Queue.Fence, At: at})
+			if c.Consumer == ConsumerAck {
+				b.decide(batch.ID, start)
+			}
 			if transition == "landed" {
 				for _, pin := range batch.PRs {
 					merged = append(merged, pin.PR)
@@ -294,9 +317,16 @@ func Metamorphic(t testing.TB, c MetamorphicCase, w int) MetamorphicWorld {
 	if !c.PrivateFirst {
 		b.privateObservation(metamorphicNext(c, w))
 	}
-	if c.SelfAck {
-		b.selfAcknowledge(SelfAckPR)
-		world.SelfAckPR = SelfAckPR
+	switch c.Consumer {
+	case ConsumerSelfAck:
+		b.selfAcknowledge(ConsumerPR)
+	case ConsumerHeld:
+		b.declareHeld(ConsumerPR, true)
+	case ConsumerAck:
+		b.acknowledge(ConsumerPR)
+	}
+	if c.Consumer != "" {
+		world.ConsumerPR = ConsumerPR
 	}
 	world.Group, world.Uncompared = metamorphicSettlement(c, j, b.reader.Queue, prs, merged)
 	world.Journal, world.Source, world.Grant = j, source, grant
@@ -379,13 +409,16 @@ func (b *journalBuilder) privateObservation(result, code string) {
 	b.add(dependency.DiagnosticRecorded{Namespace: b.binding.Namespace, ObservationEventID: id, Source: dependencytest.Request().Source.Alias, Evidence: dependency.ReadEvidence{Stage: dependency.WorkRead, Declaration: last.Declaration, Grant: b.grant, Observation: last, Code: code}})
 }
 
-// selfAcknowledge records public consumer-repository history for an observed
-// change: a declared edge, its removal by author 11 (a loosening hold) and 11's
-// self-acknowledgement under the queue's single-maintainer opt-in.
-func (b *journalBuilder) selfAcknowledge(pr int) {
+// declareHeld records public consumer-repository history for an observed,
+// optionally queued, change: a declared edge and its removal by author 11 (a
+// loosening hold). It returns the holding declaration and its event.
+func (b *journalBuilder) declareHeld(pr int, queued bool) (dependency.DependenciesDeclared, uint64) {
 	t := b.t
 	t.Helper()
 	b.add(queue.PRObserved{PR: pr, HeadSHA: fixtureHead(pr), Eligible: true, Trusted: true})
+	if queued {
+		b.add(queue.EnqueueRequested{PR: pr, At: b.j.Events[0].RecordedAt})
+	}
 	id, err := b.j.Key.ChangeID(pr)
 	if err != nil {
 		t.Fatal(err)
@@ -397,9 +430,53 @@ func (b *journalBuilder) selfAcknowledge(pr int) {
 	decl.Poll, decl.Edges = 2, []dependency.DeclaredEdge{}
 	decl.Digest = dependency.DeclarationDigest(decl.Edges)
 	decl.Hold = dependency.DeclarationHold{Held: true, Editors: []string{"11"}}
-	held := b.add(decl)
+	return decl, b.add(decl)
+}
+
+// acknowledgement is writer's acknowledgement of the holding declaration.
+func (b *journalBuilder) acknowledgement(decl dependency.DependenciesDeclared, held uint64, writer string) dependency.Acknowledged {
 	policy, policyID := b.policy()
-	b.add(dependency.SelfAcknowledged{Acknowledged: dependency.Acknowledged{Namespace: b.binding.Namespace, Alias: decl.Alias, Declaration: dependency.Basis{EventID: held, Digest: decl.Digest}, Writer: dependency.Grant{SubjectID: "11", ReturnedID: "11", RepositoryID: decl.Alias.RepositoryID, ReadID: "self-ack", Fresh: true, Allowed: true}, Exclusions: []string{"11"}, PolicyEventID: policyID, GoverningCommit: policy.Commit, PolicyDigest: policy.Digest}, Overridden: []string{"11"}})
+	return dependency.Acknowledged{Namespace: b.binding.Namespace, Alias: decl.Alias, Declaration: dependency.Basis{EventID: held, Digest: decl.Digest}, Writer: dependency.Grant{SubjectID: writer, ReturnedID: writer, RepositoryID: decl.Alias.RepositoryID, ReadID: "ack-" + writer, Fresh: true, Allowed: true}, Exclusions: []string{"11"}, PolicyEventID: policyID, GoverningCommit: policy.Commit, PolicyDigest: policy.Digest}
+}
+
+// selfAcknowledge holds an observed change and records 11's
+// self-acknowledgement under the queue's single-maintainer opt-in.
+func (b *journalBuilder) selfAcknowledge(pr int) {
+	decl, held := b.declareHeld(pr, false)
+	b.add(dependency.SelfAcknowledged{Acknowledged: b.acknowledgement(decl, held, "11"), Overridden: []string{"11"}})
+}
+
+// acknowledge holds an observed change and records writer 22's independent
+// acknowledgement.
+func (b *journalBuilder) acknowledge(pr int) {
+	decl, held := b.declareHeld(pr, false)
+	b.add(b.acknowledgement(decl, held, "22"))
+}
+
+// decide records the landing-start dependency decision of every batch member
+// whose admission needs no source read. A member with declared edges would need
+// reads inside the start transaction, which the fixture does not model.
+func (b *journalBuilder) decide(batchID string, start uint64) {
+	t := b.t
+	t.Helper()
+	batch := b.reader.Queue.Batch(batchID)
+	revisions := b.reader.Queue.BatchRevisions(batchID)
+	state, err := b.reader.Dependencies()
+	if err != nil || batch == nil || len(revisions) != len(batch.PRs) {
+		t.Fatalf("landing batch %s: %v", batchID, err)
+	}
+	for i, pin := range batch.PRs {
+		id, err := b.j.Key.ChangeID(pin.PR)
+		if err != nil {
+			t.Fatal(err)
+		}
+		revision := uint64(revisions[i].Revision)
+		a := state.Admission(string(id), revision)
+		if a.Code != "" || len(a.Basis.ObservationIDs) != 0 {
+			continue
+		}
+		b.add(dependency.DecisionRecorded{Namespace: b.binding.Namespace, BatchID: batchID, AttemptID: batch.LandingAttempt.ID, TestedSHA: batch.TestedSHA, LandedSHA: batch.LandingCommit(), StartEventID: start, Member: uint64(i), Members: uint64(len(batch.PRs)), Alias: a.Alias, ChangeID: string(id), Revision: revision, Head: pin.HeadSHA, Admission: a.Basis, Sources: []dependency.SourceSettlement{}})
+	}
 }
 
 // policy returns the latest governing dependency policy companion.
