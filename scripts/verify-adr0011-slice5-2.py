@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Reintroduce ADR 0011 5-2 and 5-1 privacy leaks one at a time.
 
-Each leak runs only the metamorphic tests, with -short, against an isolated
-archive of HEAD through go test -overlay. The active checkout is never edited.
+Each leak runs only its named tests, with -short, against an isolated archive
+of HEAD through go test -overlay: the metamorphic tests for every privacy leak,
+and focused tests for the round 1 clock, summary-cap, reflection and verifier
+defects. The active checkout is never edited.
 A leak counts as caught only on an assertion failure: build failures, panics,
 timeouts and connection errors are reported as invalid.
 """
@@ -23,8 +25,12 @@ SUITES = {
     'status': ('./internal/status', 'TestDependencyMetamorphicPrivacy$'),
     'cli': ('./cmd/openmerge', 'TestDependencyMetamorphicCLI$'),
     'serve': ('./internal/serve', 'TestDependencyMetamorphicPublication$'),
+    'unit': ('./internal/status', '^(TestDependencyWaitAgeOwnHistory|TestDependencyWaitAgeKeepsDetailBound)$'),
+    'reflect': ('./internal/status', '^TestDependencyExportReflectInputs$'),
+    'audit': ('./internal/audit', '^TestDependencyExportVerifiesLargeStream$'),
 }
 STATUS = 'internal/status/dependencies.go'
+META = 'internal/status/dependencies_metamorphic_test.go'
 MASK_END = '\t\tview.Gate = "dequeue"\n\t}\n\t*e = view\n}'
 
 
@@ -34,8 +40,8 @@ def keep(condition, fields):
 
 # (row, leak, [(file, old, new)], suites)
 NEW = [
-    ('N1', 'wait-age starting at private eligibility in the generic view',
-     [(STATUS, 'v.Redacted || !v.Blocking', '!v.Blocking')], ['status']),
+    ('N1', 'wait-age starting at private eligibility in the generic view (no redaction guard)',
+     [(STATUS, 'redacted || !v.Blocking', '!v.Blocking')], ['status']),
     ('N2', 'private-dependent records in the redacted export (counts, order, cursors, totals)',
      [(STATUS, '\tdefault:\n\t\treturn audit.DependencyEntry{}, false', '\tdefault:\n\t\tevidence = struct{}{}')], ['status']),
     ('N2b', 'N2 with only cursor pages compared (pagination channel alone)',
@@ -60,6 +66,25 @@ NEW = [
     ('N6', 'complete export granted without complete source authorization',
      [(STATUS, 'complete = complete && sourceAuthorized(edge.Reference, scope, audience, sources)',
        'complete = complete || sourceAuthorized(edge.Reference, scope, audience, sources)')], ['status']),
+    # Round 1.
+    ('N7', 'wait-age on a held, queued, edge-free view while the queue is redacted (per-view guard only)',
+     [(STATUS, 'redacted || !v.Blocking', 'v.Redacted || !v.Blocking')], ['status']),
+    ('N7b', 'N7 with the held-view absence assertion removed (byte differential alone)',
+     [(STATUS, 'redacted || !v.Blocking', 'v.Redacted || !v.Blocking'),
+      (META, ' || d.WaitAge != nil {', ' {')], ['status']),
+    ('N8', "wait clock started by another change's private read before the change declares",
+     [(STATUS, 'code == "" || code == "dependency-unresolved"', 'code == ""')], ['unit']),
+    ('N9', 'wait-age line appended past the 8-line summary cap',
+     [(STATUS, 'item.Details = dependency.AppendBoundedDetail(item.Details, ', 'item.Details = append(item.Details, ')], ['unit']),
+    ('N10a', 'redacted declaration revision derived from the edge count',
+     [(STATUS, 'Revision: e.Revision, Held: e.Hold.Held', 'Revision: uint64(len(e.Edges)), Held: e.Hold.Held')], ['reflect']),
+    ('N10b', 'redacted redeclaration flag derived from the edges',
+     [(STATUS, 'Redeclaration: e.Redeclaration}', 'Redeclaration: e.Redeclaration || len(e.Edges) > 0}')], ['reflect']),
+    ('N10c', 'redacted hold flag derived from the edge count',
+     [(STATUS, 'Held: e.Hold.Held, UnknownEditor: e.Hold.Unknown', 'Held: e.Hold.Held || len(e.Edges) > 1, UnknownEditor: e.Hold.Unknown')], ['reflect']),
+    ('N11', 'whole records file capped at MaxBytes by the scoped verifier',
+     [('internal/audit/dependency_export.go', 'records, err := decodeDependencyExport(manifest, f)',
+       'records, err := decodeDependencyExport(manifest, io.LimitReader(f, MaxBytes))')], ['audit']),
 ]
 
 # The ten #202 round-5 rows, reconstructed on this head.
