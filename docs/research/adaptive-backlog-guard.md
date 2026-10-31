@@ -6,10 +6,10 @@ not meet its bar. Variant 2 applies only when the admission window is 1.
 
 ## Variant 2: guard only at W = 1
 
-Status: **pre-registered; results pending.** The rule and the bar below were
-fixed and committed before any run, and are not changed after seeing results.
-If any criterion fails, the result is recorded here, the branch is pushed, and
-no PR is opened; the rule is not tuned.
+Status: **meets the pre-registered bar** (all four criteria). The rule and the
+bar below were fixed and committed before any run (commit "pre-register the
+W=1 backlog guard variant and its bar") and were not changed after seeing
+results.
 
 ### Rule
 
@@ -56,7 +56,112 @@ difference, as the efficiency lab computes `delta_percent`. "Guard" is the
 
 ### Results
 
-Pending.
+Lab: `TestEfficiencyLab`, full suite, seeds 1–10. Deltas are the seed-paired
+mean with the 95% Student-t half-width.
+
+**(a) Depth 1: met.** `load-curve`, guard against the fixed-size baseline. In
+the "W = 1 starts" column, every fresh batch at depth 1 starts at W = 1.
+"Raised" is the share of fresh batches the guard made larger than the adaptive
+size.
+
+| PRs/day | fixed p50 (min) | adaptive 0.8 Δ p50 | guard Δ p50 (≤ +10%) | guard Δ min/landed (≤ +3%) | adaptive Δ min/landed | W = 1 starts | raised |
+|---|---|---|---|---|---|---|---|
+| 300 | 5.7 | +1.2% ±1.3 | +0.0% ±0.1 | −0.00% ±0.00 | +0.42% ±0.46 | 100% | 1.8% |
+| 450 | 6.7 | +9.8% ±6.1 | +0.1% ±0.3 | +0.07% ±0.16 | +2.53% ±1.42 | 100% | 8.4% |
+| 600 | 8.6 | +94.2% ±87.1 | +0.3% ±0.6 | +0.04% ±0.06 | +3.06% ±1.22 | 100% | 16.9% |
+| 700 | 16.5 | +202.0% ±137.6 | +0.0% ±0.0 | +0.00% ±0.00 | +4.05% ±1.92 | 100% | 28.8% |
+| 800 | 38.4 | +203.9% ±99.7 | +0.0% ±0.0 | +0.00% ±0.00 | +9.42% ±5.45 | 100% | 42.4% |
+
+At depth 1 this rule is identical to variant 1, and these cells reproduce
+variant 1's depth-1 results.
+
+**(b) Depth 4: met.** `guard-depth4`, guard against plain adaptive
+(`global-adaptive 0.8`, guard off). Bars: |Δ p50| ≤ 5%, |Δ p90| ≤ 5% and
+|Δ min/landed| ≤ 2%.
+
+| workload | adaptive p50 / p90 / min per landed | guard p50 / p90 / min per landed | Δ p50 | Δ p90 | Δ min/landed |
+|---|---|---|---|---|---|
+| adr0009-depth4 | 6.4 / 19.0 / 1.47 | 6.4 / 19.0 / 1.47 | +0.0% ±0.0 | +0.2% ±0.5 | −0.19% ±0.43 |
+| agent-burst-depth4 | 10.7 / 40.2 / 1.57 | identical | 0 | 0 | 0 |
+| agent-burst-depth4-var | 19.6 / 62.4 / 1.78 | identical | 0 | 0 | 0 |
+| agent-burst-depth4-churn | 19.0 / 53.0 / 1.90 | identical | 0 | 0 | 0 |
+| team-slow-depth4 | 35.0 / 35.0 / 29.54 | identical | 0 | 0 | 0 |
+| team-slow-depth4-churn | 38.0 / 76.4 / 35.84 | identical | 0 | 0 | 0 |
+
+**How often W reaches 1 at depth 4.** Fresh batch starts at W = 1, summed over
+10 seeds:
+
+| workload | plain adaptive | guard | raised by the guard |
+|---|---|---|---|
+| adr0009-depth4 | 1 of 3,113 (seed 10) | 2 of 3,098 (seed 10) | 2 |
+| agent-burst-depth4 | 0 of 3,437 | 0 of 3,437 | 0 |
+| agent-burst-depth4-var | 0 of 3,454 | 0 of 3,454 | 0 |
+| agent-burst-depth4-churn | 0 of 5,020 | 0 of 5,020 | 0 |
+| team-slow-depth4 | 0 of 5,641 | 0 of 5,641 | 0 |
+| team-slow-depth4-churn | 0 of 6,215 | 0 of 6,215 | 0 |
+
+The window halves on a failure (4 → 2 → 1) and grows by one on each landing,
+so it reaches 1 only after two failures with no landing between them. In these
+workloads that happened once, on one seed of the ADR 0009 profile. The guard
+raised two batches there, and every other depth-4 run is identical to plain
+adaptive. So at depth 4 the bar is met because the guard almost never fires.
+These workloads do not show that it helps there. A workload with clustered
+failures would exercise the depth-4 path more. The path is covered by
+`TestBacklogGuardOnlyAtWindowOne` and the sim oracle.
+
+**(c) ADR 0009 harness: met.** `TestAdaptiveSizingPlannerHarness` (seed 1,
+`-short`) passes, and `internal/sim/adopter_test.go` is untouched. Pooled
+results with and without cancellation:
+
+| | fixed-8 | adaptive + guard (W = 1) |
+|---|---|---|
+| p50 (min) | 7.0 | 6.9 |
+| p95 (min) | 45.9 | 31.4 |
+
+These equal the pre-guard adaptive numbers.
+
+**(d) Unchanged without a target: met.** Configs without a target take no
+guard path. `om-go go test -short ./...` passes, and no planner golden
+or sim test changed. The first full run caught two leaks of the new config key,
+both in code carried over from variant 1, and both are fixed:
+
+- The parsed-config golden in `internal/dependency` gained
+  `"BacklogGuard":null`. The field is now `json:",omitempty"`, so that golden is
+  byte-identical again without being edited.
+- The candidate policy schema in `internal/changepolicy/testdata` mirrors the
+  public schema by construction. It now carries the same `backlog_guard`
+  property. The digest is unchanged without the key or with `true`
+(`TestBacklogGuardValidationSchemaAndDigest`). In the regenerated
+`docs/research/ci-efficiency-lab.json`, every baseline cell of every matrix is
+byte-identical, as is every cell of `main`, `cancellation`, `score-noise` and
+`fail-fast`. The summary changed in three ways:
+
+- the `load-curve` guard arm now runs the production guard; the old sim-only
+  arm is renamed `+ sim guard`;
+- there is a new `guard-depth4` matrix;
+- the `main` matrix's `global-adaptive` description now says the guard is off.
+
+### Constraints checked
+
+- No new event kinds or event fields. The window and the waiting count are
+  folded from the journal, and no clock is read.
+- The guard is skipped when `BatchTargetPassRate == 0`. `BatchBacklogGuardOff`
+  is `omitempty`, so digests without the key are unchanged.
+- The lab counters (`FreshBatches`, `FreshBatchesAtWindowOne`,
+  `GuardRaisedBatches`) are recorded in the per-run lab metrics only, not in the
+  summary.
+
+### Reproduce
+
+```sh
+OPENMERGE_LAB_OUT=/some/dir om-go go test -count=1 ./internal/sim -run '^TestEfficiencyLab$'   # load-curve and guard-depth4; per-seed runs in efficiency-lab-runs.json
+om-go go test -count=1 -short -v ./internal/sim -run '^TestAdaptiveSizingPlannerHarness$'
+om-go go test -count=1 -v ./internal/queue -run 'BacklogGuard'
+```
+
+The guard-vs-adaptive deltas in (b) are seed-paired from
+`efficiency-lab-runs.json` (the summary pairs every arm against the fixed
+baseline).
 
 ## Variant 1: guard at every window (does not meet the bar)
 
@@ -149,14 +254,5 @@ stays clean.
   delta is within machine-load noise (the baseline itself ranged 155–228 s).
   `internal/sim` went from 42.1 s to 43.0 s.
 
-### Reproduce
-
-```sh
-OPENMERGE_LAB_OUT=/some/dir om-go go test -count=1 ./internal/sim -run '^TestEfficiencyLab$'   # load-curve and guard-depth4 matrices
-om-go go test -count=1 -short -v ./internal/sim -run '^TestAdaptiveSizingPlannerHarness$'
-om-go go test -count=1 -v ./internal/queue -run 'BacklogGuard'
-```
-
-The full `TestEfficiencyLab` still compares against the committed summary from
-#211, which does not contain the new arms. It fails until that summary is
-regenerated, which is deliberately not done for a rule that is not proposed.
+Variant 1's numbers came from its own branch (`feat/adaptive-batch-backlog-guard`,
+head c1c5700). Its rule is no longer in the code.
