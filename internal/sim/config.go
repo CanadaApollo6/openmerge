@@ -16,7 +16,10 @@ import (
 type Config struct {
 	// CI enables Phase 2 workload capabilities. Nil preserves the legacy workload,
 	// random draws, timing, and JSON exactly.
-	CI              *CIConfig `json:",omitempty"`
+	CI *CIConfig `json:",omitempty"`
+	// Lab enables the simulator-only CI efficiency lab (lab.go). Nil preserves
+	// every legacy draw, timing, and JSON byte.
+	Lab             *LabConfig `json:",omitempty"`
 	PRs             int
 	Seed            uint64
 	ArrivalWindow   time.Duration
@@ -93,6 +96,7 @@ func DefaultConfig() Config {
 // Untrusted probes are extra PRs, counted separately from PRs and Broken.
 type Result struct {
 	CI                  *CIMetrics                  `json:"ci_workload,omitempty"`
+	Lab                 *LabMetrics                 `json:"lab,omitempty"`
 	Config              Config                      `json:"config"`
 	PRs                 int                         `json:"prs"`
 	Broken              int                         `json:"broken"`
@@ -127,6 +131,11 @@ type Result struct {
 func (cfg Config) normalized() (Config, error) {
 	if cfg.CI != nil {
 		if err := cfg.CI.validate(); err != nil {
+			return cfg, err
+		}
+	}
+	if cfg.Lab != nil {
+		if err := cfg.Lab.validate(cfg); err != nil {
 			return cfg, err
 		}
 	}
@@ -271,6 +280,9 @@ func (cfg Config) MarshalJSON() ([]byte, error) {
 	}
 	if cfg.CI != nil {
 		values["ci_workload"] = cfg.CI
+	}
+	if cfg.Lab != nil {
+		values["lab"] = cfg.Lab
 	}
 	return json.Marshal(values)
 }

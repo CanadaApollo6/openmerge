@@ -61,6 +61,7 @@ type ciJob struct {
 	cancelled, cancellationRequested bool
 	rerun, cancellationUnsupported   bool
 	success                          bool
+	lab                              *labJob
 }
 
 func (s *simulation) interactionFails(prs []int) bool {
@@ -147,7 +148,8 @@ func (s *simulation) rerunFailedCI(sha string) bool {
 		run.success = false
 	}
 	// Keep done through submit so the ledger identifies a rerun.
-	s.submitCI(sha, s.ciDuration())
+	s.submitCI(sha, s.runDuration(run.success))
+	s.tagRerun(sha)
 	run.done = false
 	s.result.CIReruns++
 	s.forge.SetCheckRuns(s.repo, sha, []forge.CheckRun{{ID: s.tests[sha].job.id, Attempt: s.tests[sha].job.attempt, Name: "ci", State: forge.Pending}})
@@ -206,7 +208,7 @@ func (s *simulation) ciMetrics(merged int) *CIMetrics {
 				m.CancellationsConfirmed++
 			}
 		}
-		if job.started.IsZero() {
+		if job.started.IsZero() || job.lab != nil && job.lab.deduped {
 			continue
 		}
 		m.RunsStarted++

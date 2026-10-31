@@ -147,6 +147,7 @@ func (s *simulation) deliver(event scheduledEvent) error {
 			return fmt.Errorf("CI completion for unknown tested SHA %s", event.sha)
 		}
 		run.done = true
+		s.labCompleted(event.job, run.success)
 		state := forge.Failure
 		if run.success {
 			state = forge.Success
