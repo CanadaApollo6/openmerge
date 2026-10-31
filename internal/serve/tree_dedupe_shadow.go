@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -135,7 +136,14 @@ func (s *Server) recordTreeDedupeShadow(w *worker, c *treeDedupeCapture) {
 		for _, f := range apply {
 			f(&ledger)
 		}
-		return ledger.Encode()
+		if len(raw) == 0 && len(ledger.Builds) == 0 {
+			return nil, nil
+		}
+		next, err := ledger.Encode()
+		if err != nil || bytes.Equal(next, raw) {
+			return nil, err // pending-check polls usually change nothing
+		}
+		return next, nil
 	})
 	if err != nil {
 		s.options.Logger.Warn("tree dedupe shadow dropped", "queue", w.Key.Repository, "base", w.Key.BaseBranch, "error", err)

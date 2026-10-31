@@ -111,9 +111,9 @@ func (l *Ledger) find(sha string) *Build {
 // ObserveBuild records a new test build and, when its key is known, compares
 // it with the newest earlier completed build of the same key. Only a trusted
 // success or a confirmed failure is a reuse source; an unconfirmed failure is
-// never a candidate, and it also shadows older results of that key, because a
-// real cache would hold the newest result. Repeated observations of the same
-// batch and SHA are ignored.
+// never a candidate, and it (like a revoked success) also shadows older
+// results of that key, because a real cache would hold the newest result.
+// Repeated observations of the same batch and SHA are ignored.
 func (l *Ledger) ObserveBuild(b Build) {
 	for _, old := range l.Builds {
 		if old.BatchID == b.BatchID && old.SHA == b.SHA {
@@ -124,7 +124,9 @@ func (l *Ledger) ObserveBuild(b Build) {
 	if b.Key != "" {
 		for i := len(l.Builds) - 1; i >= 0; i-- {
 			s := l.Builds[i]
-			if s.Key != b.Key || s.Outcome == "" || s.TerminalAt.IsZero() || s.TerminalAt.After(b.At) {
+			// In-flight builds are skipped; the newest completed one decides,
+			// including a revoked (reopened) result, which is never reusable.
+			if s.Key != b.Key || s.TerminalAt.IsZero() || s.TerminalAt.After(b.At) {
 				continue
 			}
 			switch {

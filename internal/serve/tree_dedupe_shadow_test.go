@@ -32,7 +32,7 @@ func fakeTreeInputs(f *fake.Forge) func(context.Context, store.QueueKey, string)
 		}
 		h := sha1.New()
 		for _, path := range slices.Sorted(maps.Keys(c.Files)) {
-			fmt.Fprintf(h, "%s\x00%s\x00", path, c.Files[path])
+			_, _ = fmt.Fprintf(h, "%s\x00%s\x00", path, c.Files[path])
 		}
 		return treededupe.GitInputs{Tree: fmt.Sprintf("%x", h.Sum(nil)), Workflows: []treededupe.Workflow{
 			{Mode: "100644", Type: "blob", OID: strings.Repeat("b", 40), Path: ".github/workflows/ci.yml"},

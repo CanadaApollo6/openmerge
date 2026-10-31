@@ -224,6 +224,18 @@ func TestLedgerReusesOnlyTrustedSuccessesAndConfirmedFailures(t *testing.T) {
 			t.Fatalf("summary = %+v", s)
 		}
 	})
+	t.Run("revoked newest result shadows an older success", func(t *testing.T) {
+		var l Ledger
+		l.ObserveBuild(build("b0", '0', 0, "k"))
+		l.ObserveOutcome(sha('0'), at(5), true)
+		l.ObserveBuild(build("b1", '1', 6, "k"))
+		l.ObserveOutcome(sha('1'), at(12), true)
+		l.ObserveReopened(sha('1'))
+		l.ObserveBuild(build("b2", '2', 13, "k"))
+		if l.Builds[2].Hit != "" {
+			t.Fatalf("b2 reused past a revoked result: %+v", l.Builds[2])
+		}
+	})
 	t.Run("flaky disagreement is recorded", func(t *testing.T) {
 		var l Ledger
 		l.ObserveBuild(build("b1", '1', 0, "k"))
