@@ -539,6 +539,11 @@ type LabMetrics struct {
 	ModelHalvingBisectRuns   int
 	PlannerBisectionRuns     int
 	ModelCalibrationMatches  bool
+	// FreshBatches counts fresh batch starts; FreshBatchesAtWindowOne those
+	// started while the admission window was 1, where the backlog guard
+	// applies; GuardRaisedBatches those above the rational adaptive size. They
+	// are recorded per run, not in the summary.
+	FreshBatches, FreshBatchesAtWindowOne, GuardRaisedBatches int
 }
 
 func (s *simulation) labMetrics(merged int) *LabMetrics {
@@ -634,6 +639,7 @@ func (s *simulation) labMetrics(merged int) *LabMetrics {
 	for _, c := range m.FailedBatches {
 		m.ModelHalvingBisectRuns += Isolate(c, IsolationPolicy{}, time.Minute, time.Minute).Runs
 	}
+	m.FreshBatches, m.FreshBatchesAtWindowOne, m.GuardRaisedBatches = s.freshBatches, s.freshAtWindowOne, s.guardRaised
 	m.PlannerBisectionRuns = s.result.BisectionCIRuns
 	m.ModelCalibrationMatches = m.ModelHalvingBisectRuns == m.PlannerBisectionRuns
 	return m

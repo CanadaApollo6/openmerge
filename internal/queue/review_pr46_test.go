@@ -252,12 +252,15 @@ func TestReviewPR46FreshSizeRevalidatesQueuedAdmission(t *testing.T) {
 		t.Fatal("stale size-8 admission passed start gate after size shrank to 2")
 	}
 	t.Log("stale size-8 build rejected after 20th sample reduces fresh cap to 2")
-	// With the backlog guard, nine waiting changes over a window of four floor
-	// the size at 3: still below the stale 8, so the start is still rejected.
+	// The backlog guard applies only at window 1, so at this window of four the
+	// guarded cap is the adaptive 2 and the stale start is still rejected.
 	guarded := cfg
 	guarded.BatchBacklogGuardOff = false
-	if got := len(freshBatch(guarded, s, at)); got != 3 {
-		t.Fatalf("guarded replacement cap=%d want=3", got)
+	if s.Window(guarded) == 1 {
+		t.Fatal("expected a window above 1")
+	}
+	if got := len(freshBatch(guarded, s, at)); got != 2 {
+		t.Fatalf("guarded replacement cap=%d want=2", got)
 	}
 	if CanStart(guarded, s, pending, start) {
 		t.Fatal("stale size-8 admission passed the guarded start gate")

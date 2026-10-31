@@ -313,8 +313,9 @@ be strictly between 0 and 1. It estimates checks/timeout failure frequency from
 the last 200 departures (minimum 20 samples), uses exact rational comparisons,
 and restarts the history at a policy digest change. Unset keeps fixed sizing.
 With a target, `batch.backlog_guard` (boolean, default true) floors each fresh
-batch at the size one admission window needs to absorb the waiting backlog; it
-is rejected without `target_pass_rate`. Only `false` changes the digest.
+batch started at an admission window of 1 at the waiting backlog (up to
+`max_size`); at a wider window sizing stays plain adaptive. It is rejected
+without `target_pass_rate`. Only `false` changes the digest.
 
 Stage A policy keys are public as of PR 11b. `classification`, `groups`, and
 `agents` apply at repository scope; in GitHub mode each queue opts into the

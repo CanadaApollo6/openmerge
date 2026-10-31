@@ -405,14 +405,14 @@ func (s State) batchCandidates(cfg Config, now time.Time) ([]BatchPR, time.Time)
 	if size < 1 || size > MaxBatchSize || cfg.BatchMaxWait < 0 {
 		panic("invalid batch configuration")
 	}
-	if cfg.BatchTargetPassRate > 0 && !cfg.BatchBacklogGuardOff {
+	if cfg.BatchTargetPassRate > 0 && !cfg.BatchBacklogGuardOff && s.Window(cfg) == 1 {
 		waiting := 0
 		for _, entry := range s.Entries {
 			if s.freshCandidate(entry) {
 				waiting++
 			}
 		}
-		size = BacklogGuardSize(size, cfg.BatchMaxSize, waiting, s.Window(cfg))
+		size = BacklogGuardSize(size, cfg.BatchMaxSize, waiting)
 	}
 	var prs []BatchPR
 	var oldest time.Time

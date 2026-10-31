@@ -274,7 +274,7 @@ func LabSuite() []LabMatrix {
 	guardArms := []LabStrategyCase{
 		baselineStrategy(),
 		adaptive("global-adaptive 0.8", "production BatchTargetPassRate 0.8 without the backlog guard", .8, false, false),
-		adaptive("global-adaptive 0.8 + guard", "production BatchTargetPassRate 0.8 with the production backlog guard (the default when a target is set)", .8, true, false),
+		adaptive("global-adaptive 0.8 + guard", "production BatchTargetPassRate 0.8 with the production backlog guard at window 1 (the default when a target is set)", .8, true, false),
 		adaptive("global-adaptive 0.8 + sim guard", "BatchTargetPassRate 0.8 with the sim-only lab guard (full maximum whenever a full batch is waiting)", .8, false, true),
 	}
 	depth4 := append([]LabWorkload{{
@@ -300,7 +300,7 @@ func LabSuite() []LabMatrix {
 		},
 		{
 			Name:        "load-curve",
-			Description: "Adaptive batch sizing against load (beta-loaded, depth one). The production backlog guard floors each fresh batch at min(max, ⌈waiting/window⌉); the sim-only guard keeps the configured maximum whenever a full batch is waiting.",
+			Description: "Adaptive batch sizing against load (beta-loaded, depth one). The production backlog guard floors each fresh batch started at window 1 at min(max, waiting); the sim-only guard keeps the configured maximum whenever a full batch is waiting.",
 			Workloads:   load,
 			Strategies: append(slices.Clone(guardArms),
 				adaptive("global-adaptive 0.6", "production BatchTargetPassRate 0.6 without the backlog guard", .6, false, false),
@@ -313,7 +313,7 @@ func LabSuite() []LabMatrix {
 		},
 		{
 			Name:        "guard-depth4",
-			Description: "The backlog guard against the depth-four profiles, where adaptive sizing helps: the ADR 0009 adaptive profile and the main depth-four workloads.",
+			Description: "The backlog guard against the depth-four profiles, where adaptive sizing helps: the ADR 0009 adaptive profile and the main depth-four workloads. The production guard fires only while failures have halved the window to 1.",
 			Workloads:   depth4, Strategies: guardArms,
 		},
 		{

@@ -62,6 +62,9 @@ type simulation struct {
 	windowFailures             map[string]bool
 	expectedOutcomes           []bool
 	windowArea, coldWindowArea float64
+	// Fresh batch starts, those at window 1 and those the backlog guard raised
+	// above the adaptive size (lab metrics only).
+	freshBatches, freshAtWindowOne, guardRaised int
 	ciWaiting                  []*ciJob
 	ciRunning                  int
 	ciJobs                     []*ciJob

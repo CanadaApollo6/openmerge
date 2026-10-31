@@ -8,24 +8,18 @@ import (
 
 func TestBacklogGuardSizeBoundaries(t *testing.T) {
 	for _, tc := range []struct {
-		adaptive, maxSize, waiting, window, want int
+		adaptive, maxSize, waiting, want int
 	}{
-		{4, 8, 0, 1, 4},   // empty queue: adaptive size stands
-		{4, 8, 4, 1, 4},   // backlog the adaptive batch absorbs
-		{4, 8, 5, 1, 5},   // one more: grow to the backlog
-		{4, 8, 8, 1, 8},   // exactly a full batch
-		{4, 8, 30, 1, 8},  // never above max_size
-		{4, 8, 16, 4, 4},  // depth 4: four adaptive batches absorb 16
-		{4, 8, 17, 4, 5},  // ⌈17/4⌉
-		{4, 8, 32, 4, 8},  // four full batches
-		{4, 8, 33, 4, 8},  // capped
-		{1, 8, 3, 2, 2},   // window 2 halves the need
-		{8, 8, 100, 1, 8}, // adaptive already at max
-		{1, 0, 10, 1, 1},  // zero max_size means one
-		{2, 8, 6, 0, 6},   // zero window means one
+		{4, 8, 0, 4},   // empty queue: adaptive size stands
+		{4, 8, 4, 4},   // backlog the adaptive batch absorbs
+		{4, 8, 5, 5},   // one more: grow to the backlog
+		{4, 8, 8, 8},   // exactly a full batch
+		{4, 8, 30, 8},  // never above max_size
+		{8, 8, 100, 8}, // adaptive already at max
+		{1, 0, 10, 1},  // zero max_size means one
 	} {
-		if got := BacklogGuardSize(tc.adaptive, tc.maxSize, tc.waiting, tc.window); got != tc.want {
-			t.Errorf("BacklogGuardSize(%d, %d, %d, %d) = %d, want %d", tc.adaptive, tc.maxSize, tc.waiting, tc.window, got, tc.want)
+		if got := BacklogGuardSize(tc.adaptive, tc.maxSize, tc.waiting); got != tc.want {
+			t.Errorf("BacklogGuardSize(%d, %d, %d) = %d, want %d", tc.adaptive, tc.maxSize, tc.waiting, got, tc.want)
 		}
 	}
 }
@@ -67,9 +61,10 @@ func TestBacklogGuardFloorsFreshBatches(t *testing.T) {
 		{1, 6, 6, 4, 0},
 		{1, 8, 8, 4, 8},
 		{1, 12, 8, 4, 8},
+		// At a full depth-4 window the guard does not apply.
 		{4, 16, 4, 4, 8},
-		{4, 17, 5, 4, 8},
-		{4, 40, 8, 4, 8},
+		{4, 17, 4, 4, 8},
+		{4, 40, 4, 4, 8},
 	} {
 		t.Run(fmt.Sprintf("depth%d/waiting%d", tc.depth, tc.waiting), func(t *testing.T) {
 			cfg, s, now := guardState(t, tc.depth, tc.waiting)
@@ -114,18 +109,22 @@ func TestBacklogGuardCountsOnlyFreshCandidates(t *testing.T) {
 	}
 }
 
-// The guard follows the adaptive window folded from the journal: a halved
-// window needs bigger batches to absorb the same backlog.
-func TestBacklogGuardFollowsAdaptiveWindow(t *testing.T) {
+// The guard applies only at an admission window of 1: at depth 4 it stays off
+// while the window is 4 or 2 and takes the backlog once failures halve it to 1.
+func TestBacklogGuardOnlyAtWindowOne(t *testing.T) {
 	cfg, s, now := guardState(t, 4, 18)
-	if got := len(freshBatch(cfg, s, now)); got != 5 {
-		t.Fatalf("window 4 batch %d, want ⌈18/4⌉ = 5", got)
-	}
-	s.window.Current = 2
-	if s.Window(cfg) != 2 {
-		t.Fatalf("window %d", s.Window(cfg))
-	}
-	if got := len(freshBatch(cfg, s, now)); got != 8 {
-		t.Fatalf("window 2 batch %d, want min(8, ⌈18/2⌉) = 8", got)
+	for _, tc := range []struct{ window, want int }{{4, 4}, {2, 4}, {1, 8}} {
+		s.window.Current = tc.window
+		if s.Window(cfg) != tc.window {
+			t.Fatalf("window %d", s.Window(cfg))
+		}
+		if got := len(freshBatch(cfg, s, now)); got != tc.want {
+			t.Errorf("window %d batch %d, want %d", tc.window, got, tc.want)
+		}
+		off := cfg
+		off.BatchBacklogGuardOff = true
+		if got := len(freshBatch(off, s, now)); got != 4 {
+			t.Errorf("window %d unguarded batch %d, want the adaptive 4", tc.window, got)
+		}
 	}
 }

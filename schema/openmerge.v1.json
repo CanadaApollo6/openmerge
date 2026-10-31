@@ -233,7 +233,7 @@
             "backlog_guard": {
               "type": "boolean",
               "default": true,
-              "description": "With target_pass_rate, never shrink a fresh batch below the size one admission window needs to absorb the waiting backlog. Requires target_pass_rate."
+              "description": "With target_pass_rate, never shrink a fresh batch started at an admission window of 1 below the waiting backlog (up to max_size); wider windows keep plain adaptive sizing. Requires target_pass_rate."
             },
             "max_size": {
               "type": "integer",
