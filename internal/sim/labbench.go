@@ -183,7 +183,10 @@ func LabStrategies() []LabStrategyCase {
 		{Name: "baseline", Description: "(a) production planner as configured by the workload", Apply: func(*Config) {}},
 		{Name: "no-cancel", Description: "(a, counterfactual) the same CI without cancellation support: cancellation saving = no-cancel − baseline", Apply: noCancel},
 		{Name: "tree-dedupe", Description: "(b) reuse the latest completed result for an identical tree", Apply: func(c *Config) { c.Lab.Strategy.TreeDedupe = true }},
-		{Name: "global-adaptive", Description: "(d, reference) production BatchTargetPassRate 0.8 from the global failure estimate (opt-in in production)", Apply: func(c *Config) { c.Planner.BatchTargetPassRate = .8 }},
+		{Name: "global-adaptive", Description: "(d, reference) production BatchTargetPassRate 0.8 from the global failure estimate (opt-in in production), without the backlog guard (batch.backlog_guard: false)", Apply: func(c *Config) {
+			c.Planner.BatchTargetPassRate = .8
+			c.Planner.BatchBacklogGuardOff = true
+		}},
 		{Name: "risk-sized", Description: "(d) per-change risk scores size each fresh batch to a 0.8 pass target", Apply: func(c *Config) { c.Lab.Strategy.RiskBatchTarget = .8 }},
 		{Name: "fail-fast", Description: "(e) failing runs stop at 30% of their duration (CI fail-fast); the queue reacts and cancels earlier", Apply: func(c *Config) { c.Lab.Duration.FailFastFraction = .3 }},
 		{Name: "combined", Description: "(b)+(d)+(e) together", Apply: func(c *Config) {
@@ -258,12 +261,31 @@ func LabSuite() []LabMatrix {
 	for _, i := range []int{1, 2, 5} {
 		failFast = append(failFast, LabWorkloads()[i])
 	}
-	adaptive := func(name, description string, target float64, guard bool) LabStrategyCase {
+	// adaptive runs the production target with the production backlog guard
+	// (queue.BacklogGuardSize) on or off, optionally under the sim-only guard
+	// it was ported from.
+	adaptive := func(name, description string, target float64, guard, simGuard bool) LabStrategyCase {
 		return LabStrategyCase{Name: name, Description: description, Apply: func(c *Config) {
 			c.Planner.BatchTargetPassRate = target
-			c.Lab.Strategy.BacklogGuard = guard
+			c.Planner.BatchBacklogGuardOff = !guard
+			c.Lab.Strategy.BacklogGuard = simGuard
 		}}
 	}
+	guardArms := []LabStrategyCase{
+		baselineStrategy(),
+		adaptive("global-adaptive 0.8", "production BatchTargetPassRate 0.8 without the backlog guard", .8, false, false),
+		adaptive("global-adaptive 0.8 + guard", "production BatchTargetPassRate 0.8 with the production backlog guard (the default when a target is set)", .8, true, false),
+		adaptive("global-adaptive 0.8 + sim guard", "BatchTargetPassRate 0.8 with the sim-only lab guard (full maximum whenever a full batch is waiting)", .8, false, true),
+	}
+	depth4 := append([]LabWorkload{{
+		Name: "adr0009-depth4", Median: 2 * time.Minute,
+		Source: "capacity.AdaptiveWorkload (900/day, 2-min fixed CI, depth 4, 5% global broken rate) and Profile.Config (batch 8, 5m wait, 50 runners, 1% flakes, timeout 1.5x CI) for one day, without bursts: the ADR 0009 adaptive profile",
+		Config: func() Config {
+			cfg := benchDepth4(benchDay(), 2*time.Minute)
+			cfg.PRs = 900
+			return cfg
+		},
+	}}, LabWorkloads()[4:9]...)
 	riskSized := LabStrategies()[4]
 	fastAt := func(f float64) LabStrategyCase {
 		return LabStrategyCase{Name: fmt.Sprintf("fail-fast %.0f%%", 100*f), Description: fmt.Sprintf("failing runs stop at %.0f%% of their duration", 100*f),
@@ -278,19 +300,21 @@ func LabSuite() []LabMatrix {
 		},
 		{
 			Name:        "load-curve",
-			Description: "Adaptive batch sizing against load (beta-loaded, depth one). The backlog guard keeps the configured maximum whenever a full batch is waiting.",
+			Description: "Adaptive batch sizing against load (beta-loaded, depth one). The production backlog guard floors each fresh batch at min(max, ⌈waiting/window⌉); the sim-only guard keeps the configured maximum whenever a full batch is waiting.",
 			Workloads:   load,
-			Strategies: []LabStrategyCase{
-				baselineStrategy(),
-				adaptive("global-adaptive 0.8", "production BatchTargetPassRate 0.8", .8, false),
-				adaptive("global-adaptive 0.6", "production BatchTargetPassRate 0.6", .6, false),
-				adaptive("global-adaptive 0.8 + guard", "BatchTargetPassRate 0.8 with the sim-only backlog guard", .8, true),
+			Strategies: append(slices.Clone(guardArms),
+				adaptive("global-adaptive 0.6", "production BatchTargetPassRate 0.6 without the backlog guard", .6, false, false),
 				riskSized,
-				{Name: "risk-sized + guard", Description: "risk-sized 0.8 with the backlog guard", Apply: func(c *Config) {
+				LabStrategyCase{Name: "risk-sized + sim guard", Description: "risk-sized 0.8 with the sim-only lab guard", Apply: func(c *Config) {
 					c.Lab.Strategy.RiskBatchTarget = .8
 					c.Lab.Strategy.BacklogGuard = true
 				}},
-			},
+			),
+		},
+		{
+			Name:        "guard-depth4",
+			Description: "The backlog guard against the depth-four profiles, where adaptive sizing helps: the ADR 0009 adaptive profile and the main depth-four workloads.",
+			Workloads:   depth4, Strategies: guardArms,
 		},
 		{
 			Name:        "score-noise",
