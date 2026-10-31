@@ -158,6 +158,26 @@ This excerpt is from the fixture in
 `internal/queuemetrics/testdata/savings-*.json`. Times are RFC 3339 UTC,
 latencies are seconds, and minutes are floating point.
 
+## Potential additional savings (shadow)
+
+When a queue has an [ADR 0015](adr/0015-ci-efficiency-engine.md) exact-tree
+dedupe shadow ledger, the report prints a separate "Potential additional
+savings (shadow, not applied)" section, and `--json` adds
+`potential_additional_savings_shadow`. It counts test builds pushed in the
+window whose key (tree OID, workflow blob OIDs, `merge_when` digest, runner
+image identity, queue) equalled an earlier completed queue build that passed,
+or that failed and was confirmed by a retry or as a singleton. Unknown keys and
+unconfirmed failures never count. Avoidable minutes are the source runs'
+observed wall-clock. Verdicts compare each hit with the build's own result; a
+disagreement is a false reuse the cache would have caused.
+
+Nothing in this section was applied: every build still ran CI, and none of the
+measured counts above change. The ledger keeps the most recent 512 builds; a
+`WARNING` says when the window starts before the oldest retained build. Slice 1
+records the ledger only behind an internal seam that production leaves off, and
+a runner image identity is unknown by default, so no hit is possible until a
+later activation slice.
+
 ## Relationship to tools/dogfood
 
 `tools/dogfood report` measures the ADR 0009 experiment cohort, using GitHub

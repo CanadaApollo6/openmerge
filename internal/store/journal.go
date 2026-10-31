@@ -59,6 +59,9 @@ type Journal struct {
 	HasAuthorityPin    bool
 
 	ProvenanceCapacity *ProvenanceCapacity
+	// TreeDedupeShadow is the raw ADR 0015 shadow ledger, read only for status
+	// and reports (never for worker check rendering); nil when absent.
+	TreeDedupeShadow []byte
 }
 
 // JournalEvent retains the persisted wire envelope for explainability clients.
@@ -90,9 +93,22 @@ func (s *Store) journals(ctx context.Context, keys []QueueKey, warnings bool) ([
 		for _, key := range keys {
 			journal := Journal{Key: key}
 			var id QueueID
-			err := tx.QueryRow(ctx, `SELECT id, base, COALESCE(initial_fence, '') FROM queues
+			var err error
+			if warnings {
+				// Status and reports also read the ADR 0015 shadow row in the same
+				// statement, keeping the snapshot read's round trips unchanged.
+				err = tx.QueryRow(ctx, `SELECT id, base, COALESCE(initial_fence, ''),
+				(SELECT value FROM observations WHERE observations.queue_id = queues.id AND observations.key = $5) FROM queues
 				WHERE installation = $1 AND repository = $2 AND base = $3 AND lane = $4`,
-				key.Installation, key.Repository, key.BaseBranch, key.Lane).Scan(&id, &journal.Seed.BaseBranch, &journal.Seed.Fence)
+					key.Installation, key.Repository, key.BaseBranch, key.Lane, TreeDedupeShadowKey).Scan(&id, &journal.Seed.BaseBranch, &journal.Seed.Fence, &journal.TreeDedupeShadow)
+				if len(journal.TreeDedupeShadow) == 0 {
+					journal.TreeDedupeShadow = nil
+				}
+			} else {
+				err = tx.QueryRow(ctx, `SELECT id, base, COALESCE(initial_fence, '') FROM queues
+				WHERE installation = $1 AND repository = $2 AND base = $3 AND lane = $4`,
+					key.Installation, key.Repository, key.BaseBranch, key.Lane).Scan(&id, &journal.Seed.BaseBranch, &journal.Seed.Fence)
+			}
 			if errors.Is(err, pgx.ErrNoRows) {
 				continue
 			}
