@@ -216,15 +216,27 @@ type LabReport struct {
 var labMetricNames = []string{
 	"runner_minutes_per_landed", "runs_per_landed", "wasted_minutes_per_landed", "waste_fraction",
 	"p50_latency_minutes", "p90_latency_minutes", "throughput_per_day", "dedupe_hits", "wrongful_dequeues", "landed",
+	"failed_minutes_per_landed", "invalidated_minutes_per_landed", "cancelled_minutes_per_landed",
+	"superseded_minutes_per_landed", "rerun_minutes_per_landed", "speculative_minutes_per_landed", "bisection_minutes_per_landed",
 }
 
 func labMetricValues(m *LabMetrics) map[string]float64 {
+	perLanded := func(minutes float64) float64 {
+		if m.Landed == 0 {
+			return 0
+		}
+		return minutes / float64(m.Landed)
+	}
 	return map[string]float64{
 		"runner_minutes_per_landed": m.RunnerMinutesPerLanded, "runs_per_landed": m.RunsPerLanded,
 		"wasted_minutes_per_landed": m.WastedMinutesPerLanded, "waste_fraction": m.WasteFraction,
 		"p50_latency_minutes": m.P50LatencyMinutes, "p90_latency_minutes": m.P90LatencyMinutes,
 		"throughput_per_day": m.ThroughputPerDay, "dedupe_hits": float64(m.DedupeHits),
 		"wrongful_dequeues": float64(m.WrongfulDequeues), "landed": float64(m.Landed),
+		"failed_minutes_per_landed": perLanded(m.FailedMinutes), "invalidated_minutes_per_landed": perLanded(m.InvalidatedMinutes),
+		"cancelled_minutes_per_landed": perLanded(m.CancelledMinutes), "superseded_minutes_per_landed": perLanded(m.SupersededMinutes),
+		"rerun_minutes_per_landed": perLanded(m.RerunMinutes), "speculative_minutes_per_landed": perLanded(m.SpeculativeMinutes),
+		"bisection_minutes_per_landed": perLanded(m.BisectionMinutes),
 	}
 }
 
@@ -274,7 +286,7 @@ func RunEfficiencyLab(workloads []LabWorkload, strategies []LabStrategyCase, see
 	for w, workload := range workloads {
 		cfg := workload.Config()
 		cfg.Seed = seeds[0]
-		report.Workloads = append(report.Workloads, map[string]any{"name": workload.Name, "source": workload.Source, "config": cfg})
+		report.Workloads = append(report.Workloads, map[string]any{"name": workload.Name, "source": workload.Source, "calibrated": workload.Calibrate, "config": cfg})
 		for s, strategy := range strategies {
 			cell := LabCell{Workload: workload.Name, Strategy: strategy.Name, Runs: results[w][s], Summary: map[string]Stat{}, DeltaPercent: map[string]Stat{}}
 			for _, run := range cell.Runs {
@@ -329,7 +341,7 @@ var isolationPolicies = []isolationPolicyCase{
 	{name: "halving + tree dedupe", policy: IsolationPolicy{Dedupe: true}},
 	{name: "culprit-first (noisy scores)", policy: IsolationPolicy{CulpritFirst: true}},
 	{name: "culprit-first + tree dedupe", policy: IsolationPolicy{CulpritFirst: true, Dedupe: true}},
-	{name: "culprit-first, perfect scores (bound)", policy: IsolationPolicy{CulpritFirst: true, Dedupe: true}, oracle: true},
+	{name: "culprit-first + dedupe, perfect scores", policy: IsolationPolicy{CulpritFirst: true, Dedupe: true}, oracle: true},
 	{name: "halving + fail-fast 30%", fast: true},
 	{name: "culprit-first + dedupe + fail-fast 30%", policy: IsolationPolicy{CulpritFirst: true, Dedupe: true}, fast: true},
 }
@@ -398,7 +410,7 @@ func isolationRows(w LabWorkload, baseline []LabRun) []IsolationRow {
 }
 
 // JSON renders the report deterministically.
-func (r LabReport) JSON() ([]byte, error) { return json.MarshalIndent(r, "", "  ") }
+func (r LabReport) JSON() ([]byte, error) { return json.Marshal(r) }
 
 // Markdown renders the comparison tables.
 func (r LabReport) Markdown() string {
@@ -432,6 +444,17 @@ func (r LabReport) Markdown() string {
 				f(s["wasted_minutes_per_landed"], 2), f(waste, 1), f(s["p50_latency_minutes"], 1), d(dp["p50_latency_minutes"]),
 				f(s["p90_latency_minutes"], 1), d(dp["p90_latency_minutes"]), f(s["throughput_per_day"], 0), f(s["dedupe_hits"], 1), f(s["wrongful_dequeues"], 1))
 		}
+		b.WriteString("\nRunner-minutes per landed change by cause. Waste causes are disjoint; rerun, speculative and bisection minutes are overlapping views of all runs.\n\n")
+		b.WriteString("| strategy | failed | invalidated | cancelled | superseded | same-SHA reruns | on speculative predecessor | bisection |\n|---|---|---|---|---|---|---|---|\n")
+		for _, c := range r.Cells {
+			if c.Workload != w["name"] {
+				continue
+			}
+			s := c.Summary
+			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s |\n", c.Strategy, f(s["failed_minutes_per_landed"], 2), f(s["invalidated_minutes_per_landed"], 2),
+				f(s["cancelled_minutes_per_landed"], 3), f(s["superseded_minutes_per_landed"], 2), f(s["rerun_minutes_per_landed"], 2),
+				f(s["speculative_minutes_per_landed"], 2), f(s["bisection_minutes_per_landed"], 2))
+		}
 		b.WriteString("\n")
 	}
 	b.WriteString("### Culprit isolation model (strategy c)\n\n")
@@ -441,7 +464,11 @@ func (r LabReport) Markdown() string {
 		fmt.Fprintf(&b, "| %s | %s | %d | %s | %s | %s | %s | %s | %d |\n", row.Workload, row.Policy, row.Cases,
 			f(row.RunsPerFailedBatch, 2), d(row.DeltaRunsPercent), f(row.MinutesPerFailedBatch, 1), f(row.InnocentDelayMinutes, 1), d(row.DeltaInnocentDelayPct), row.FalseCulpritDequeues)
 	}
-	b.WriteString("\n### Isolation model calibration (halving model vs planner bisection runs, baseline)\n\n| workload | seeds matching | model runs | planner runs |\n|---|---|---|---|\n")
+	b.WriteString("\n### Isolation model calibration (halving model vs planner bisection runs, baseline)\n\nThe model claims exactness only at depth one; at depth four, bisection interacts with failed-check retries and chain invalidation.\n\n| workload | applies | seeds matching | model runs | planner runs |\n|---|---|---|---|---|\n")
+	applies := map[string]bool{}
+	for _, w := range r.Workloads {
+		applies[w["name"].(string)], _ = w["calibrated"].(bool)
+	}
 	type agg struct{ match, n, model, real int }
 	order := []string{}
 	cal := map[string]*agg{}
@@ -461,7 +488,7 @@ func (r LabReport) Markdown() string {
 	}
 	for _, w := range order {
 		a := cal[w]
-		fmt.Fprintf(&b, "| %s | %d/%d | %d | %d |\n", w, a.match, a.n, a.model, a.real)
+		fmt.Fprintf(&b, "| %s | %s | %d/%d | %d | %d |\n", w, map[bool]string{true: "yes", false: "n/a"}[applies[w]], a.match, a.n, a.model, a.real)
 	}
 	return b.String()
 }
