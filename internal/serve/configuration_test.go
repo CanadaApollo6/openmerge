@@ -307,6 +307,7 @@ func TestDefaultPolicyMoveReobservesUnchangedReleasePR(t *testing.T) {
 }
 
 func TestDefaultBranchFailuresPauseAndRetryAtSameTip(t *testing.T) {
+	t.Parallel()
 	for _, failure := range []string{"metadata", "tip", "file", "missing", "invalid"} {
 		t.Run(failure, func(t *testing.T) {
 			s, w, f, _ := releaseFixture(t, releaseConfig)
@@ -441,6 +442,7 @@ func TestOverlappingQueuePausesOnlyItsBase(t *testing.T) {
 }
 
 func TestRepositoryDeleteHeadBranchOverridesServeDefault(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, setting string
 		flag, deleted bool
@@ -487,6 +489,7 @@ func TestRepositoryDeleteHeadBranchOverridesServeDefault(t *testing.T) {
 }
 
 func TestLegacyWindowUpgradeUsesHistoricalPolicyBeforeClamp(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name               string
 		oldDepth, newDepth int

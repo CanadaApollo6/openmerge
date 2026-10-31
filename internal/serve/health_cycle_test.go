@@ -132,6 +132,7 @@ func TestHealthRecoveryLoopExplicitlyExcludesSettledWorker(t *testing.T) {
 }
 
 func TestHealthLongProgressingCycle(t *testing.T) {
+	t.Parallel()
 	for _, maxAge := range []time.Duration{15 * time.Minute, time.Hour} {
 		t.Run(maxAge.String(), func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -244,6 +245,7 @@ func (d *reconciliationHealthDriver) PullRequest(ctx context.Context, r forge.Re
 }
 
 func TestHealthRealReconciliationProgressAndHungRead(t *testing.T) {
+	t.Parallel()
 	for _, hung := range []bool{false, true} {
 		t.Run(fmt.Sprintf("hung-%t", hung), func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {

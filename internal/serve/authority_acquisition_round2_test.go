@@ -107,6 +107,7 @@ func TestAuthorityDiscoveryHiddenBypassPreservesBaseDiscovery(t *testing.T) {
 }
 
 func TestAuthorityDefiniteConfigFailuresWaitForNewTip(t *testing.T) {
+	t.Parallel()
 	for _, failure := range []string{"coverage", "multiple", "invalid", "transient"} {
 		t.Run(failure, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -177,6 +178,7 @@ func TestAuthorityDefiniteConfigFailuresWaitForNewTip(t *testing.T) {
 }
 
 func TestAuthorityMutableOwnersRecoverAtSameTip(t *testing.T) {
+	t.Parallel()
 	for _, boundary := range []string{"worker", "discovery"} {
 		t.Run(boundary, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -223,6 +225,7 @@ func TestAuthorityMutableOwnersRecoverAtSameTip(t *testing.T) {
 }
 
 func TestAuthorityDiscoveryContentBlockClearsOnRepairedTip(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, _ := authorityWorkerFixture(t)
 		must(t, s.configuration(t.Context(), w))

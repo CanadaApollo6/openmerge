@@ -14,6 +14,7 @@ import (
 )
 
 func TestUnboundCheckProvenanceStatusAndTimeout(t *testing.T) {
+	t.Parallel()
 	for _, branch := range []string{"", "foreign"} {
 		t.Run("head_branch="+branch, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -106,6 +107,7 @@ func TestUnboundCheckProvenanceStatusAndTimeout(t *testing.T) {
 }
 
 func TestUnboundCheckProvenanceRecovers(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, _ := fixture(t, repositoryConfig)
 		f.AddComment(repo, 1, "writer", "@openmerge queue")
@@ -141,6 +143,7 @@ func TestUnboundCheckProvenanceRecovers(t *testing.T) {
 }
 
 func TestUnboundCheckProvenanceCoexistsWithAmbiguity(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, _ := fixture(t, repositoryConfig+"      - check-success = lint\n")
 		f.AddComment(repo, 1, "writer", "@openmerge queue")

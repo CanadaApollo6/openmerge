@@ -10,6 +10,7 @@ import (
 )
 
 func TestStageACheckSharesLedgerSnapshotAndLogsUnavailablePolicy(t *testing.T) {
+	t.Parallel()
 	s, w, _ := shadowFixture(t, 1, "main", "report-cache", false)
 	_, err := s.ledgerSummary(t.Context(), w, 1)
 	must(t, err)

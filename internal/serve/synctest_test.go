@@ -85,6 +85,7 @@ func TestSynctestParallelDatabaseFixtures(t *testing.T) {
 // refresh must not make another refresh due in the same worker turn. Keep I/O
 // on real PostgreSQL while advancing the polling clock only at test boundaries.
 func TestSynctestCheckPollingIsClockDriven(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, d := fixture(t, repositoryConfig)
 		f.AddComment(repo, 1, "writer", "@openmerge queue")

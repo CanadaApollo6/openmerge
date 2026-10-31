@@ -295,6 +295,7 @@ func TestAuthorityBootstrapNeverFallsBackWithoutRequiredPin(t *testing.T) {
 var _ forge.Git = (*bootstrapGit)(nil)
 
 func TestCachedGitHubPinCannotSkipRequiredValidation(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"required", "durable-config-changed", "consistent-legacy", "startup", "startup-existing"} {
 		t.Run(scenario, func(t *testing.T) {
 			db := database(t)

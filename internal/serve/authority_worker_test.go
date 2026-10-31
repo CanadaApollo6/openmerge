@@ -51,6 +51,7 @@ func authorityWorkerWithStore(t *testing.T, db *store.Store) (*Server, *worker, 
 }
 
 func TestAuthorityWorkerFirstCycleAndObservationCadence(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, reads := authorityWorkerFixture(t)
 		must(t, s.cycle(t.Context(), w))
@@ -151,8 +152,10 @@ func TestAuthorityWorkerFirstCycleAndObservationCadence(t *testing.T) {
 }
 
 func TestAuthorityWorkerGoverningOwnersAndExactRevision(t *testing.T) {
+	t.Parallel()
 	for _, path := range []string{"CODEOWNERS", ".openmerge.yml"} {
 		t.Run(path, func(t *testing.T) {
+			t.Parallel()
 			testSynctest(t, func(t *testing.T) {
 				s, w, f, _ := authorityWorkerFixture(t)
 				must(t, s.reconcile(t.Context(), w, true))
@@ -198,6 +201,7 @@ func TestAuthorityWorkerGoverningOwnersAndExactRevision(t *testing.T) {
 }
 
 func TestAuthorityWorkerRollbackRetainsDelayedWarnings(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, reads := authorityWorkerFixture(t)
 		must(t, s.reconcile(t.Context(), w, true))
@@ -268,6 +272,7 @@ func TestAuthorityWorkerRollbackRetainsDelayedWarnings(t *testing.T) {
 }
 
 func TestAuthorityWorkerAtomicDecisionAndCheckEvidence(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, _ := authorityWorkerFixture(t)
 		f.SetNativeReviews(repo, 1, forge.NativeReviews{Comments: []forge.NativeComment{shadowComment(100, "@openmerge queue")}})
@@ -334,6 +339,7 @@ func TestAuthorityWorkerAtomicDecisionAndCheckEvidence(t *testing.T) {
 }
 
 func TestAuthorityWorkerNoneCannotWaivePolicyOwners(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, _ := authorityWorkerFixture(t)
 		config := lifecycleConfig(repositoryConfig) + "    approvals:\n      default: any_writer\n      rules:\n        - when: {paths: ['**']}\n          require: none\n"

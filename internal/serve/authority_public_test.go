@@ -114,8 +114,10 @@ func newPublicFixture(t *testing.T, verified bool, configs ...string) publicFixt
 }
 
 func TestPublicAuthorityActivationConsultsCompletion(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"complete", "unverified", "other-installation", "paused", "retired", "excluded", "missing-discovery", "stale-discovery"} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			testSynctest(t, func(t *testing.T) {
 				p := newPublicFixture(t, true)
 				s, w := p.s, p.w
@@ -192,6 +194,7 @@ func TestPublicAuthorityActivationRequiresVerification(t *testing.T) {
 }
 
 func TestPublicAuthorityReceiptNotRequiredAfterBoundary(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"missing", "binary", "expired", "backup"} {
 		t.Run(kind, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -225,6 +228,7 @@ func TestPublicAuthorityReceiptNotRequiredAfterBoundary(t *testing.T) {
 }
 
 func TestPublicAuthorityProductionConstructor(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		p := newPublicFixture(t, true)
 		s, err := NewRepositories(t.Context(), p.s.store, p.s.repositories, p.s.options)
@@ -254,6 +258,7 @@ func TestPublicAuthorityGithubModeIgnoresReceipt(t *testing.T) {
 }
 
 func TestPublicAuthorityExpectedRefsRecovery(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		p := newPublicFixture(t, true, releaseConfig)
 		s, w := p.s, p.w
@@ -381,6 +386,7 @@ func enableAcceptancePublic(t *testing.T, f acceptanceGit) {
 }
 
 func TestPublicAuthorityActivationRechecksGoverningTip(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		p := newPublicFixture(t, true)
 		p.probe.onRead = func() {
@@ -398,6 +404,7 @@ func TestPublicAuthorityActivationRechecksGoverningTip(t *testing.T) {
 }
 
 func TestPublicAuthorityMutableActorFailureRetriesOnRulesCadence(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		p := newPublicFixture(t, true)
 		p.f.SetTeam(forge.TeamIdentity{ID: 201, OrganizationID: 100, Organization: "acme", Slug: "emergency"}, nil)
@@ -502,6 +509,7 @@ func TestReviewPublicInventoryErrorClass(t *testing.T) {
 }
 
 func TestPublicAuthorityUnlistedQueueStaysGithub(t *testing.T) {
+	t.Parallel()
 	for _, mismatch := range []string{"repository", "base"} {
 		t.Run(mismatch, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -575,6 +583,7 @@ func TestPublicAuthorityReviewedBindingMustMatch(t *testing.T) {
 }
 
 func TestPublicAuthorityRollbackKeepsDatabaseBinding(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		p := newPublicFixture(t, true)
 		identity, err := p.s.store.DatabaseIdentity(t.Context())

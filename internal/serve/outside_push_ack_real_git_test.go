@@ -16,6 +16,7 @@ import (
 )
 
 func TestOutsidePushAcknowledgementRealGit(t *testing.T) {
+	t.Parallel()
 	s, w, _, _ := fixture(t, repositoryConfig)
 	dir := t.TempDir()
 	remote := filepath.Join(dir, "remote.git")

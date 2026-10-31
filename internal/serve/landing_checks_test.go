@@ -64,6 +64,7 @@ func TestLandingCheckEvidenceUsesExactPolicyInputs(t *testing.T) {
 // Push authority activation is PR 9's separate seam; this fixture invokes the
 // executor directly so it does not pretend the test pin is a verified fence.
 func TestLandingChecksAuthorityMethodsAndChainPositions(t *testing.T) {
+	t.Parallel()
 	for _, method := range []queue.MergeMethod{queue.Merge, queue.Squash, queue.Rebase, queue.FastForward} {
 		for _, depth := range []int{1, 4} {
 			t.Run(fmt.Sprintf("%s/depth-%d", method, depth), func(t *testing.T) {
@@ -208,6 +209,7 @@ func claimLandingChecksAction(t *testing.T, s *Server, w *worker, cfg queue.Conf
 }
 
 func TestLandingChecksLegacyGateAndPinRace(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"legacy", "pin-before", "pin-race"} {
 		t.Run(scenario, func(t *testing.T) {
 			race := scenario == "pin-race"
@@ -290,6 +292,7 @@ func TestLandingChecksLegacyGateAndPinRace(t *testing.T) {
 }
 
 func TestLandingChecksGateOverflowPrecedesUnmetMembers(t *testing.T) {
+	t.Parallel()
 	for _, oversizedMember := range []int{1, 2} {
 		t.Run(fmt.Sprintf("member-%d", oversizedMember), func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -370,10 +373,12 @@ func (d *landingChecksQuotaDriver) CheckRuns(ctx context.Context, repo forge.Rep
 
 // Exercise the worker's typed check-policy callback, not just the final gate.
 func TestLandingChecksWorkerFailurePrecedence(t *testing.T) {
+	t.Parallel()
 	for _, authorityRequired := range []bool{false, true} {
 		for _, position := range []int{0, 1} {
 			for _, malformed := range []string{"overflow", "invalid", "bounded"} {
 				t.Run(fmt.Sprintf("authority-%t/position-%d/%s", authorityRequired, position, malformed), func(t *testing.T) {
+					t.Parallel()
 					testSynctest(t, func(t *testing.T) {
 						s, w, f := shadowFixture(t, 1, "main", "7", false)
 						pr := w.prs[1]
@@ -453,6 +458,7 @@ func TestLandingChecksWorkerFailurePrecedence(t *testing.T) {
 }
 
 func TestLandingChecksPreflightDoesNotAcquireApprovals(t *testing.T) {
+	t.Parallel()
 	for _, result := range []forge.CheckState{forge.Failure, forge.Pending, forge.Success} {
 		t.Run(string(result), func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -494,6 +500,7 @@ func TestLandingChecksPreflightDoesNotAcquireApprovals(t *testing.T) {
 }
 
 func TestLandingChecksPreflightDefersReviewListOverflow(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f := shadowFixture(t, 1, "main", "7", false)
 		check, err := condition.Parse("check-success = ci")

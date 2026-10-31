@@ -10,6 +10,7 @@ import (
 )
 
 func TestManagedPolicyChangeReobservesUnchangedPRs(t *testing.T) {
+	t.Parallel()
 	for _, refreshFirst := range []bool{false, true} {
 		t.Run(map[bool]string{false: "awaiting-activation", true: "refresh-before-reconcile"}[refreshFirst], func(t *testing.T) {
 			s, f := managedFixture(t, releaseConfig, Options{})

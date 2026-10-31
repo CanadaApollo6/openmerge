@@ -143,6 +143,7 @@ func TestStageAApprovalReadUsesDatabaseOrder(t *testing.T) {
 }
 
 func TestStageAConfigReclassifiesBeforeEligibility(t *testing.T) {
+	t.Parallel()
 	s, w, f := shadowFixture(t, 1, "main", "7", false)
 	before, err := s.store.Watermark(t.Context(), w.id)
 	must(t, err)
@@ -175,6 +176,7 @@ func TestStageAConfigReclassifiesBeforeEligibility(t *testing.T) {
 }
 
 func TestStageACheckGateRequiresCurrentPolicyBeforeJournaling(t *testing.T) {
+	t.Parallel()
 	s, w, f := shadowFixture(t, 1, "main", "7", false)
 	f.SetNativeReviews(repo, 1, shadowNative(f, w, shadowComment(100, "@openmerge queue")))
 	batch := shadowBuildBatch(t, s, w, 1)

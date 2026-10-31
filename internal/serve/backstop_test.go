@@ -57,6 +57,7 @@ func requireBackstopTesting(t *testing.T, s *Server, w *worker) {
 }
 
 func TestBackstopReplansInterruptedPeerEnqueue(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, _ := fixture(t, repositoryConfig)
 		target := w.Target
@@ -81,6 +82,7 @@ func TestBackstopReplansInterruptedPeerEnqueue(t *testing.T) {
 }
 
 func TestBackstopResumesPeerBuildingBatch(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, _ := fixture(t, repositoryConfig)
 		target := w.Target
@@ -106,6 +108,7 @@ func TestBackstopResumesPeerBuildingBatch(t *testing.T) {
 }
 
 func TestBackstopRecomputesPeerPartialBatchDeadline(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, _ := fixture(t, repositoryConfig+"    batch: {max_size: 2, max_wait: 300ms}\n")
 		target := w.Target

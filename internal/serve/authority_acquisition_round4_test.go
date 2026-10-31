@@ -48,6 +48,7 @@ func TestAuthorityAccountableIdentityRecoversAtSameTip(t *testing.T) {
 }
 
 func TestAuthorityMissingOwnerBoundsReadsAndRecovers(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"user", "team"} {
 		t.Run(kind, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {

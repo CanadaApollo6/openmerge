@@ -33,8 +33,10 @@ func assertFlaggedRewind(t *testing.T, s *Server, w *worker, landed, base string
 }
 
 func TestReviewRound3PeerSettlesAlreadyLandingAfterRefRead(t *testing.T) {
+	t.Parallel()
 	for _, method := range []string{"merge", "fast-forward"} {
 		t.Run(method, func(t *testing.T) {
+			t.Parallel()
 			s, w, f, before, req := outsidePushRound2Attempt(t, method, false)
 			peer, err := New(t.Context(), s.store, []Target{w.Target}, s.options)
 			must(t, err)
@@ -57,6 +59,7 @@ func TestReviewRound3PeerSettlesAlreadyLandingAfterRefRead(t *testing.T) {
 // A real rollback/restore is journal-identical to the peer's stale-read repair.
 // The audit must expose precisely the same uncertainty in both cases.
 func TestOutsidePushRealRollbackAndRestoreHasSameFlag(t *testing.T) {
+	t.Parallel()
 	for _, method := range []string{"merge", "fast-forward"} {
 		t.Run(method, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -82,6 +85,7 @@ func TestOutsidePushRealRollbackAndRestoreHasSameFlag(t *testing.T) {
 }
 
 func TestOutsidePushOnlyExactPreLandingRewindIsFlagged(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, before, req := outsidePushRound2Attempt(t, "merge", false)
 		_, err := f.Land(t.Context(), repo, req, forge.PushOptions{})
@@ -129,6 +133,7 @@ func (g *reviewRound3BlockingHistory) CommitsBetween(ctx context.Context, r forg
 }
 
 func TestReviewRound3AuditHoldsWorkerAgainstNextSettlement(t *testing.T) {
+	t.Parallel()
 	s, w, f, _ := fixture(t, repositoryConfig)
 	must(t, s.cycle(t.Context(), w))
 	// An older durable outside move is ready for enrichment while a newer

@@ -86,6 +86,7 @@ func (g *localPolicyGit) LocalGoverningFiles(_ context.Context, _ forge.RepoRef,
 }
 
 func TestStageAProductionBriefReconstruction(t *testing.T) {
+	t.Parallel()
 	s, w, f := shadowFixture(t, 1, "main", "7", true)
 	rows, err := s.store.EventsAfter(t.Context(), w.id, 0)
 	must(t, err)

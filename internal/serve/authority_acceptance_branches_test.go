@@ -18,6 +18,7 @@ import (
 // The server owns discovery/lifecycle/guards; only forge metadata is simulated.
 // Every branch mutation and fence assertion below uses an owned bare Git remote.
 func TestAuthorityAcceptanceDefaultBranchTransitions(t *testing.T) {
+	t.Parallel()
 	for _, authorityMode := range []bool{false, true} {
 		t.Run(map[bool]string{false: "github", true: "authority"}[authorityMode], func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {

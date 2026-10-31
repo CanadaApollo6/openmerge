@@ -115,6 +115,7 @@ func TestOversizedFakePRKeepsAllFilePredicatesUnknown(t *testing.T) {
 }
 
 func TestMergeMetadataRevalidatedBeforeLanding(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		cfg := strings.Replace(repositoryConfig, "      - check-success = ci", "      - check-success = ci\n      - label = ready\n      - files glob pr-*.txt\n      - -conflict", 1)
 		s, w, f, _ := fixture(t, cfg)

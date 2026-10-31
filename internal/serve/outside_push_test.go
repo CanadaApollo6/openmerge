@@ -47,6 +47,7 @@ func TestOutsidePushObservationHistory(t *testing.T) {
 }
 
 func TestOutsidePushReconciliationAdminAndForcePush(t *testing.T) {
+	t.Parallel()
 	s, w, f, _ := fixture(t, repositoryConfig)
 	must(t, s.cycle(t.Context(), w))
 	runOutsidePushAudit(t, s, w)
@@ -83,6 +84,7 @@ func TestOutsidePushReconciliationAdminAndForcePush(t *testing.T) {
 }
 
 func TestOutsidePushSettlesOutstandingLandingFirst(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name          string
 		land, outside bool
@@ -176,6 +178,7 @@ func TestOutsidePushUnreadableHistoryIsDurable(t *testing.T) {
 }
 
 func TestOutsidePushDivergedRewrite(t *testing.T) {
+	t.Parallel()
 	s, w, f, _ := fixture(t, repositoryConfig)
 	must(t, s.cycle(t.Context(), w))
 	runOutsidePushAudit(t, s, w)

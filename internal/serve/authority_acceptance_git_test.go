@@ -160,8 +160,10 @@ func acceptanceGitFixture(t *testing.T, method queue.MergeMethod, history int, m
 }
 
 func TestAuthorityAcceptanceColdCacheAllMethods(t *testing.T) {
+	t.Parallel()
 	for _, method := range []queue.MergeMethod{queue.FastForward, queue.Rebase, queue.Merge, queue.Squash} {
 		t.Run(string(method), func(t *testing.T) {
+			t.Parallel()
 			testSynctest(t, func(t *testing.T) {
 				history := 0
 				if method == queue.Merge {
@@ -270,6 +272,7 @@ func TestAuthorityAcceptanceColdCacheAllMethods(t *testing.T) {
 // 10,000 commits through the rebase builder. Only the over-limit attempt runs
 // the executor: its durable composition refusal must precede any generated push.
 func TestAuthorityAcceptanceHistoryBoundary(t *testing.T) {
+	t.Parallel()
 	if forge.MaxFirstParentCommits != 10_000 {
 		t.Fatalf("production first-parent limit = %d, want 10000", forge.MaxFirstParentCommits)
 	}

@@ -36,6 +36,7 @@ func (g *failedHealthGit) GoverningFiles(context.Context, forge.RepoRef, forge.G
 }
 
 func TestHealthStageAFailedGitRead(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"policy-governing", "diff", "classification-governing"} {
 		t.Run(mode, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {

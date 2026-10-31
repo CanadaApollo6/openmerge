@@ -13,6 +13,7 @@ import (
 )
 
 func TestLandingDecisionErrorsFailWorkerAction(t *testing.T) {
+	t.Parallel()
 	for _, failure := range []error{store.LandingDecisionRequiredError{}, store.LandingChecksRequiredError{}, executor.ErrLandingApprovals, queue.LandingChecksTooLargeError{Field: "wire event", Limit: queue.MaxLandingChecksBytes}, queue.LandingChecksInvalidError{Err: errors.New("invalid UTF-8")}} {
 		t.Run(failure.Error(), func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {

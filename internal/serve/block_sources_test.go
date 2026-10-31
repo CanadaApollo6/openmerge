@@ -36,6 +36,7 @@ func (d *defaultBranchFailure) DefaultBranch(ctx context.Context, repo forge.Rep
 }
 
 func TestConfigRecoveryPreservesSafetySources(t *testing.T) {
+	t.Parallel()
 	for _, legacy := range []bool{false, true} {
 		for _, seed := range []string{"landing", "poison", "both"} {
 			name := seed
@@ -103,6 +104,7 @@ func TestConfigPassCannotClearAnOverlappingFailure(t *testing.T) {
 }
 
 func TestCheckSourcesRecoverIndependentlyAcrossPRsAndRestart(t *testing.T) {
+	t.Parallel()
 	cfg := strings.Replace(repositoryConfig, "    merge_when:", "    enter_when: [check-success = admission]\n    merge_when:", 1)
 	s, w, f, _ := fixture(t, cfg)
 	base, err := f.ReadRef(t.Context(), repo, "main")

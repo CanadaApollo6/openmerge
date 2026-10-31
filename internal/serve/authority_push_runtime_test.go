@@ -26,8 +26,10 @@ func (g *lifecycleFenceGit) EnsureFence(ctx context.Context, repo forge.RepoRef,
 }
 
 func TestAuthorityLifecycleFirstFenceEntrypoints(t *testing.T) {
+	t.Parallel()
 	for _, path := range []string{"registration", "refreshWorker", "cycle", "unadopted"} {
 		t.Run(path, func(t *testing.T) {
+			t.Parallel()
 			db := database(t)
 			s, err := newServer(db, Options{})
 			must(t, err)
@@ -188,6 +190,7 @@ func (d lifecycleFenceDriver) ReadFile(_ context.Context, _ forge.RepoRef, ref, 
 }
 
 func TestAuthorityStartupUnavailablePreparationPreservesRealFenceNoop(t *testing.T) {
+	t.Parallel()
 	for _, existing := range []bool{false, true} {
 		t.Run(map[bool]string{false: "absent", true: "existing"}[existing], func(t *testing.T) {
 			db := database(t)

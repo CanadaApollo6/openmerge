@@ -13,6 +13,7 @@ import (
 )
 
 func TestRestartChecksAfterReadiness(t *testing.T) {
+	t.Parallel()
 	for _, queued := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unqueued", true: "queued"}[queued], func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -86,6 +87,7 @@ func TestStartupReportingWithPolicyObservations(t *testing.T) {
 }
 
 func TestStartupDiscoveryFailuresPublishOnce(t *testing.T) {
+	t.Parallel()
 	for _, boundary := range []string{"installations", "noncanonical installation", "installation binding", "repositories", "missing repository listing", "basis"} {
 		t.Run(boundary, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -171,6 +173,7 @@ func TestStartupDiscoveryFailuresPublishOnce(t *testing.T) {
 // The second scope is still awaiting discovery, so a failure in the first
 // must not end its silent startup window.
 func TestStartupDiscoveryFailureScope(t *testing.T) {
+	t.Parallel()
 	for _, boundary := range []string{"repositories", "basis", "installation binding", "missing repository listing"} {
 		t.Run(boundary, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -278,6 +281,7 @@ func TestStartupDiscoveryFailureScope(t *testing.T) {
 }
 
 func TestStartupValidationFailureStillReportsWithoutDefaultPolicy(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"discovery", "repositories"} {
 		t.Run(mode, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {

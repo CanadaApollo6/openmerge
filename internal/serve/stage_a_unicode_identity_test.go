@@ -18,6 +18,7 @@ func (stageAUnicodeGrantDriver) WriteGrant(_ context.Context, _ forge.RepoRef, a
 }
 
 func TestStageAUnicodeApprovalIdentityRejected(t *testing.T) {
+	t.Parallel()
 	for _, login := range []string{"Kam", "Kontributor", "Élodie", "élodie"} {
 		t.Run(login, func(t *testing.T) {
 			s, w, f := shadowFixture(t, 1, "main", "7", true)

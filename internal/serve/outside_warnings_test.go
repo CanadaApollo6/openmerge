@@ -119,6 +119,7 @@ func TestOutsideWarningsLedgerStatusHealthAndAcknowledgement(t *testing.T) {
 }
 
 func TestOutsideWarningsBoundedAcrossPagesAndAuthorityRollback(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, _, _ := fixture(t, repositoryConfig)
 		reportingPin(t, s, w, authority.OpenMerge)

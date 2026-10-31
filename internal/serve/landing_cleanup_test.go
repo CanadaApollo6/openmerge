@@ -23,6 +23,7 @@ func (g lostLandingResult) Land(ctx context.Context, repo forge.RepoRef, request
 }
 
 func TestLandingCleanupPolicySurvivesConfigurationChange(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name                  string
 		legacy, missingPolicy bool

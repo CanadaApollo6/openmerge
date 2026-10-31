@@ -267,6 +267,7 @@ func (d *throttledReporting) ReportStatus(context.Context, forge.RepoRef, int, s
 }
 
 func TestReportingQuotaDoesNotStopActiveLanding(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, f, _ := fixture(t, repositoryConfig)
 		driver := &throttledReporting{Driver: w.Driver}

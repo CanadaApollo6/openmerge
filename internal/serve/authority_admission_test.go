@@ -19,8 +19,10 @@ import (
 )
 
 func TestAuthorityAdmissionNoApprovalsChains(t *testing.T) {
+	t.Parallel()
 	for _, depth := range []int{1, 4} {
 		t.Run(fmt.Sprint(depth), func(t *testing.T) {
+			t.Parallel()
 			testSynctest(t, func(t *testing.T) {
 				s, w, f, reads := authorityWorkerFixture(t)
 				if depth > 1 {
@@ -157,6 +159,7 @@ func (*admissionQuota) Error() string           { return "quota exhausted" }
 func (q *admissionQuota) RetryAfter() time.Time { return q.until }
 
 func TestAuthorityBarrierPinBearingBriefAndAdmission(t *testing.T) {
+	t.Parallel()
 	testSynctest(t, func(t *testing.T) {
 		s, w, _, _ := authorityWorkerFixture(t)
 		must(t, s.reconcile(t.Context(), w, true))
@@ -186,8 +189,10 @@ func TestAuthorityBarrierPinBearingBriefAndAdmission(t *testing.T) {
 }
 
 func TestAuthorityAdmissionWorkerTimeout(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"read_timeout", "shutdown"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			testSynctest(t, func(t *testing.T) {
 				authorityAdmissionWorkerTimeout(t, mode)
 			})
@@ -196,8 +201,10 @@ func TestAuthorityAdmissionWorkerTimeout(t *testing.T) {
 }
 
 func TestAuthorityAdmissionReaderErrorsAreSanitized(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"secret_execute", "secret_cycle", "secret_loop", "secret_persist", "missing_reader"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			testSynctest(t, func(t *testing.T) {
 				authorityAdmissionWorkerTimeout(t, mode)
 			})
@@ -206,6 +213,7 @@ func TestAuthorityAdmissionReaderErrorsAreSanitized(t *testing.T) {
 }
 
 func TestAuthorityAdmissionWorkerLockedAppend(t *testing.T) {
+	t.Parallel()
 	// Real socket I/O prevents synctest's clock from advancing.
 	// The reader confirms the lock before returning a synthetic read timeout;
 	// keep it held until execute returns, with an independent real watchdog.

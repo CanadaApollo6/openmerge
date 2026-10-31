@@ -28,6 +28,7 @@ func (g *outsidePushRefHook) ReadRef(ctx context.Context, r forge.RepoRef, ref s
 }
 
 func TestOutsidePushPeerSettlementAfterRefRead(t *testing.T) {
+	t.Parallel()
 	for _, method := range []string{"merge", "fast-forward"} {
 		t.Run(method, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -71,6 +72,7 @@ func TestOutsidePushPeerSettlementAfterRefRead(t *testing.T) {
 }
 
 func TestOutsidePushLandingThenRollback(t *testing.T) {
+	t.Parallel()
 	for _, method := range []string{"merge", "fast-forward"} {
 		t.Run(method, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
@@ -119,6 +121,7 @@ func TestOutsidePushLandingThenRollback(t *testing.T) {
 }
 
 func TestOutsidePushRestartAndLandingThenOutside(t *testing.T) {
+	t.Parallel()
 	for _, method := range []string{"merge", "fast-forward"} {
 		for _, outside := range []bool{false, true} {
 			t.Run(method+map[bool]string{false: "/own", true: "/outside"}[outside], func(t *testing.T) {
@@ -180,6 +183,7 @@ func TestOutsidePushTwoMovesBetweenPolls(t *testing.T) {
 }
 
 func TestOutsidePushBaseObservationDuringLanding(t *testing.T) {
+	t.Parallel()
 	for _, land := range []bool{false, true} {
 		t.Run(map[bool]string{false: "abandoned", true: "landed"}[land], func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
