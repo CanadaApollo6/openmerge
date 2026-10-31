@@ -142,6 +142,12 @@ type savingsRun struct {
 	outcome    string
 }
 
+// rerunConfirmed reports a rerun the forge accepted. The fold allows one rerun
+// per batch, so its first confirmation is counted once.
+func rerunConfirmed(r queue.CheckRetryState) bool {
+	return r.Dispatched && !r.Unsupported && !r.OutcomeUnknown
+}
+
 const (
 	outcomeOpen        = ""
 	outcomeLanded      = "landed"
@@ -203,7 +209,7 @@ func ComputeSavings(j store.Journal, w SavingsWindow) (Savings, error) {
 			if old != nil && old.CheckRetry != nil {
 				was = *old.CheckRetry
 			}
-			if b.CheckRetry.Dispatched && !b.CheckRetry.Unsupported && !b.CheckRetry.OutcomeUnknown && !(was.Dispatched && !was.Unsupported && !was.OutcomeUnknown) {
+			if rerunConfirmed(*b.CheckRetry) && !rerunConfirmed(was) {
 				run.reruns++
 			}
 			if b.CheckRetry.OutcomeUnknown && !was.OutcomeUnknown {

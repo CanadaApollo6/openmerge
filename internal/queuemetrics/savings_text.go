@@ -25,7 +25,7 @@ func WriteSavingsText(out io.Writer, s Savings) error {
 	}
 	var table bytes.Buffer
 	t := tabwriter.NewWriter(&table, 0, 4, 2, ' ', 0)
-	row := func(label, value, detail string) { fmt.Fprintf(t, "%s\t%s\t%s\n", label, value, detail) }
+	row := func(label, value, detail string) { _, _ = fmt.Fprintf(t, "%s\t%s\t%s\n", label, value, detail) }
 	b, r, m := s.Batches, s.Runs, s.Minutes
 	row("PRs landed", fmt.Sprint(s.PRsLanded), "")
 	row("Batches landed", fmt.Sprint(b.Landed), fmt.Sprintf("mean %.2f PRs; p50 %d; p90 %d; max %d", b.Mean, b.P50, b.P90, b.Max))
