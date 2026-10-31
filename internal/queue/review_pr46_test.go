@@ -198,6 +198,9 @@ func TestReviewPR46FreshSizeRevalidatesQueuedAdmission(t *testing.T) {
 	cfg, s, at := adaptiveState(t, 4, 0)
 	cfg.BatchMaxSize = 8
 	cfg.BatchTargetPassRate = .8
+	// This pins the adaptive cap itself; the guarded case is checked below and
+	// in backlog_guard_test.go.
+	cfg.BatchBacklogGuardOff = true
 	enqueue := func(pr int) {
 		s = Apply(s, PRObserved{PR: pr, HeadSHA: fmt.Sprint("h", pr), Eligible: true, Trusted: true})
 		s = Apply(s, EnqueueRequested{PR: pr, At: at})
@@ -249,4 +252,14 @@ func TestReviewPR46FreshSizeRevalidatesQueuedAdmission(t *testing.T) {
 		t.Fatal("stale size-8 admission passed start gate after size shrank to 2")
 	}
 	t.Log("stale size-8 build rejected after 20th sample reduces fresh cap to 2")
+	// With the backlog guard, nine waiting changes over a window of four floor
+	// the size at 3: still below the stale 8, so the start is still rejected.
+	guarded := cfg
+	guarded.BatchBacklogGuardOff = false
+	if got := len(freshBatch(guarded, s, at)); got != 3 {
+		t.Fatalf("guarded replacement cap=%d want=3", got)
+	}
+	if CanStart(guarded, s, pending, start) {
+		t.Fatal("stale size-8 admission passed the guarded start gate")
+	}
 }

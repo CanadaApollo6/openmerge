@@ -1293,6 +1293,17 @@ While policy is unchanged, pending bisection and infrastructure retry groups kee
 their sizes as the estimate updates. Leave the target unset to preserve fixed
 batch sizing.
 
+With a target, a backlog guard floors each fresh batch at
+`min(max_size, ⌈waiting / W⌉)`, where `waiting` counts changes eligible for a
+fresh batch now and `W` is the current admission window. Both come from the
+journal, so replay and planning agree and no clock is read. It never exceeds
+the waiting backlog, so it adds no `max_wait` delay. Set
+`batch.backlog_guard: false` (only valid with `target_pass_rate`) to disable
+it; omitting it or writing `true` keeps the same policy digest. Simulator
+evidence: at depth 1 it holds adaptive sizing at fixed-sizing latency under
+load, but at depth 4 it gives back much of adaptive sizing's tail-latency
+benefit; see [the guard evidence](research/adaptive-backlog-guard.md).
+
 At small volumes a 200-change history can be several weeks old. Treat this as a
 size ceiling, not a prediction of independent CI outcomes: interacting failures
 and runner overload can make the estimate misleading. Inspect its sample count,

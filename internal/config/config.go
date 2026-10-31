@@ -114,6 +114,9 @@ type Batch struct {
 	TargetPassRate float64       `yaml:"target_pass_rate,omitempty"`
 	MaxSize        int           `yaml:"max_size"`
 	MaxWait        time.Duration `yaml:"max_wait"`
+	// BacklogGuard defaults to true and requires TargetPassRate. False keeps
+	// adaptive sizing without the backlog floor.
+	BacklogGuard *bool `yaml:"backlog_guard,omitempty"`
 }
 
 // QueueConfig maps a loaded queue to the planner. Operational defaults are a
@@ -134,7 +137,8 @@ func (q Queue) QueueConfig() queue.Config {
 		ChecksRetryFailed:   q.retryLimit(),
 		BatchTargetPassRate: q.Batch.TargetPassRate,
 		BatchMaxSize:        q.Batch.MaxSize, BatchMaxWait: q.Batch.MaxWait,
-		ResolveAfter: time.Minute, RefreshInterval: time.Minute,
+		BatchBacklogGuardOff: q.Batch.BacklogGuard != nil && !*q.Batch.BacklogGuard,
+		ResolveAfter:         time.Minute, RefreshInterval: time.Minute,
 		BuildRetries: 3, BuildBackoff: 5 * time.Second,
 	}
 }
@@ -375,6 +379,17 @@ func (p *parser) queue(n *yaml.Node, path string) Queue {
 		}
 		if n := fields["max_wait"]; n != nil {
 			q.Batch.MaxWait = p.duration(n, path+".batch.max_wait")
+		}
+		if n := fields["backlog_guard"]; n != nil {
+			var enabled bool
+			switch {
+			case n.Kind != yaml.ScalarNode || n.ShortTag() != "!!bool" || n.Decode(&enabled) != nil:
+				p.error(n, path+".batch.backlog_guard", "expected a boolean")
+			case fields["target_pass_rate"] == nil:
+				p.error(n, path+".batch.backlog_guard", "applies only with batch.target_pass_rate")
+			default:
+				q.Batch.BacklogGuard = &enabled
+			}
 		}
 	}
 	return q
