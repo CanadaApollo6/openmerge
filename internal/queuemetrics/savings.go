@@ -8,6 +8,7 @@ import (
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
+	"github.com/CanadaApollo6/openmerge/internal/treededupe"
 )
 
 // SavingsVersion identifies the JSON contract of Savings.
@@ -69,7 +70,24 @@ type Savings struct {
 	Minutes         MinutesSummary `json:"ci_minutes"`
 	EnqueueToLanded Latency        `json:"enqueue_to_landed"`
 	Isolation       Isolation      `json:"failure_isolation"`
-	Warnings        []string       `json:"warnings"`
+	// Shadow is present only when the queue has an ADR 0015 shadow ledger.
+	// It is potential additional savings, never applied, and changes no
+	// count above.
+	Shadow   *ShadowSavings `json:"potential_additional_savings_shadow,omitempty"`
+	Warnings []string       `json:"warnings"`
+}
+
+// ShadowDefinition is printed with every shadow section.
+const ShadowDefinition = "exact tree dedupe in shadow mode: test builds in the window whose key (tree OID, workflow blob OIDs, merge_when digest, runner image, queue) " +
+	"equalled an earlier completed queue build that passed, or that failed and was confirmed by a retry or as a singleton. " +
+	"Unconfirmed failures and unknown keys are never counted. Nothing was reused; every build still ran CI."
+
+// ShadowSavings reports what exact-tree dedupe would have avoided.
+type ShadowSavings struct {
+	Definition string `json:"definition"`
+	treededupe.Summary
+	// AvoidableFullSuiteMinutes prices the hits at --full-suite-minutes.
+	AvoidableFullSuiteMinutes float64 `json:"avoidable_full_suite_minutes,omitempty"`
 }
 
 // BatchSizes describes the batches that landed in the window.
@@ -455,5 +473,25 @@ func ComputeSavings(j store.Journal, w SavingsWindow) (Savings, error) {
 	if r.Runs.Saved < 0 {
 		r.Warnings = append(r.Warnings, "OpenMerge executed more CI runs than the baseline in this window")
 	}
+	if j.TreeDedupeShadow != nil {
+		r.Shadow, r.Warnings = shadowSavings(j.TreeDedupeShadow, w, r.Warnings)
+	}
 	return r, nil
+}
+
+// shadowSavings summarizes the shadow ledger for the window. An unreadable
+// ledger is a warning, never a report failure.
+func shadowSavings(raw []byte, w SavingsWindow, warnings []string) (*ShadowSavings, []string) {
+	ledger, err := treededupe.Decode(raw)
+	if err != nil {
+		return nil, append(warnings, "the tree dedupe shadow ledger is unreadable by this binary and is not reported")
+	}
+	s := &ShadowSavings{Definition: ShadowDefinition, Summary: ledger.Summarize(w.Since, w.Until)}
+	if w.FullSuiteMinutes > 0 {
+		s.AvoidableFullSuiteMinutes = float64(s.WouldReuseSuccess+s.WouldReuseFailure) * w.FullSuiteMinutes
+	}
+	if s.Dropped > 0 && s.Since.After(w.Since) {
+		warnings = append(warnings, fmt.Sprintf("the tree dedupe shadow ledger retains builds only since %s; earlier shadow hits in the window are not counted", s.Since.UTC().Format(time.RFC3339)))
+	}
+	return s, warnings
 }

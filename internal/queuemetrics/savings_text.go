@@ -70,6 +70,13 @@ func WriteSavingsText(out io.Writer, s Savings) error {
 		fmt.Fprintf(&tail, "\nNOTE: %s\n", ObservedMinutesWarning)
 	}
 	fmt.Fprintf(&tail, "\nBaseline: %s\nExecuted: %s\n", s.Baseline, s.Executed)
+	if s.Shadow != nil {
+		section, err := shadowText(*s.Shadow)
+		if err != nil {
+			return err
+		}
+		tail.WriteString(section)
+	}
 	for _, w := range s.Warnings {
 		fmt.Fprintf(&tail, "WARNING: %s\n", w)
 	}
@@ -79,4 +86,44 @@ func WriteSavingsText(out io.Writer, s Savings) error {
 
 func seconds(v float64) string {
 	return (time.Duration(v * float64(time.Second))).Round(time.Second).String()
+}
+
+// shadowText renders the shadow section apart from the measured table, so no
+// potential saving can be read as an applied one.
+func shadowText(s ShadowSavings) (string, error) {
+	var table bytes.Buffer
+	t := tabwriter.NewWriter(&table, 0, 4, 2, ' ', 0)
+	row := func(label, value, detail string) { _, _ = fmt.Fprintf(t, "%s\t%s\t%s\n", label, value, detail) }
+	var unknown, kinds []string
+	for _, input := range slices.Sorted(maps.Keys(s.KeyUnknown)) {
+		unknown = append(unknown, fmt.Sprintf("%s %d", input, s.KeyUnknown[input]))
+	}
+	for _, kind := range slices.Sorted(maps.Keys(s.HitsByKind)) {
+		kinds = append(kinds, fmt.Sprintf("%s %d", kind, s.HitsByKind[kind]))
+	}
+	detail := fmt.Sprintf("%d with a known key", s.Keyed)
+	if len(unknown) > 0 {
+		detail += "; unknown inputs: " + strings.Join(unknown, ", ")
+	}
+	row("Test builds observed", fmt.Sprint(s.Builds), detail)
+	row("Would reuse a success", fmt.Sprint(s.WouldReuseSuccess), "")
+	row("Would reuse a confirmed failure", fmt.Sprint(s.WouldReuseFailure), "")
+	if len(kinds) > 0 {
+		row("Hits by build kind", "", strings.Join(kinds, "; "))
+	}
+	row("Avoidable CI minutes", fmt.Sprintf("%.1f", s.AvoidableMinutes), "source runs' observed wall-clock, not billed")
+	if s.AvoidableFullSuiteMinutes > 0 {
+		row("Avoidable CI minutes (flag)", fmt.Sprintf("%.1f", s.AvoidableFullSuiteMinutes), "hits x --full-suite-minutes")
+	}
+	row("Shadow verdicts", fmt.Sprint(s.Agreed+s.Disagreed), fmt.Sprintf("%d agreed; %d disagreed (false reuse the cache would have caused)", s.Agreed, s.Disagreed))
+	if err := t.Flush(); err != nil {
+		return "", err
+	}
+	var out strings.Builder
+	out.WriteString("\nPotential additional savings (shadow, not applied)\n")
+	for line := range strings.Lines(table.String()) {
+		out.WriteString("  " + strings.TrimRight(line, " \n") + "\n")
+	}
+	fmt.Fprintf(&out, "Shadow: %s\n", s.Definition)
+	return out.String(), nil
 }
