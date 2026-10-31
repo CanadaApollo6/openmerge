@@ -12,6 +12,7 @@ import (
 // -short. Set OPENMERGE_LAB_OUT to a directory to keep efficiency-lab.json and
 // efficiency-lab.md; otherwise they go to a temporary directory.
 func TestEfficiencyLab(t *testing.T) {
+	t.Parallel()
 	workloads, strategies := LabWorkloads(), LabStrategies()
 	seeds := []uint64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 	if testing.Short() {

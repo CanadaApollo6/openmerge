@@ -45,6 +45,7 @@ func withoutLab(r Result) Result {
 // With no lab strategy and the legacy risk and duration models, the lab only
 // observes: every outcome, draw, timing and metric matches the plain CI run.
 func TestLabInstrumentationIsTransparent(t *testing.T) {
+	t.Parallel()
 	for name, base := range map[string]Config{"depth-1": labDay(), "depth-4": labDepth4()} {
 		t.Run(name, func(t *testing.T) {
 			base.Lab = nil
@@ -62,6 +63,7 @@ func TestLabInstrumentationIsTransparent(t *testing.T) {
 
 // The ledger must agree with the existing CI accounting it extends.
 func TestLabLedgerReconcilesWithCIMetrics(t *testing.T) {
+	t.Parallel()
 	for name, cfg := range map[string]Config{"depth-1": labDay(), "depth-4": labDepth4()} {
 		for _, dedupe := range []bool{false, true} {
 			cfg := cfg
@@ -85,6 +87,7 @@ func TestLabLedgerReconcilesWithCIMetrics(t *testing.T) {
 }
 
 func TestLabDeterministicPerSeed(t *testing.T) {
+	t.Parallel()
 	cfg := labDepth4()
 	cfg.Lab.Risk = RiskModel{Kind: "beta", Alpha: .5, Beta: 9.5, ScoreNoise: .5}
 	cfg.Lab.Duration = DurationModel{Kind: "lognormal", Median: time.Minute, Sigma: .3, FailFastFraction: .3}
@@ -106,6 +109,7 @@ func TestLabDeterministicPerSeed(t *testing.T) {
 // must not change any outcome: every passing change lands and every broken one
 // is dequeued, as in the baseline, with fewer runs.
 func TestTreeDedupePreservesOutcomes(t *testing.T) {
+	t.Parallel()
 	base := labDay()
 	dedupe := labDay()
 	dedupe.Lab.Strategy.TreeDedupe = true
@@ -124,6 +128,7 @@ func TestTreeDedupePreservesOutcomes(t *testing.T) {
 }
 
 func TestRiskSizedBatchesFollowScores(t *testing.T) {
+	t.Parallel()
 	cfg := labDay()
 	// A constant 5% score gives k = 4: 0.95^4 >= 0.8 > 0.95^5.
 	cfg.Lab.Risk = RiskModel{}
@@ -143,6 +148,7 @@ func TestRiskSizedBatchesFollowScores(t *testing.T) {
 }
 
 func TestFailFastShortensOnlyFailingRuns(t *testing.T) {
+	t.Parallel()
 	cfg := labDay()
 	cfg.Lab.Duration.FailFastFraction = .25
 	s, _ := runScenario(t, cfg)
@@ -264,6 +270,7 @@ func TestIsolationModel(t *testing.T) {
 // At depth one without flakes the halving model is an exact replay of the
 // planner's bisection: it predicts every bisection CI run.
 func TestIsolationModelCalibration(t *testing.T) {
+	t.Parallel()
 	seeds := []uint64{1, 2, 3}
 	if testing.Short() {
 		seeds = seeds[:1]
