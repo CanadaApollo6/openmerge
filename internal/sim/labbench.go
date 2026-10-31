@@ -79,8 +79,8 @@ func benchDepth4(cfg Config, ci time.Duration) Config {
 
 // benchAgentBurst is the burst depth-four workload. sigma zero keeps the fixed
 // 2-minute CI; otherwise CI durations are lognormal with that sigma and the
-// same median. The timeout stays 1.5 × the median, so slow lognormal tails
-// time out, as a production timeout set from the typical duration would.
+// same median, and the check timeout rises to 3 × the median (the lognormal
+// clamp), so no run times out; the cancellation sweep shows the 1.5 × case.
 func benchAgentBurst(sigma float64) Config {
 	cfg := benchDepth4(benchDay(), 2*time.Minute)
 	cfg.PRs = 900
@@ -215,6 +215,26 @@ func LabSuite() []LabMatrix {
 			})
 		}
 	}
+	cancellation = append(cancellation,
+		LabWorkload{
+			Name: "burst σ=0.6 repush=0% timeout 1.5×", Median: 2 * time.Minute,
+			Source: "burst σ=0.6 with the fixed-CI timeout (1.5 × median), so about a quarter of runs time out",
+			Config: func() Config {
+				cfg := benchAgentBurst(.6)
+				cfg.Planner.CheckTimeout = 3 * time.Minute
+				return cfg
+			},
+		},
+		LabWorkload{
+			Name: "burst σ=0.6 repush=10% runners=3", Median: 2 * time.Minute,
+			Source: "burst σ=0.6 repush=10% with 3 runners instead of 50, so runner capacity binds",
+			Config: func() Config {
+				cfg := benchChurn(benchAgentBurst(.6), .1, time.Minute)
+				cfg.CI.Runners = 3
+				return cfg
+			},
+		},
+	)
 	for _, prs := range []int{300, 450, 600, 700, 800} {
 		load = append(load, LabWorkload{
 			Name: fmt.Sprintf("beta-loaded %d/day", prs), Median: 4 * time.Minute, Calibrate: true,
@@ -397,6 +417,12 @@ var labMetricNames = []string{
 	"failed_minutes_per_landed", "invalidated_minutes_per_landed", "cancelled_residual_minutes_per_landed",
 	"superseded_minutes_per_landed", "rerun_minutes_per_landed", "speculative_minutes_per_landed", "bisection_minutes_per_landed",
 	"dequeued",
+}
+
+// labSweepMetricNames is the subset a sweep matrix records in the summary.
+var labSweepMetricNames = []string{
+	"runner_minutes_per_landed", "runs_per_landed", "wasted_minutes_per_landed", "p50_latency_minutes", "p90_latency_minutes",
+	"throughput_per_day", "cancelled_residual_minutes_per_landed", "landed", "dequeued",
 }
 
 func labMetricValues(m *LabMetrics) map[string]float64 {
@@ -640,39 +666,63 @@ func (c compact) MarshalJSON() ([]byte, error) {
 	return []byte(strconv.FormatFloat(float64(c), 'g', 4, 64)), nil
 }
 
-// compactStat is [mean, 95% half-width, n].
-func compactStat(s Stat) []any { return []any{compact(s.Mean), compact(s.Half), s.N} }
+// compactStat is [mean, 95% half-width], plus n when fewer than seeds values
+// contributed (for example, a delta against a zero baseline).
+func compactStat(s Stat, seeds int) []any {
+	if s.N == seeds {
+		return []any{compact(s.Mean), compact(s.Half)}
+	}
+	return []any{compact(s.Mean), compact(s.Half), s.N}
+}
 
-// SummaryJSON renders the suite without per-seed runs: every cell's mean, 95%
-// half-width and seed count for each metric, in labMetricNames order, plus the
-// isolation, calibration and cancellation tables. Values carry four
-// significant digits. Workload configs are recorded for detailed matrices; a
-// sweep workload's Source names its change from a main-matrix workload.
+// SummaryJSON renders the suite without per-seed runs: every cell's mean and
+// 95% half-width for each metric in the matrix's metrics list (every metric
+// for the main matrix, a key subset for sweeps), plus the
+// calibration and cancellation tables and, for the main and score-noise
+// matrices, the isolation table. Rows of the tables are arrays in the order of
+// their *_columns header. Values carry four significant digits. Workload
+// configs are recorded for detailed matrices; a sweep workload's Source names
+// its change from a main-matrix workload. Baseline cells omit their (zero)
+// deltas.
 func (r LabSuiteReport) SummaryJSON() ([]byte, error) {
 	type cell struct {
 		Workload string  `json:"workload"`
 		Strategy string  `json:"strategy"`
 		Summary  [][]any `json:"summary"`
-		Delta    [][]any `json:"delta_percent"`
+		Delta    [][]any `json:"delta_percent,omitempty"`
 	}
 	type matrix struct {
 		Name         string              `json:"name"`
 		Description  string              `json:"description"`
+		Metrics      []string            `json:"metrics"`
 		Workloads    []map[string]any    `json:"workloads"`
 		Strategies   []map[string]string `json:"strategies"`
 		Cells        []cell              `json:"cells"`
-		Isolation    []map[string]any    `json:"isolation"`
-		Calibration  []map[string]any    `json:"calibration"`
-		Cancellation []map[string]any    `json:"cancellation,omitempty"`
+		Isolation    [][]any             `json:"isolation,omitempty"`
+		Calibration  [][]any             `json:"calibration"`
+		Cancellation [][]any             `json:"cancellation,omitempty"`
 	}
 	out := struct {
-		Seeds    []uint64 `json:"seeds"`
-		Metrics  []string `json:"metrics"`
-		Stat     string   `json:"stat"`
-		Matrices []matrix `json:"matrices"`
-	}{Seeds: r.Seeds, Metrics: labMetricNames, Stat: "[mean, 95% Student-t half-width, n]; delta_percent is seed-paired against the matrix's first strategy"}
+		Seeds        []uint64 `json:"seeds"`
+		Stat         string   `json:"stat"`
+		Isolation    []string `json:"isolation_columns"`
+		Calibration  []string `json:"calibration_columns"`
+		Cancellation []string `json:"cancellation_columns"`
+		Matrices     []matrix `json:"matrices"`
+	}{
+		Seeds: r.Seeds,
+		Stat: "[mean, 95% Student-t half-width] or [mean, half-width, n] when n differs from the seed count; delta_percent is seed-paired against the matrix's first strategy",
+		Isolation: []string{"workload", "policy", "failed_batches", "runs_per_failed_batch", "minutes_per_failed_batch", "innocent_delay_minutes",
+			"delta_runs_percent", "delta_innocent_delay_percent", "false_culprit_dequeues", "missed_culprit_landings"},
+		Calibration:  []string{"workload", "applies", "seeds_matching", "seeds", "model_runs", "planner_runs"},
+		Cancellation: []string{"workload", "supported", "saved_minutes_per_landed", "saving_percent", "residual_minutes_per_landed", "p50_delta_percent"},
+	}
+	n := len(r.Seeds)
 	for _, report := range r.Reports {
-		m := matrix{Name: report.Name, Description: report.Description, Strategies: report.Strategies}
+		m := matrix{Name: report.Name, Description: report.Description, Strategies: report.Strategies, Metrics: labSweepMetricNames}
+		if report.Detail {
+			m.Metrics = labMetricNames
+		}
 		for _, w := range report.Workloads {
 			entry := map[string]any{"name": w["name"], "source": w["source"], "calibrated": w["calibrated"]}
 			if report.Detail {
@@ -680,28 +730,33 @@ func (r LabSuiteReport) SummaryJSON() ([]byte, error) {
 			}
 			m.Workloads = append(m.Workloads, entry)
 		}
+		baseline := ""
+		if len(report.Strategies) > 0 {
+			baseline = report.Strategies[0]["name"]
+		}
 		for _, c := range report.Cells {
 			out := cell{Workload: c.Workload, Strategy: c.Strategy}
-			for _, name := range labMetricNames {
-				out.Summary = append(out.Summary, compactStat(c.Summary[name]))
-				out.Delta = append(out.Delta, compactStat(c.DeltaPercent[name]))
+			for _, name := range m.Metrics {
+				out.Summary = append(out.Summary, compactStat(c.Summary[name], n))
+				if c.Strategy != baseline {
+					out.Delta = append(out.Delta, compactStat(c.DeltaPercent[name], n))
+				}
 			}
 			m.Cells = append(m.Cells, out)
 		}
-		for _, row := range report.Isolation {
-			m.Isolation = append(m.Isolation, map[string]any{"workload": row.Workload, "policy": row.Policy, "cases": row.Cases,
-				"runs_per_failed_batch": compactStat(row.RunsPerFailedBatch), "minutes_per_failed_batch": compactStat(row.MinutesPerFailedBatch),
-				"innocent_delay_minutes": compactStat(row.InnocentDelayMinutes), "delta_runs_percent": compactStat(row.DeltaRunsPercent),
-				"delta_innocent_delay_percent": compactStat(row.DeltaInnocentDelayPct), "false_culprit_dequeues": row.FalseCulpritDequeues,
-				"missed_culprit_landings": row.MissedCulpritLandings})
+		if report.showsIsolation() {
+			for _, row := range report.Isolation {
+				m.Isolation = append(m.Isolation, []any{row.Workload, row.Policy, row.Cases, compactStat(row.RunsPerFailedBatch, n),
+					compactStat(row.MinutesPerFailedBatch, n), compactStat(row.InnocentDelayMinutes, n), compactStat(row.DeltaRunsPercent, n),
+					compactStat(row.DeltaInnocentDelayPct, n), row.FalseCulpritDequeues, row.MissedCulpritLandings})
+			}
 		}
 		for _, a := range report.calibrationSummary() {
-			m.Calibration = append(m.Calibration, map[string]any{"workload": a.workload, "applies": a.applies, "matching": a.match, "seeds": a.n, "model_runs": a.model, "planner_runs": a.real})
+			m.Calibration = append(m.Calibration, []any{a.workload, a.applies, a.match, a.n, a.model, a.real})
 		}
 		for _, row := range report.Cancellation {
-			m.Cancellation = append(m.Cancellation, map[string]any{"workload": row.Workload, "supported": row.Supported,
-				"saved_minutes_per_landed": compactStat(row.SavedMinutesPerLanded), "saving_percent": compactStat(row.SavingPercent),
-				"residual_minutes_per_landed": compactStat(row.ResidualMinutesPerLanded), "p50_delta_percent": compactStat(row.P50DeltaPercent)})
+			m.Cancellation = append(m.Cancellation, []any{row.Workload, row.Supported, compactStat(row.SavedMinutesPerLanded, n),
+				compactStat(row.SavingPercent, n), compactStat(row.ResidualMinutesPerLanded, n), compactStat(row.P50DeltaPercent, n)})
 		}
 		out.Matrices = append(out.Matrices, m)
 	}
@@ -786,11 +841,18 @@ func (r LabReport) Markdown() string {
 		}
 		b.WriteString("\n")
 	}
-	if r.Name == "score-noise" || r.Detail {
+	switch {
+	case r.Detail:
 		r.isolationMarkdown(&b)
+	case r.showsIsolation():
+		r.isolationPivotMarkdown(&b)
 	}
 	return b.String()
 }
+
+// showsIsolation reports whether the isolation model is part of this matrix's
+// findings: the main matrix and the score-noise sweep.
+func (r LabReport) showsIsolation() bool { return r.Detail || r.Name == "score-noise" }
 
 func (r LabReport) detailMarkdown(b *strings.Builder) {
 	for _, w := range r.Workloads {
@@ -845,6 +907,31 @@ func (r LabReport) sweepMarkdown(b *strings.Builder) {
 			row = append(row, fmtDelta(c.DeltaPercent["runner_minutes_per_landed"]), fmtDelta(c.DeltaPercent["p50_latency_minutes"]))
 		}
 		fmt.Fprintf(b, "| %s | %s |\n", w["name"], strings.Join(row, " | "))
+	}
+	b.WriteString("\n")
+}
+
+// isolationPivotMarkdown renders one row per workload: Δ CI runs per failed
+// batch versus production halving for each alternative policy.
+func (r LabReport) isolationPivotMarkdown(b *strings.Builder) {
+	b.WriteString("#### Culprit isolation model: Δ runs per failed batch versus production halving\n\nWorkloads marked uncalibrated are depth four, where the halving model does not reproduce the planner.\n\n| workload | calibrated | failed batches |")
+	sep := "|---|---|---|"
+	for _, p := range isolationPolicies[1:] {
+		fmt.Fprintf(b, " %s |", p.name)
+		sep += "---|"
+	}
+	b.WriteString("\n" + sep + "\n")
+	calibrated := map[string]bool{}
+	for _, w := range r.Workloads {
+		calibrated[w["name"].(string)], _ = w["calibrated"].(bool)
+	}
+	for i := 0; i+len(isolationPolicies) <= len(r.Isolation); i += len(isolationPolicies) {
+		rows := r.Isolation[i : i+len(isolationPolicies)]
+		fmt.Fprintf(b, "| %s | %s | %d |", rows[0].Workload, map[bool]string{true: "yes", false: "**no**"}[calibrated[rows[0].Workload]], rows[0].Cases)
+		for _, row := range rows[1:] {
+			fmt.Fprintf(b, " %s |", fmtDelta(row.DeltaRunsPercent))
+		}
+		b.WriteString("\n")
 	}
 	b.WriteString("\n")
 }
