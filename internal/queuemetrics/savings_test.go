@@ -3,6 +3,7 @@ package queuemetrics
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -251,5 +252,110 @@ func golden(t *testing.T, name string, got []byte) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("%s changed\ngot:\n%s\nwant:\n%s", name, got, want)
+	}
+}
+
+// A builder can push its test ref after the batch has already left the fold.
+// That ref still ran CI, so it counts even though no batch survives.
+func TestSavingsCountsLatePushes(t *testing.T) {
+	// Review fixture, verbatim: the fold rejects this BatchStarted, so the
+	// push names a batch it never held. The push is still counted.
+	t.Run("unknown batch", func(t *testing.T) {
+		f := newJournal(t)
+		f.enqueue(1, 1)
+		f.emit(2, queue.BatchStarted{BatchID: "late", BaseSHA: f.s.BaseSHA, PRs: f.batchPRs([]int{1}), At: at(2)})
+		f.dequeue(3, 1, queue.Requested)
+		f.emit(4, queue.TestRefBuilt{BatchID: "late", TestedSHA: "pushed", At: at(4), Method: queue.Merge})
+		if s := mustSavings(t, f, window(0, 20)); s.Runs.Executed != 1 {
+			t.Fatalf("pushed ref omitted: %+v", s.Runs)
+		}
+	})
+	t.Run("after dequeue", func(t *testing.T) {
+		f := newJournal(t)
+		f.enqueue(1, 1)
+		f.next++
+		f.emit(2, queue.BatchStarted{BatchID: "b1", BaseSHA: f.s.BaseSHA, PRs: f.batchPRs([]int{1}), At: at(2)})
+		f.dequeue(3, 1, queue.Requested)
+		if f.s.Batch("b1") != nil {
+			t.Fatal("batch survived dequeue")
+		}
+		f.emit(4, queue.TestRefBuilt{BatchID: "b1", TestedSHA: "pushed", At: at(4), Method: queue.Merge})
+		s := mustSavings(t, f, window(0, 20))
+		if s.Runs.Executed != 1 || s.Runs.TestRefsBuilt != 1 || s.Runs.Outcomes != (RunOutcomes{Discarded: 1}) {
+			t.Fatalf("pushed ref omitted: %+v", s.Runs)
+		}
+	})
+	t.Run("chained, after invalidation", func(t *testing.T) {
+		f := newJournal(t)
+		f.config(0, 4)
+		f.enqueue(10, 1, 2)
+		b1 := f.chain(20, 1)
+		f.next++
+		late := fmt.Sprintf("b%d", f.next)
+		f.emit(21, queue.ChainedBatchStarted{BatchID: late, BaseSHA: f.s.Batch(b1).LandingCommit(), PRs: f.batchPRs([]int{2}), At: at(21), ParentBatchID: b1, Position: 2})
+		f.dequeue(22, 1, queue.Requested)
+		f.emit(23, queue.BatchesInvalidated{BatchIDs: []string{late}, Reason: "predecessor-invalidated"})
+		if f.s.Batch(late) != nil {
+			t.Fatal("batch survived invalidation")
+		}
+		f.emit(24, queue.ChainedTestRefBuilt{BatchID: late, TestedSHA: "late-sha", LandingSHA: "late-sha", At: at(24), Method: queue.Merge, ParentBatchID: b1, Position: 2})
+		s := mustSavings(t, f, window(0, 100))
+		if s.Runs.TestRefsBuilt != 2 || s.Runs.Outcomes != (RunOutcomes{Invalidated: 1, Discarded: 1}) {
+			t.Fatalf("late chained push omitted: %+v", s.Runs)
+		}
+	})
+	t.Run("pushed before since, tested a PR that landed", func(t *testing.T) {
+		f := newJournal(t)
+		f.enqueue(-50, 1, 2)
+		f.next++
+		f.emit(-40, queue.BatchStarted{BatchID: "b1", BaseSHA: f.s.BaseSHA, PRs: f.batchPRs([]int{1, 2}), At: at(-40)})
+		f.dequeue(-30, 2, queue.Requested)
+		if f.s.Batch("b1") != nil {
+			t.Fatal("batch survived dequeue")
+		}
+		f.emit(-20, queue.TestRefBuilt{BatchID: "b1", TestedSHA: "late-sha", At: at(-20), Method: queue.Merge})
+		b := f.build(10, 1)
+		f.pass(40, b)
+		s := mustSavings(t, f, window(0, 100))
+		if s.PRsLanded != 1 || s.Runs.TestRefsBuilt != 2 || s.Runs.CarriedIn != 1 {
+			t.Fatalf("carried-in late push omitted: %+v", s.Runs)
+		}
+		if s := mustSavings(t, f, window(20, 30)); s.Runs.TestRefsBuilt != 0 {
+			t.Fatalf("unattributed late push counted: %+v", s.Runs)
+		}
+	})
+}
+
+// The executor may confirm one push or one rerun more than once.
+func TestSavingsDeduplicatesConfirmations(t *testing.T) {
+	f := newJournal(t)
+	f.enqueue(10, 1)
+	b := f.build(20, 1)
+	f.emit(21, queue.TestRefBuilt{BatchID: b, TestedSHA: "tested-" + b, At: at(21), Method: queue.Merge})
+	f.rerun(30, b)
+	tested := "tested-" + b
+	f.emit(70, queue.CheckRerunDispatched{BatchID: b, TestedSHA: tested, Detail: "accepted"})
+	f.emit(70, queue.CheckRerunDispatchProgress{BatchID: b, TestedSHA: tested, Target: queue.CheckRerunTarget{WorkflowRunID: 7, Attempt: 2, Accepted: true, At: at(70)}})
+	f.land(80, b)
+	s := mustSavings(t, f, window(0, 100))
+	if s.Runs.TestRefsBuilt != 1 || s.Runs.Reruns != 1 || s.Runs.Executed != 2 || s.Runs.RerunsUnconfirmed != 0 {
+		t.Fatalf("duplicate confirmations counted: %+v", s.Runs)
+	}
+}
+
+// A rerun the forge accepted still ran even if the batch left before the
+// dispatch result was recorded.
+func TestSavingsCountsRerunsAcceptedAfterDequeue(t *testing.T) {
+	f := newJournal(t)
+	f.enqueue(10, 1)
+	b := f.build(20, 1)
+	tested := "tested-" + b
+	f.dequeue(30, 1, queue.Requested)
+	f.emit(31, queue.CheckRerunDispatchProgress{BatchID: b, TestedSHA: tested, Target: queue.CheckRerunTarget{WorkflowRunID: 7, Attempt: 2, Accepted: true, At: at(31)}})
+	f.emit(32, queue.CheckRerunDispatched{BatchID: b, TestedSHA: tested, Detail: "accepted"})
+	f.emit(33, queue.CheckRerunDispatched{BatchID: "gone", TestedSHA: "unknown-sha", OutcomeUnknown: true})
+	s := mustSavings(t, f, window(0, 100))
+	if s.Runs.TestRefsBuilt != 2 || s.Runs.Reruns != 1 || s.Runs.RerunsUnconfirmed != 1 || s.Runs.Executed != 3 {
+		t.Fatalf("late rerun omitted: %+v", s.Runs)
 	}
 }

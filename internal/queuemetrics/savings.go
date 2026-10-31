@@ -1,6 +1,7 @@
 package queuemetrics
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"time"
@@ -22,6 +23,7 @@ const BaselineDefinition = "one full CI run per PR landed in the window, plus ev
 // ExecutedDefinition states what counts as a CI run OpenMerge executed.
 const ExecutedDefinition = "one full CI run per queue test ref OpenMerge pushed, whatever happened to it afterwards " +
 	"(landed, failed, bisected, invalidated by speculation, or still running at --until), plus each rerun the forge accepted. " +
+	"Pushes and rerun acceptances recorded after their batch left the queue still count; repeated confirmations count once. " +
 	"A run belongs to the window when its test ref was pushed in [since, until) or it tested a PR that landed in the window. " +
 	"Batches whose test ref was never pushed (build failure or conflict) ran no CI and are not counted."
 
@@ -32,6 +34,12 @@ const (
 	MinutesUnavailable  = "unavailable"
 	observedMinutesNote = "median journal wall-clock from test-ref push to the first terminal CI result; includes runner wait and polling delay, and is not billed job minutes"
 )
+
+// ObservedMinutesWarning is printed under observed minutes. Wall-clock can err
+// either way: runner queue time inflates it, and parallel jobs bill more
+// minutes than the wall-clock they span.
+const ObservedMinutesWarning = "minutes are observed wall-clock, not billed. Runner wait inflates them; parallel jobs bill more than their wall-clock. " +
+	"Pass --full-suite-minutes to quote cost."
 
 // SavingsWindow selects [Since, Until) by journal recording time.
 type SavingsWindow struct {
@@ -131,21 +139,39 @@ type Isolation struct {
 	ByReason      map[string]int `json:"dequeues_by_reason"`
 }
 
-type savingsRun struct {
-	batch      string
-	builtAt    time.Time
-	terminalAt time.Time
+// savingsBatch is what the report remembers about a batch after the fold drops
+// it, so a test ref pushed late can still be attributed and labelled.
+type savingsBatch struct {
 	admissions []uint64
 	bisection  bool
+	outcome    string
+}
+
+func (b *savingsBatch) observe(s queue.State, batch queue.Batch) {
+	b.bisection = b.bisection || batch.FromBisection
+	for _, pr := range batch.PRs {
+		if en := Entry(s, pr.PR); en != nil && !slices.Contains(b.admissions, en.AdmissionID) {
+			b.admissions = append(b.admissions, en.AdmissionID)
+		}
+	}
+}
+
+// savingsRun is one pushed test ref, identified by batch and tested SHA.
+type savingsRun struct {
+	batch      *savingsBatch
+	builtAt    time.Time
+	terminalAt time.Time
 	reruns     int
 	unknown    int
 	outcome    string
 }
 
-// rerunConfirmed reports a rerun the forge accepted. The fold allows one rerun
-// per batch, so its first confirmation is counted once.
-func rerunConfirmed(r queue.CheckRetryState) bool {
-	return r.Dispatched && !r.Unsupported && !r.OutcomeUnknown
+// rerunAttempt collects every journal record of one rerun request. A forge
+// acceptance anywhere counts it once; it is unconfirmed only if nothing accepted it.
+type rerunAttempt struct {
+	run      *savingsRun
+	accepted bool
+	unknown  bool
 }
 
 const (
@@ -171,9 +197,53 @@ func ComputeSavings(j store.Journal, w SavingsWindow) (Savings, error) {
 		return r, fmt.Errorf("full-suite minutes must not be negative")
 	}
 	s := j.Seed
+	batches := map[string]*savingsBatch{}
+	batchOf := func(id string) *savingsBatch {
+		if batches[id] == nil {
+			batches[id] = &savingsBatch{}
+		}
+		return batches[id]
+	}
+	// Runs are discovered from the push records themselves, not from batches
+	// that survive the fold: a ref pushed after its batch was dequeued or
+	// invalidated still ran CI. Repeated confirmations of the same ref count once.
 	runs := map[string]*savingsRun{}
 	bySHA := map[string]*savingsRun{}
 	var order []*savingsRun
+	pushed := func(batchID, sha string, at time.Time, live queue.State) *savingsRun {
+		key := batchID + "\x00" + sha
+		if run := runs[key]; run != nil {
+			return run
+		}
+		b := batchOf(batchID)
+		run := &savingsRun{batch: b, builtAt: at}
+		if live.Batch(batchID) == nil {
+			run.outcome = cmp.Or(b.outcome, outcomeDiscarded)
+		}
+		runs[key], bySHA[sha] = run, run
+		order = append(order, run)
+		return run
+	}
+	reruns := map[string]*rerunAttempt{}
+	var rerunOrder []*rerunAttempt
+	rerun := func(batchID, sha string, generation uint64, at time.Time, live queue.State) *rerunAttempt {
+		key := fmt.Sprintf("%s\x00%s\x00%d", batchID, sha, generation)
+		if a := reruns[key]; a != nil {
+			return a
+		}
+		// A rerun implies its ref was pushed; fail toward counting that run.
+		a := &rerunAttempt{run: pushed(batchID, sha, at, live)}
+		reruns[key] = a
+		rerunOrder = append(rerunOrder, a)
+		return a
+	}
+	// Refs already under test in the seed were pushed before the journal began.
+	for _, b := range s.Batches() {
+		batchOf(b.ID).observe(s, *b)
+		if b.TestedSHA != "" {
+			pushed(b.ID, b.TestedSHA, b.StartedTestingAt, s)
+		}
+	}
 	landedAdmissions := map[uint64]bool{}
 	var sizes, latencies []float64
 	rejectedLandings := 0
@@ -188,36 +258,69 @@ func ComputeSavings(j store.Journal, w SavingsWindow) (Savings, error) {
 		inside := !rec.RecordedAt.Before(w.Since)
 		before := s
 		s = queue.Apply(s, rec.Event)
-
 		for _, b := range s.Batches() {
-			old := before.Batch(b.ID)
-			if b.TestedSHA != "" && (old == nil || old.TestedSHA == "") {
-				run := &savingsRun{batch: b.ID, builtAt: rec.RecordedAt, bisection: b.FromBisection}
-				for _, pr := range b.PRs {
-					if en := Entry(s, pr.PR); en != nil {
-						run.admissions = append(run.admissions, en.AdmissionID)
-					}
-				}
-				runs[b.ID], bySHA[b.TestedSHA] = run, run
-				order = append(order, run)
+			batchOf(b.ID).observe(s, *b)
+		}
+
+		landedBatch, accepted, isLanded := LandedBatch(before, s, rec.Event)
+		invalidated := map[string]bool{}
+		if e, ok := rec.Event.(queue.BatchesInvalidated); ok {
+			for _, id := range e.BatchIDs {
+				invalidated[id] = true
 			}
-			run := runs[b.ID]
-			if run == nil || b.CheckRetry == nil {
+		}
+		for _, old := range before.Batches() {
+			if s.Batch(old.ID) != nil {
 				continue
 			}
-			var was queue.CheckRetryState
-			if old != nil && old.CheckRetry != nil {
-				was = *old.CheckRetry
+			outcome := outcomeDiscarded
+			switch {
+			case accepted && landedBatch.ID == old.ID:
+				outcome = outcomeLanded
+			case invalidated[old.ID]:
+				outcome = outcomeInvalidated
 			}
-			if rerunConfirmed(*b.CheckRetry) && !rerunConfirmed(was) {
-				run.reruns++
+			b := batchOf(old.ID)
+			b.observe(before, *old)
+			if b.outcome == outcomeOpen {
+				b.outcome = outcome
 			}
-			if b.CheckRetry.OutcomeUnknown && !was.OutcomeUnknown {
-				run.unknown++
+			for _, run := range order {
+				if run.batch == b && run.outcome == outcomeOpen {
+					run.outcome = outcome
+				}
+			}
+			// A failed multi-PR batch splits into smaller bisection halves. A
+			// dequeue or rebuild keeps the composition and is not a bisection.
+			_, dequeue := rec.Event.(queue.Dequeued)
+			if inside && outcome == outcomeDiscarded && !dequeue && len(old.PRs) > 1 && s.PendingBisection() && s.PendingBatchSize() > 0 && s.PendingBatchSize() < len(old.PRs) {
+				r.Isolation.Bisections++
 			}
 		}
 
 		switch e := rec.Event.(type) {
+		case queue.TestRefBuilt:
+			if e.BatchID != "" && e.TestedSHA != "" {
+				pushed(e.BatchID, e.TestedSHA, rec.RecordedAt, s)
+			}
+		case queue.ChainedTestRefBuilt:
+			if e.BatchID != "" && e.TestedSHA != "" {
+				pushed(e.BatchID, e.TestedSHA, rec.RecordedAt, s)
+			}
+		case queue.FastForwardRefBuilt:
+			if e.BatchID != "" && e.TestedSHA != "" {
+				pushed(e.BatchID, e.TestedSHA, rec.RecordedAt, s)
+			}
+		case queue.CheckRerunDispatched:
+			if e.BatchID != "" && e.TestedSHA != "" {
+				a := rerun(e.BatchID, e.TestedSHA, e.Generation, rec.RecordedAt, s)
+				a.accepted = a.accepted || !e.OutcomeUnknown && !e.Unsupported
+				a.unknown = a.unknown || e.OutcomeUnknown
+			}
+		case queue.CheckRerunDispatchProgress:
+			if e.BatchID != "" && e.TestedSHA != "" && e.Target.Accepted {
+				rerun(e.BatchID, e.TestedSHA, e.Generation, rec.RecordedAt, s).accepted = true
+			}
 		case queue.ChecksCompleted:
 			if run := bySHA[e.TestedSHA]; run != nil && run.terminalAt.IsZero() && rec.RecordedAt.After(run.builtAt) {
 				run.terminalAt = rec.RecordedAt
@@ -236,7 +339,6 @@ func ComputeSavings(j store.Journal, w SavingsWindow) (Savings, error) {
 			}
 		}
 
-		landedBatch, accepted, isLanded := LandedBatch(before, s, rec.Event)
 		if isLanded && !accepted && inside {
 			rejectedLandings++
 		}
@@ -255,33 +357,13 @@ func ComputeSavings(j store.Journal, w SavingsWindow) (Savings, error) {
 				latencies = append(latencies, seconds)
 			}
 		}
-
-		invalidated := map[string]bool{}
-		if e, ok := rec.Event.(queue.BatchesInvalidated); ok {
-			for _, id := range e.BatchIDs {
-				invalidated[id] = true
-			}
-		}
-		for _, old := range before.Batches() {
-			if s.Batch(old.ID) != nil {
-				continue
-			}
-			outcome := outcomeDiscarded
-			switch {
-			case accepted && landedBatch.ID == old.ID:
-				outcome = outcomeLanded
-			case invalidated[old.ID]:
-				outcome = outcomeInvalidated
-			}
-			if run := runs[old.ID]; run != nil && run.outcome == outcomeOpen {
-				run.outcome = outcome
-			}
-			// A failed multi-PR batch splits into smaller bisection halves. A
-			// dequeue or rebuild keeps the composition and is not a bisection.
-			_, dequeue := rec.Event.(queue.Dequeued)
-			if inside && outcome == outcomeDiscarded && !dequeue && len(old.PRs) > 1 && s.PendingBisection() && s.PendingBatchSize() > 0 && s.PendingBatchSize() < len(old.PRs) {
-				r.Isolation.Bisections++
-			}
+	}
+	for _, a := range rerunOrder {
+		switch {
+		case a.accepted:
+			a.run.reruns++
+		case a.unknown:
+			a.run.unknown++
 		}
 	}
 
@@ -289,7 +371,7 @@ func ComputeSavings(j store.Journal, w SavingsWindow) (Savings, error) {
 	for _, run := range order {
 		attributed := !run.builtAt.Before(w.Since)
 		if !attributed {
-			for _, id := range run.admissions {
+			for _, id := range run.batch.admissions {
 				attributed = attributed || landedAdmissions[id]
 			}
 			if !attributed {
@@ -300,7 +382,7 @@ func ComputeSavings(j store.Journal, w SavingsWindow) (Savings, error) {
 		r.Runs.TestRefsBuilt++
 		r.Runs.Reruns += run.reruns
 		r.Runs.RerunsUnconfirmed += run.unknown
-		if run.bisection {
+		if run.batch.bisection {
 			r.Isolation.BisectionRuns++
 		}
 		switch run.outcome {
