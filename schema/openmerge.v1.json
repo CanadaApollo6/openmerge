@@ -218,12 +218,22 @@
             "max_wait": "0s"
           },
           "description": "Serial batch formation. Failing batches are bisected in queue order.",
+          "dependentRequired": {
+            "backlog_guard": [
+              "target_pass_rate"
+            ]
+          },
           "properties": {
             "target_pass_rate": {
               "type": "number",
               "exclusiveMinimum": 0,
               "exclusiveMaximum": 1,
               "description": "Opt in to exact adaptive fresh-batch sizing from the last 200 check outcomes; cold start below 20."
+            },
+            "backlog_guard": {
+              "type": "boolean",
+              "default": true,
+              "description": "With target_pass_rate, never shrink a fresh batch started at an admission window of 1 below the waiting backlog (up to max_size); wider windows keep plain adaptive sizing. Requires target_pass_rate."
             },
             "max_size": {
               "type": "integer",

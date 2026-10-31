@@ -62,41 +62,44 @@ type simulation struct {
 	windowFailures             map[string]bool
 	expectedOutcomes           []bool
 	windowArea, coldWindowArea float64
-	ciWaiting                  []*ciJob
-	ciRunning                  int
-	ciJobs                     []*ciJob
-	interactions               [][2]int
-	cfg                        Config
-	now, start                 time.Time
-	forge                      *fake.Forge
-	repo                       forge.RepoRef
-	state                      queue.State
-	executor                   executor.Executor
-	ci, webhook, faults        *rand.Rand
-	prs                        []pullRequest
-	tests                      map[string]*testRun
-	events                     []loggedEvent
-	scheduled                  timeline
-	sequence, attempt          uint64
-	completed                  map[string]bool
-	planned                    map[string]queue.Action
-	retryAt                    map[string]time.Time
-	pendingFaults              map[string]int
-	mainSHA                    string
-	mainTips                   []string
-	rootSHA                    string
-	landed                     map[int]string
-	violation                  error
-	result                     Result
-	boundary                   *faultForge
-	initialized                bool
-	attempts                   map[string]string
-	disturbance                map[string]int // per landing attempt: disturbances seen when it started
-	abandoned                  map[string]string
-	abandonedAttempts          map[string]bool
-	observed                   map[string]*forgeLanding
-	lastFence                  string
-	lab                        *labState
+	// Fresh batch starts, those at window 1 and those the backlog guard raised
+	// above the adaptive size (lab metrics only).
+	freshBatches, freshAtWindowOne, guardRaised int
+	ciWaiting                                   []*ciJob
+	ciRunning                                   int
+	ciJobs                                      []*ciJob
+	interactions                                [][2]int
+	cfg                                         Config
+	now, start                                  time.Time
+	forge                                       *fake.Forge
+	repo                                        forge.RepoRef
+	state                                       queue.State
+	executor                                    executor.Executor
+	ci, webhook, faults                         *rand.Rand
+	prs                                         []pullRequest
+	tests                                       map[string]*testRun
+	events                                      []loggedEvent
+	scheduled                                   timeline
+	sequence, attempt                           uint64
+	completed                                   map[string]bool
+	planned                                     map[string]queue.Action
+	retryAt                                     map[string]time.Time
+	pendingFaults                               map[string]int
+	mainSHA                                     string
+	mainTips                                    []string
+	rootSHA                                     string
+	landed                                      map[int]string
+	violation                                   error
+	result                                      Result
+	boundary                                    *faultForge
+	initialized                                 bool
+	attempts                                    map[string]string
+	disturbance                                 map[string]int // per landing attempt: disturbances seen when it started
+	abandoned                                   map[string]string
+	abandonedAttempts                           map[string]bool
+	observed                                    map[string]*forgeLanding
+	lastFence                                   string
+	lab                                         *labState
 }
 
 // Run drains a workload, outstanding CI, and durable side effects. It returns a

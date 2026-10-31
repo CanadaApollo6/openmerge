@@ -22,7 +22,11 @@ type Config struct {
 	BatchTargetPassRate float64 `json:",omitempty"`
 	BatchMaxSize        int
 	BatchMaxWait        time.Duration
-	MergeMethod         MergeMethod
+	// BatchBacklogGuardOff disables the backlog guard on adaptive sizing (see
+	// BacklogGuardSize). Its zero value, guard on, is omitted so policy
+	// digests without the setting are unchanged.
+	BatchBacklogGuardOff bool `json:",omitempty"`
+	MergeMethod          MergeMethod
 	// ChecksRetryFailed is the effective retry limit (0 or 1). Its zero value is
 	// omitted so legacy policy digests and simulator JSON remain unchanged.
 	ChecksRetryFailed   int `json:",omitempty"`
