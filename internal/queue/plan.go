@@ -405,11 +405,20 @@ func (s State) batchCandidates(cfg Config, now time.Time) ([]BatchPR, time.Time)
 	if size < 1 || size > MaxBatchSize || cfg.BatchMaxWait < 0 {
 		panic("invalid batch configuration")
 	}
+	if cfg.BatchTargetPassRate > 0 && !cfg.BatchBacklogGuardOff {
+		waiting := 0
+		for _, entry := range s.Entries {
+			if s.freshCandidate(entry) {
+				waiting++
+			}
+		}
+		size = BacklogGuardSize(size, cfg.BatchMaxSize, waiting, s.Window(cfg))
+	}
 	var prs []BatchPR
 	var oldest time.Time
 	for _, entry := range s.Entries {
 		pr := BatchPR{PR: entry.PR, HeadSHA: entry.HeadSHA}
-		if s.inBatch(pr.PR) || !s.runnablePRs([]BatchPR{pr}) || s.DependencyGated(pr) {
+		if !s.freshCandidate(entry) {
 			continue
 		}
 		if clock := s.dependencyClock(entry); len(prs) == 0 || clock.Before(oldest) {
@@ -427,6 +436,12 @@ func (s State) batchCandidates(cfg Config, now time.Time) ([]BatchPR, time.Time)
 		}
 	}
 	return prs, time.Time{}
+}
+
+// freshCandidate reports whether entry may join a fresh batch now.
+func (s State) freshCandidate(entry Entry) bool {
+	pr := BatchPR{PR: entry.PR, HeadSHA: entry.HeadSHA}
+	return !s.inBatch(pr.PR) && s.runnablePRs([]BatchPR{pr}) && !s.DependencyGated(pr)
 }
 
 // CanStart revalidates a durable start against the current plan, including the
