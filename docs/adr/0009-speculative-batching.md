@@ -304,6 +304,22 @@ existed. The queue therefore runs `max_depth: 4` first and a depth-1 period of
 equal length afterwards, both under the same CI configuration. The plan, metrics
 and log are in [the dogfooding report](../research/phase2-dogfood.md).
 
+**2026-10-31: experiment stopped by the owner.** Before period B began, the
+project owner stopped the A/B comparison. Period A had run its full 14 days.
+It landed 131 changes, 21 of them from chain position 2 or deeper and 3 from
+position 3 or deeper. Daily audits found 0 incorrect landings. That settles the
+correctness question at depth 4 on a live repository. Period B (depth 1) was
+not run, so the performance comparison this section required was never made.
+
+- **This repository's queue** stays at `max_depth: 4`.
+- **The product default** stays at 1. Repositories opt in to depth 4.
+- **Revisiting the default** should use the CI efficiency lab
+  ([ADR 0015](0015-ci-efficiency-engine.md)) together with measurements from
+  design-partner repositories, not a single-repository period pair.
+- **Hold-class changes** that waited for period B's drain may now be deployed.
+  They follow the normal deploy procedure in
+  [docs/research/deploys](../research/deploys/).
+
 ## Consequences
 
 - At the adopters' volumes, a change queued behind others waits roughly one CI run plus queueing, not one CI run per batch ahead of it.
