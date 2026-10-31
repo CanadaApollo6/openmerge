@@ -56,7 +56,7 @@ func TestSavingsShadowSectionIsSeparateAndNeverApplied(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), `"potential_additional_savings_shadow":{"definition":`) || !strings.Contains(string(raw), `"would_reuse_failure":1`) {
+	if !strings.Contains(string(raw), `"potential_additional_savings_shadow":{"version":1,"definition":`) || !strings.Contains(string(raw), `"would_reuse_failure":1`) {
 		t.Fatalf("shadow JSON = %s", raw)
 	}
 	plainJSON, err := json.Marshal(base)

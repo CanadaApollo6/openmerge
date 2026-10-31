@@ -163,12 +163,17 @@ latencies are seconds, and minutes are floating point.
 When a queue has an [ADR 0015](adr/0015-ci-efficiency-engine.md) exact-tree
 dedupe shadow ledger, the report prints a separate "Potential additional
 savings (shadow, not applied)" section, and `--json` adds
-`potential_additional_savings_shadow`. It counts test builds pushed in the
+`potential_additional_savings_shadow`, an omitted-when-absent object with its
+own `version` (currently 1) independent of the report's. It counts test builds pushed in the
 window whose key (tree OID, workflow blob OIDs, `merge_when` digest, runner
-image identity, queue) equalled an earlier completed queue build that passed,
-or that failed and was confirmed by a retry or as a singleton. Unknown keys and
-unconfirmed failures never count. Avoidable minutes are the source runs'
-observed wall-clock. Verdicts compare each hit with the build's own result; a
+image identity, queue) already had a newest recorded result that passed, or
+that failed and was confirmed by a retry or as a singleton. "Newest" is result
+order, not build order: a later result or check reopen (revocation) of any
+build with that key supersedes older results, and a revoked or unconfirmed
+newest result is a miss. Unknown keys and unconfirmed failures never count.
+Avoidable minutes are the source runs' observed wall-clock to their first
+terminal result. Verdicts compare each hit with the build's current terminal
+result; a reopen clears the verdict until a replacement result arrives. A
 disagreement is a false reuse the cache would have caused.
 
 Nothing in this section was applied: every build still ran CI, and none of the

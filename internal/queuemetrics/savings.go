@@ -79,11 +79,17 @@ type Savings struct {
 
 // ShadowDefinition is printed with every shadow section.
 const ShadowDefinition = "exact tree dedupe in shadow mode: test builds in the window whose key (tree OID, workflow blob OIDs, merge_when digest, runner image, queue) " +
-	"equalled an earlier completed queue build that passed, or that failed and was confirmed by a retry or as a singleton. " +
-	"Unconfirmed failures and unknown keys are never counted. Nothing was reused; every build still ran CI."
+	"already had a newest recorded result, in result order including check reopens, that passed or that failed and was confirmed by a retry or as a singleton. " +
+	"Unconfirmed failures, revoked results and unknown keys are never counted. Nothing was reused; every build still ran CI."
+
+// ShadowSavingsVersion identifies the JSON contract of the shadow section,
+// independently of SavingsVersion, so its semantics can change without
+// touching the measured report.
+const ShadowSavingsVersion = 1
 
 // ShadowSavings reports what exact-tree dedupe would have avoided.
 type ShadowSavings struct {
+	Version    int    `json:"version"`
 	Definition string `json:"definition"`
 	treededupe.Summary
 	// AvoidableFullSuiteMinutes prices the hits at --full-suite-minutes.
@@ -486,7 +492,7 @@ func shadowSavings(raw []byte, w SavingsWindow, warnings []string) (*ShadowSavin
 	if err != nil {
 		return nil, append(warnings, "the tree dedupe shadow ledger is unreadable by this binary and is not reported")
 	}
-	s := &ShadowSavings{Definition: ShadowDefinition, Summary: ledger.Summarize(w.Since, w.Until)}
+	s := &ShadowSavings{Version: ShadowSavingsVersion, Definition: ShadowDefinition, Summary: ledger.Summarize(w.Since, w.Until)}
 	if w.FullSuiteMinutes > 0 {
 		s.AvoidableFullSuiteMinutes = float64(s.WouldReuseSuccess+s.WouldReuseFailure) * w.FullSuiteMinutes
 	}
