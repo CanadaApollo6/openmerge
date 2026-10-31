@@ -12,7 +12,7 @@ This is a portfolio proposal, not measured savings or implementation approval.
 It builds on [batching and the sealed experiment](0009-speculative-batching.md),
 [executor economics and trust](0013-ci-cost-executors.md),
 [dependency privacy and cancellation](0011-cross-repository-dependent-changes.md),
-and proposed [review cards and risk gates](https://github.com/CanadaApollo6/openmerge/pull/207)
+and proposed [review cards and risk gates](0014-review-cards-risk-aware-batching.md)
 (ADR 0014, read at PR head 90193811). The deterministic
 [simulator](../../internal/sim/doc.go) runs the real planner and executor;
 the efficiency lab being built in parallel extends its runner-minute accounting

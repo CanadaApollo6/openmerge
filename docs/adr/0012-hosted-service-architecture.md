@@ -3,6 +3,13 @@
 - **Status:** Accepted
 - **Date:** 2026-10-27
 
+**Dated amendment, 2026-10-31 (owner decision):**
+[ADR 0014](0014-review-cards-risk-aware-batching.md) (Proposed) records review
+cards as the flagship opt-in AI feature, superseding only this ADR's
+“CI-failure summaries first” priority (including rollout slice 6). The original
+text remains as history; all other AI, hosting and rollout constraints remain.
+This note activates nothing; ADR 0012 remains Accepted for its other decisions.
+
 ## Context
 
 OpenMerge becomes a product with hosted and self-hosted editions. The owner keeps the merge engine
