@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
+	"github.com/CanadaApollo6/openmerge/internal/queuemetrics"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 	"github.com/google/go-github/v93/github"
 )
@@ -45,22 +46,8 @@ func (o options) journal(ctx context.Context) (store.Journal, error) {
 	if o.journalTimeout < time.Millisecond {
 		return store.Journal{}, fmt.Errorf("--journal-timeout must be at least 1ms")
 	}
-	ctx, cancel := context.WithTimeout(ctx, o.journalTimeout)
-	defer cancel()
-	r, err := store.OpenJournalReader(ctx, o.database, o.journalTimeout)
-	if err != nil {
-		return store.Journal{}, err
-	}
-	defer r.Close()
 	key := store.QueueKey{Installation: o.installation, Repository: o.repository, BaseBranch: o.base, Lane: o.lane}
-	journals, err := r.Journals(ctx, []store.QueueKey{key})
-	if err != nil {
-		return store.Journal{}, err
-	}
-	if len(journals) != 1 {
-		return store.Journal{}, fmt.Errorf("no journal for %+v; identifiers are exact and case-sensitive", key)
-	}
-	return journals[0], nil
+	return queuemetrics.ReadJournal(ctx, o.database, key, o.journalTimeout)
 }
 func actionsClient(ctx context.Context, repository string) (AuditSource, error) {
 	owner, repo, ok := strings.Cut(repository, "/")
