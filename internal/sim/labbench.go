@@ -711,7 +711,7 @@ func (r LabSuiteReport) SummaryJSON() ([]byte, error) {
 		Matrices     []matrix `json:"matrices"`
 	}{
 		Seeds: r.Seeds,
-		Stat: "[mean, 95% Student-t half-width] or [mean, half-width, n] when n differs from the seed count; delta_percent is seed-paired against the matrix's first strategy",
+		Stat:  "[mean, 95% Student-t half-width] or [mean, half-width, n] when n differs from the seed count; delta_percent is seed-paired against the matrix's first strategy",
 		Isolation: []string{"workload", "policy", "failed_batches", "runs_per_failed_batch", "minutes_per_failed_batch", "innocent_delay_minutes",
 			"delta_runs_percent", "delta_innocent_delay_percent", "false_culprit_dequeues", "missed_culprit_landings"},
 		Calibration:  []string{"workload", "applies", "seeds_matching", "seeds", "model_runs", "planner_runs"},
