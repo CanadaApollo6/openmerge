@@ -59,6 +59,9 @@ type Journal struct {
 	HasAuthorityPin    bool
 
 	ProvenanceCapacity *ProvenanceCapacity
+	// TreeDedupeShadow is the raw ADR 0015 shadow ledger, read only for status
+	// and reports (never for worker check rendering); nil when absent.
+	TreeDedupeShadow []byte
 }
 
 // JournalEvent retains the persisted wire envelope for explainability clients.
@@ -128,6 +131,11 @@ func (s *Store) journals(ctx context.Context, keys []QueueKey, warnings bool) ([
 			gauge := reader.Provenance.Capacity(s.sideHighWater)
 			if gauge.FenceCount != 0 || len(reader.Provenance.Records()) != 0 {
 				journal.ProvenanceCapacity = &gauge
+			}
+			if warnings {
+				if journal.TreeDedupeShadow, err = readTreeDedupeShadow(ctx, tx, id); err != nil {
+					return err
+				}
 			}
 			ids = append(ids, id)
 			result = append(result, journal)
