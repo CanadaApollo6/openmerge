@@ -205,6 +205,9 @@ func (cfg Config) normalized() (Config, error) {
 	if !queue.ValidTargetPassRate(cfg.Planner.BatchTargetPassRate) {
 		return cfg, fmt.Errorf("invalid target pass rate")
 	}
+	if cfg.Planner.BatchBacklogGuardOff && cfg.Planner.BatchTargetPassRate == 0 {
+		return cfg, fmt.Errorf("the backlog guard setting requires a target pass rate")
+	}
 	if cfg.Planner.BatchMaxSize < 0 || cfg.Planner.BatchMaxSize > 128 || cfg.Planner.BatchMaxWait < 0 {
 		return cfg, fmt.Errorf("invalid planner batching settings")
 	}
@@ -265,6 +268,9 @@ func (cfg Config) MarshalJSON() ([]byte, error) {
 	}
 	if cfg.Planner.BatchTargetPassRate > 0 {
 		planner["batch_target_pass_rate"] = cfg.Planner.BatchTargetPassRate
+	}
+	if cfg.Planner.BatchBacklogGuardOff {
+		planner["batch_backlog_guard"] = false
 	}
 	values := map[string]any{
 		"prs": cfg.PRs, "seed": cfg.Seed, "arrival_window_seconds": cfg.ArrivalWindow.Seconds(),

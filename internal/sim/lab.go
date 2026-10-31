@@ -114,7 +114,9 @@ type BurstModel struct {
 // and the production BatchTargetPassRate for that pass, whenever at least
 // BatchMaxSize unbatched trusted changes are waiting. A full batch's worth of
 // backlog is a queue-observable sign of high utilisation, where shrinking fresh
-// batches cuts serial throughput. It is a candidate rule, not production code.
+// batches cuts serial throughput. It is the sim-only rule the production guard
+// (queue.BacklogGuardSize, on whenever a target is set unless
+// Planner.BatchBacklogGuardOff) was ported from, kept for comparison.
 type LabStrategy struct {
 	TreeDedupe      bool
 	RiskBatchTarget float64

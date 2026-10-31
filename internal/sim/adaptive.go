@@ -14,9 +14,13 @@ func (s *simulation) observeAdaptation(before queue.State, event queue.Event) {
 	head := before.Active
 	failed := false
 	switch e := event.(type) {
+	case queue.BatchStarted:
+		if before.PendingBatchSize() == 0 && len(e.PRs) > s.expectedFreshSize(before) {
+			s.violation = fmt.Errorf("fresh batch exceeded guarded adaptive size: %d > %d", len(e.PRs), s.expectedFreshSize(before))
+		}
 	case queue.ChainedBatchStarted:
-		if before.PendingBatchSize() == 0 && len(e.PRs) > s.expectedBatchSize() {
-			s.violation = fmt.Errorf("fresh batch exceeded adaptive size: %d > %d", len(e.PRs), s.expectedBatchSize())
+		if before.PendingBatchSize() == 0 && len(e.PRs) > s.expectedFreshSize(before) {
+			s.violation = fmt.Errorf("fresh batch exceeded adaptive size: %d > %d", len(e.PRs), s.expectedFreshSize(before))
 		}
 		if b := s.state.Batch(e.BatchID); b != nil && before.Batch(e.BatchID) == nil && len(before.Batches()) >= s.expectedWindow {
 			s.violation = fmt.Errorf("admission exceeded adaptive window: %d >= %d", len(before.Batches()), s.expectedWindow)
@@ -61,6 +65,39 @@ func (s *simulation) oracleOutcome(failed bool) {
 		s.expectedOutcomes = s.expectedOutcomes[1:]
 	}
 }
+
+// expectedFreshSize bounds a fresh batch independently of the planner's guard:
+// the rational adaptive size, raised when the backlog guard applies to
+// min(max, ⌈waiting/W⌉), where waiting counts every unbatched trusted entry
+// before the start (a superset of the planner's eligible candidates, so the
+// bound is conservative) and W is the event-oracle window.
+func (s *simulation) expectedFreshSize(before queue.State) int {
+	size := s.expectedBatchSize()
+	if s.cfg.Lab != nil && s.cfg.Lab.Strategy.BacklogGuard {
+		// The sim-only lab guard drops the target for a pass and may start a
+		// full batch.
+		return max(1, s.cfg.Planner.BatchMaxSize)
+	}
+	if s.cfg.Planner.BatchTargetPassRate == 0 || s.cfg.Planner.BatchBacklogGuardOff {
+		return size
+	}
+	batched := make(map[int]bool)
+	for _, b := range before.Batches() {
+		for _, pr := range b.PRs {
+			batched[pr.PR] = true
+		}
+	}
+	waiting := 0
+	for _, entry := range before.Entries {
+		if !batched[entry.PR] && !s.prs[entry.PR].untrusted {
+			waiting++
+		}
+	}
+	window := max(1, s.expectedWindow)
+	need := (waiting + window - 1) / window
+	return max(size, min(max(1, s.cfg.Planner.BatchMaxSize), need))
+}
+
 func (s *simulation) expectedBatchSize() int {
 	size := max(1, s.cfg.Planner.BatchMaxSize)
 	if s.cfg.Planner.BatchTargetPassRate == 0 || len(s.expectedOutcomes) < 20 {
