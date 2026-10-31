@@ -32,14 +32,20 @@ func WriteSavingsText(out io.Writer, s Savings) error {
 	row("CI runs executed", fmt.Sprint(r.Executed), fmt.Sprintf("%d test refs + %d rerun(s); %d carried in from before --since", r.TestRefsBuilt, r.Reruns, r.CarriedIn))
 	row("  test ref outcomes", "", fmt.Sprintf("landed %d; invalidated %d; discarded %d; open %d", r.Outcomes.Landed, r.Outcomes.Invalidated, r.Outcomes.Discarded, r.Outcomes.Open))
 	row("Baseline CI runs", fmt.Sprint(r.Baseline), fmt.Sprintf("%d landed PRs + %d rerun(s)", s.PRsLanded, r.Reruns))
-	row("CI runs saved", fmt.Sprint(r.Saved), fmt.Sprintf("%.1f%% of baseline; %.2f runs per landed PR", 100*r.SavedFraction, r.RunsPerLanded))
+	row("CI runs saved", fmt.Sprint(r.Saved), fmt.Sprintf("lower bound; %.1f%% of baseline; %.2f runs per landed PR", 100*r.SavedFraction, r.RunsPerLanded))
 	if m.Source == MinutesUnavailable {
 		row("CI minutes", "unavailable", m.Note)
 	} else {
 		row("CI minutes per run", fmt.Sprintf("%.1f", m.PerRun), "source: "+m.Source+" ("+m.Note+")")
-		row("CI minutes executed", fmt.Sprintf("%.1f", m.ExecutedMinutes), "")
-		row("CI minutes baseline", fmt.Sprintf("%.1f", m.BaselineMinutes), "")
-		row("CI minutes saved", fmt.Sprintf("%.1f", m.SavedMinutes), "")
+		// Observed minutes are journal wall-clock. Label every quotable row so
+		// none of them reads as billed cost on its own.
+		qualifier := ""
+		if m.Source == MinutesObserved {
+			qualifier = "wall-clock, not billed"
+		}
+		row("CI minutes executed", fmt.Sprintf("%.1f", m.ExecutedMinutes), qualifier)
+		row("CI minutes baseline", fmt.Sprintf("%.1f", m.BaselineMinutes), qualifier)
+		row("CI minutes saved", fmt.Sprintf("%.1f", m.SavedMinutes), qualifier)
 	}
 	if m.ObservedRuns > 0 {
 		row("Observed run duration", fmt.Sprintf("%.1f", m.ObservedMedian), fmt.Sprintf("median minutes over %d completed runs; max %.1f", m.ObservedRuns, m.ObservedMax))
@@ -59,6 +65,9 @@ func WriteSavingsText(out io.Writer, s Savings) error {
 	var tail strings.Builder
 	for line := range strings.Lines(table.String()) {
 		tail.WriteString(strings.TrimRight(line, " \n") + "\n")
+	}
+	if m.Source == MinutesObserved {
+		fmt.Fprintf(&tail, "\nNOTE: %s\n", ObservedMinutesWarning)
 	}
 	fmt.Fprintf(&tail, "\nBaseline: %s\nExecuted: %s\n", s.Baseline, s.Executed)
 	for _, w := range s.Warnings {

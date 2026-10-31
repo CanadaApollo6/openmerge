@@ -46,6 +46,13 @@ rerun the forge accepted:
   wrong, or was still running at `--until`. Invalidated speculative runs cost
   runner minutes, so they are always counted, even when cancellation stopped them
   early.
+- Runs are read from the push records themselves, not from the batches still
+  in the queue. A builder that pushes after its batch was dequeued or
+  invalidated still started CI, so that late push counts too. Repeated
+  confirmations of the same ref (same batch and tested commit) count once. A
+  rerun counts once when any record shows the forge accepted it, including an
+  acceptance recorded after the batch left the queue. When the journal is
+  ambiguous the report counts more executed runs, never fewer.
 - A batch whose test ref was never pushed (a build failure or merge conflict)
   ran no CI and is **not** counted. A rerun request that the forge did not
   confirm (unsupported, or an unknown dispatch outcome) is not counted either;
@@ -89,7 +96,10 @@ runs alike. The `source` field says where per-run minutes came from:
   journal wall-clock from the test-ref push to the first terminal result. This
   includes runner queueing and polling delay and is **not** billed job minutes:
   parallel jobs bill more minutes than their wall-clock. Prefer
-  `--full-suite-minutes` for a cost conversation.
+  `--full-suite-minutes` for a cost conversation. Wall-clock can be off in
+  either direction: runner wait inflates it, and parallel jobs bill more than
+  it. In this mode the text report labels every minutes row
+  `wall-clock, not billed` and prints a `NOTE:` line under the table.
 - `unavailable`: no run completed in the window and no flag was given; minutes
   are not estimated.
 
@@ -114,7 +124,7 @@ Batches landed         6          mean 2.33 PRs; p50 1; p90 8; max 8
 CI runs executed       13         12 test refs + 1 rerun(s); 1 carried in from before --since
   test ref outcomes               landed 6; invalidated 1; discarded 4; open 1
 Baseline CI runs       15         14 landed PRs + 1 rerun(s)
-CI runs saved          2          13.3% of baseline; 0.93 runs per landed PR
+CI runs saved          2          lower bound; 13.3% of baseline; 0.93 runs per landed PR
 CI minutes per run     12.5       source: full-suite-minutes (operator-supplied minutes for one full CI run)
 CI minutes saved       25.0
 Enqueue to landed      p50 1m10s  p90 2m20s (14 PRs)
