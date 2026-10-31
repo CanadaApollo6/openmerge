@@ -1,0 +1,21 @@
+OpenMerge CI savings report
+Queue:  fixture/app main (installation 1)
+Window: 2026-10-01T00:00:00Z -> 2026-10-01T01:00:00Z (exclusive)
+
+PRs landed             3
+Batches landed         1          mean 3.00 PRs; p50 3; p90 3; max 3
+CI runs executed       2          2 test refs + 0 rerun(s); 0 carried in from before --since
+  test ref outcomes               landed 1; invalidated 0; discarded 1; open 0
+Baseline CI runs       3          3 landed PRs + 0 rerun(s)
+CI runs saved          1          33.3% of baseline; 0.67 runs per landed PR
+CI minutes per run     1.0        source: observed (median journal wall-clock from test-ref push to the first terminal CI result; includes runner wait and polling delay, and is not billed job minutes)
+CI minutes executed    2.0
+CI minutes baseline    3.0
+CI minutes saved       1.0
+Observed run duration  1.0        median minutes over 2 completed runs; max 1.0
+Enqueue to landed      p50 1m20s  p90 1m20s (3 PRs)
+Bisections             0          0 bisection runs
+Dequeued               1          checks-failed 1
+
+Baseline: one full CI run per PR landed in the window, plus every CI rerun the queue dispatched for the runs counted as executed. It models testing each PR alone before it merges, with the same flaky reruns. It ignores the runs a one-at-a-time queue would also spend on PRs that failed or were dequeued, and on retesting after the base moves, so it is a lower bound on the cost without batching.
+Executed: one full CI run per queue test ref OpenMerge pushed, whatever happened to it afterwards (landed, failed, bisected, invalidated by speculation, or still running at --until), plus each rerun the forge accepted. A run belongs to the window when its test ref was pushed in [since, until) or it tested a PR that landed in the window. Batches whose test ref was never pushed (build failure or conflict) ran no CI and are not counted.

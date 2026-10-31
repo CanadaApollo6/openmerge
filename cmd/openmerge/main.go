@@ -25,6 +25,7 @@ Commands:
   change decisions <id>   Read recorded landing decisions
   queue status [options]  Read queue status and PR explanations
   audit export [options]  Export recorded audit evidence
+  report savings [opts]   Summarize CI runs, minutes and time saved
   admin acknowledge       Record operator awareness of an outside push
   serve [options]         Run the GitHub merge queue server
   setup <github|rulesets>  Set up the GitHub App and repository rules
@@ -50,6 +51,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return validateConfig(args[2:], stdout, stderr)
 	case len(args) > 0 && args[0] == "audit":
 		return runAudit(args[1:], stdout, stderr)
+	case len(args) > 0 && args[0] == "report":
+		return runReport(args[1:], stdout, stderr)
 	case len(args) > 0 && args[0] == "admin":
 		return runAdmin(args[1:], stdout, stderr)
 	case len(args) > 0 && args[0] == "serve":
