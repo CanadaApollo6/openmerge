@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -140,4 +141,61 @@ func mustInputs(t *testing.T, f *fixture, sha string) treededupe.GitInputs {
 	in, err := f.g.TreeDedupeInputs(context.Background(), testRepo, sha)
 	must(t, err)
 	return in
+}
+
+// TestTreeDedupeShadowNeverBlocksLanding pins Astra round 1: the shadow read
+// holds no lock landing needs. A wrapper Git parks the shadow inside its
+// ls-tree; a landing session must open the same cache while the shadow is
+// provably still in flight, and the shadow must then finish while landing
+// still holds the cache mutex.
+func TestTreeDedupeShadowNeverBlocksLanding(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	batch := f.build(forge.Merge, []forge.BuildPR{f.prs[0]}, "b1")
+	gate := t.TempDir()
+	started, release := filepath.Join(gate, "started"), filepath.Join(gate, "release")
+	t.Cleanup(func() { _ = os.WriteFile(release, nil, 0o600) })
+	wrapper := filepath.Join(gate, "git")
+	script := "#!/bin/sh\nfor a in \"$@\"; do\n  if [ \"$a\" = ls-tree ]; then\n    : > '" + started + "'\n" +
+		"    i=0; while [ ! -e '" + release + "' ] && [ $i -lt 1000 ]; do sleep 0.01; i=$((i+1)); done\n    break\n  fi\ndone\n" +
+		"exec '" + f.g.git + "' \"$@\"\n"
+	must(t, os.WriteFile(wrapper, []byte(script), 0o700))
+	shadow := *f.g
+	shadow.git = wrapper
+	done := make(chan error, 1)
+	go func() {
+		_, err := shadow.TreeDedupeInputs(ctx, testRepo, batch)
+		done <- err
+	}()
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		if _, err := os.Stat(started); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("shadow read never reached ls-tree")
+		}
+	}
+
+	// Landing arrives while the shadow is parked mid-read and must not wait.
+	landingCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	_, unlock, err := f.g.open(landingCtx, testRepo)
+	if err != nil {
+		t.Fatalf("landing waited on the in-flight shadow read: %v", err)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("shadow finished before release (%v); the test proved nothing", err)
+	default:
+	}
+
+	// The shadow needs no lock: it completes while landing holds the cache.
+	must(t, os.WriteFile(release, nil, 0o600))
+	select {
+	case err := <-done:
+		must(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("shadow read waited on landing's cache lock")
+	}
+	unlock()
 }
