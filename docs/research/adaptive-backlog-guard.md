@@ -1,12 +1,70 @@
 # Adaptive batch size backlog guard: evidence
 
-Status: **does not meet the bar.** The guard holds depth-1 latency at
-fixed-sizing levels under load. At depth 4 it gives back much of adaptive
-sizing's benefit, and it fails the ADR 0009 first-day planner harness's p95
-gate. It is not proposed for merge. This note records the result so the rule
-is not retried unchanged.
+This note records two pre-registered variants of a backlog guard on adaptive
+fresh-batch sizing (ADR 0009/0015). Variant 1 applied at every window and did
+not meet its bar. Variant 2 applies only when the admission window is 1.
 
-## Rule
+## Variant 2: guard only at W = 1
+
+Status: **pre-registered; results pending.** The rule and the bar below were
+fixed and committed before any run, and are not changed after seeing results.
+If any criterion fails, the result is recorded here, the branch is pushed, and
+no PR is opened; the rule is not tuned.
+
+### Rule
+
+`queue.BacklogGuardSize`, applied in `State.batchCandidates` only when
+`BatchTargetPassRate > 0`, `batch.backlog_guard` is not `false`, **and the
+current admission window `State.Window(cfg)` is 1**:
+
+```text
+adaptive = AdaptiveBatchSize(max_size, failures, samples, target)  // unchanged
+W        = State.Window(cfg)                        // current admission window
+if W == 1:
+    waiting = changes eligible for a fresh batch now   // same filter the planner uses
+    size    = max(adaptive, min(max_size, waiting))    // ceil(waiting / 1)
+else:
+    size    = adaptive                                  // plain adaptive, unchanged
+```
+
+Every input is folded from the journal; no clock is read. At depth 1 W is
+always 1, so the depth-1 behaviour equals variant 1's. At depth 4 the adaptive
+window halves after a failure and can reach 1, so the guard can fire there too;
+the lab reports how often (share of fresh batches started at W = 1).
+
+### Pre-registered success bar
+
+All deltas are the mean over seeds 1–10 of the seed-paired percentage
+difference, as the efficiency lab computes `delta_percent`. "Guard" is the
+`global-adaptive 0.8 + guard` arm (target 0.8, this rule).
+
+- **(a) Depth 1.** In the `load-curve` matrix (beta-loaded at 300, 450, 600,
+  700 and 800 PRs/day), against the fixed-size baseline: guard p50 latency Δ
+  ≤ +10% at every load, and guard runner-minutes per landed change Δ ≤ +3% at
+  every load.
+- **(b) Depth 4.** In the `guard-depth4` matrix (adr0009-depth4,
+  agent-burst-depth4, agent-burst-depth4-var, agent-burst-depth4-churn,
+  team-slow-depth4, team-slow-depth4-churn), against plain adaptive
+  (`global-adaptive 0.8`, guard off), on every workload: |Δ p50| ≤ 5%,
+  |Δ p90| ≤ 5% and |Δ runner-minutes per landed| ≤ 2%.
+- **(c)** `TestAdaptiveSizingPlannerHarness` (ADR 0009 first-day gate, adaptive
+  p50 and p95 no worse than fixed) passes with the test unmodified.
+- **(d)** Queues without `target_pass_rate` are byte-identical: planner goldens
+  and sim invariant tests pass with no test data changes, configs without the
+  key keep their digest, and every baseline (fixed-size) cell of the
+  regenerated lab summary is unchanged.
+
+### Results
+
+Pending.
+
+## Variant 1: guard at every window (does not meet the bar)
+
+The guard held depth-1 latency at fixed-sizing levels under load. At depth 4
+it gave back much of adaptive sizing's benefit, and it failed the ADR 0009
+first-day planner harness's p95 gate.
+
+### Rule
 
 `queue.BacklogGuardSize`, applied in `State.batchCandidates` only when
 `BatchTargetPassRate > 0` and `batch.backlog_guard` is not `false`:
@@ -23,7 +81,7 @@ what the waiting backlog would fill". At depth W, the backlog is spread over one
 window of batches. Every input comes from the journal fold, and no clock is
 read. The rule was chosen before any run and was not tuned afterwards.
 
-## Load curve: depth 1 (beta-loaded, 10 seeds, paired Δ vs fixed)
+### Load curve: depth 1 (beta-loaded, 10 seeds, paired Δ vs fixed)
 
 | PRs/day | fixed p50 (min) | adaptive 0.8: Δ min / Δ p50 | + production guard | + sim-only guard |
 |---|---|---|---|---|
@@ -37,7 +95,7 @@ At depth 1 the guard makes adaptive sizing behave like fixed sizing. This is
 not a balance between the two: whenever more changes wait than the adaptive
 size, the guard takes them all, up to `max_size`.
 
-## Depth 4 (one day, 10 seeds; means; Δ p50 paired vs fixed)
+### Depth 4 (one day, 10 seeds; means; Δ p50 paired vs fixed)
 
 | workload | fixed p50 / p90 / min per landed | adaptive 0.8 | + production guard | + sim-only guard |
 |---|---|---|---|---|
@@ -64,7 +122,7 @@ worse than fixed. It now fails:
 
 The guard was not tuned to pass this gate, and the gate was not changed.
 
-## Why
+### Why
 
 The depth-1 model behind the guard is that serial throughput is roughly batch
 size per CI duration, so shrinking cuts capacity. That model does not carry to
@@ -78,7 +136,7 @@ and leave depth 4 untouched by construction. It is a different rule and needs
 its own pre-registered run. It was not tried here, so that the evaluation
 stays clean.
 
-## Constraints checked
+### Constraints checked
 
 - Byte-identical without a target: the guard is skipped when
   `BatchTargetPassRate == 0`. Fixed-size planner tests and goldens pass
@@ -91,7 +149,7 @@ stays clean.
   delta is within machine-load noise (the baseline itself ranged 155–228 s).
   `internal/sim` went from 42.1 s to 43.0 s.
 
-## Reproduce
+### Reproduce
 
 ```sh
 OPENMERGE_LAB_OUT=/some/dir om-go go test -count=1 ./internal/sim -run '^TestEfficiencyLab$'   # load-curve and guard-depth4 matrices
