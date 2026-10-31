@@ -116,7 +116,7 @@ type Batch struct {
 	MaxWait        time.Duration `yaml:"max_wait"`
 	// BacklogGuard defaults to true and requires TargetPassRate. False keeps
 	// adaptive sizing without the backlog floor.
-	BacklogGuard *bool `yaml:"backlog_guard,omitempty"`
+	BacklogGuard *bool `yaml:"backlog_guard,omitempty" json:",omitempty"`
 }
 
 // QueueConfig maps a loaded queue to the planner. Operational defaults are a
