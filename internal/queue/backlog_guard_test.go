@@ -59,7 +59,7 @@ func freshBatch(cfg Config, s State, now time.Time) []BatchPR {
 
 func TestBacklogGuardFloorsFreshBatches(t *testing.T) {
 	for _, tc := range []struct {
-		depth, waiting int
+		depth, waiting            int
 		guarded, unguarded, fixed int
 	}{
 		{1, 3, 0, 0, 0}, // below the adaptive size: all wait on max_wait alike
