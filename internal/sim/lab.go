@@ -507,36 +507,36 @@ func (s *simulation) riskBatchSize(waiting []int) int {
 // before they were cancelled. It is not the time cancellation recovered; that
 // is the paired difference against an arm without cancellation support.
 type LabMetrics struct {
-	Landed, Dequeued        int
-	Runs, DedupeHits        int
-	DuplicateTreeRuns       int
-	RunnerMinutes           float64
-	RunsPerLanded           float64
-	RunnerMinutesPerLanded  float64
-	WastedRuns              int
-	WastedMinutes           float64
-	WastedMinutesPerLanded  float64
-	WasteFraction           float64
-	FailedMinutes           float64
-	InvalidatedMinutes      float64
+	Landed, Dequeued         int
+	Runs, DedupeHits         int
+	DuplicateTreeRuns        int
+	RunnerMinutes            float64
+	RunsPerLanded            float64
+	RunnerMinutesPerLanded   float64
+	WastedRuns               int
+	WastedMinutes            float64
+	WastedMinutesPerLanded   float64
+	WasteFraction            float64
+	FailedMinutes            float64
+	InvalidatedMinutes       float64
 	CancelledResidualMinutes float64
-	SupersededMinutes       float64
-	BisectionRuns           int
-	BisectionMinutes        float64
-	RerunRuns               int
-	RerunMinutes            float64
-	SpeculativeRuns         int
-	SpeculativeMinutes      float64
-	P50LatencyMinutes       float64
-	P90LatencyMinutes       float64
-	MeanLatencyMinutes      float64
-	MakespanHours           float64
-	ThroughputPerDay        float64
-	WrongfulDequeues        int
-	FailedBatches           []IsolationCase `json:"-"`
-	ModelHalvingBisectRuns  int
-	PlannerBisectionRuns    int
-	ModelCalibrationMatches bool
+	SupersededMinutes        float64
+	BisectionRuns            int
+	BisectionMinutes         float64
+	RerunRuns                int
+	RerunMinutes             float64
+	SpeculativeRuns          int
+	SpeculativeMinutes       float64
+	P50LatencyMinutes        float64
+	P90LatencyMinutes        float64
+	MeanLatencyMinutes       float64
+	MakespanHours            float64
+	ThroughputPerDay         float64
+	WrongfulDequeues         int
+	FailedBatches            []IsolationCase `json:"-"`
+	ModelHalvingBisectRuns   int
+	PlannerBisectionRuns     int
+	ModelCalibrationMatches  bool
 }
 
 func (s *simulation) labMetrics(merged int) *LabMetrics {
