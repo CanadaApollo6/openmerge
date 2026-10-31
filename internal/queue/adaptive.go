@@ -175,3 +175,24 @@ func (s State) BatchSize(cfg Config) int {
 	failures, samples := s.FailureEstimate()
 	return AdaptiveBatchSize(cfg.BatchMaxSize, failures, samples, cfg.BatchTargetPassRate)
 }
+
+// BacklogGuardSize floors an adaptive fresh-batch size at the waiting backlog:
+// max(adaptive, min(maxSize, waiting)).
+//
+// The planner applies it only when BatchTargetPassRate is set,
+// BatchBacklogGuardOff is not, and the current admission window is 1. With one
+// batch in flight, serial throughput is roughly batch size per CI duration, so
+// shrinking a fresh batch below the waiting backlog cuts capacity; the guard
+// takes the backlog instead, never beyond maxSize. At W > 1 smaller batches
+// also bound how much a failure invalidates, and a backlog often means an agent
+// burst rather than a capacity shortage, so sizing stays plain adaptive there.
+// waiting counts changes eligible for a fresh batch now and the window is
+// folded from the journal, so replay and planning agree without reading a
+// clock. The rule and its evidence are in docs/research/adaptive-backlog-guard.md.
+//
+// It raises the size only to at most the backlog, so it never makes the
+// planner wait on BatchMaxWait for a batch the adaptive size would have started
+// at once.
+func BacklogGuardSize(adaptive, maxSize, waiting int) int {
+	return max(adaptive, min(max(1, maxSize), waiting))
+}

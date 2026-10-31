@@ -28,7 +28,7 @@ fake forge on a virtual clock. `Config.Lab` (nil by default) adds:
 ## Reproduce
 
 ```sh
-# Full suite: 5 matrices, 10 seeds, about 2 minutes on 16 cores. Checks the committed summary.
+# Full suite: 6 matrices, 10 seeds, about 2 minutes on 16 cores. Checks the committed summary.
 om-go go test -count=1 ./internal/sim -run '^TestEfficiencyLab$'
 # Keep efficiency-lab.json (summary), efficiency-lab-runs.json (every per-seed run) and efficiency-lab.md:
 OPENMERGE_LAB_OUT=/some/dir om-go go test -count=1 ./internal/sim -run '^TestEfficiencyLab$'
@@ -165,7 +165,7 @@ This load curve has two causes:
 - **Mechanism.** At a 0.8 target and a 5% change failure rate, the size falls to (1 − p̂)^k ≥ 0.8, so k ≈ 4: fresh batches are half the configured maximum. At depth 1, serial throughput is roughly batch size per CI duration, so halving the batch halves capacity. Below about 60% utilisation that is invisible. Above it, capacity falls below the arrival rate and the queue keeps growing for the rest of the day, which is why p50 triples.
 - **Target sensitivity.** A 0.6 target barely shrinks batches at a 5% rate (k = 9, capped at 8), so it stays within noise at every load.
 
-The **backlog guard** fixes the regression in this model. It keeps the configured maximum whenever a full batch is waiting, which is a queue-observable sign of high utilisation, and leaves small-batch behaviour unchanged when the queue is short. **Candidate rule for ADR 0015:** never shrink a fresh batch below the size the waiting backlog would fill. Equivalently, cap adaptive shrinking by utilisation. The guard is sim-only here; a production version needs its own ADR slice and must be checked against the depth-4 profile, where shrinking currently helps.
+The **backlog guard** fixes the regression in this model. It keeps the configured maximum whenever a full batch is waiting, which is a queue-observable sign of high utilisation, and leaves small-batch behaviour unchanged when the queue is short. **Candidate rule for ADR 0015:** never shrink a fresh batch below the size the waiting backlog would fill. Equivalently, cap adaptive shrinking by utilisation. The guard is sim-only here; a production version needs its own ADR slice and must be checked against the depth-4 profile, where shrinking currently helps. The sim-only guard is the `+ sim guard` arm in the regenerated summary. The production guard, which applies only at admission window 1, is evaluated in [the backlog guard evidence](adaptive-backlog-guard.md).
 
 ### 5–6. Score quality
 
@@ -590,15 +590,28 @@ Residual is the time the baseline still charged to runs it cancelled; it is wast
 
 ### Matrix: load-curve
 
-Adaptive batch sizing against load (beta-loaded, depth one). The backlog guard keeps the configured maximum whenever a full batch is waiting.
+Adaptive batch sizing against load (beta-loaded, depth one). The production backlog guard floors each fresh batch started at window 1 at min(max, waiting); the sim-only guard keeps the configured maximum whenever a full batch is waiting.
 
-| workload | baseline runner-min/landed | baseline p50 (min) | baseline landed/day | global-adaptive 0.8 Δ min | global-adaptive 0.8 Δ p50 | global-adaptive 0.6 Δ min | global-adaptive 0.6 Δ p50 | global-adaptive 0.8 + guard Δ min | global-adaptive 0.8 + guard Δ p50 | risk-sized Δ min | risk-sized Δ p50 | risk-sized + guard Δ min | risk-sized + guard Δ p50 |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| beta-loaded 300/day | 3.37 ±0.10 | 5.7 ±0.2 | 287 ±4 | +0.4% ±0.5 | +1.2% ±1.3 | -0.0% ±0.1 | +0.0% ±0.2 | +0.5% ±0.5 | +1.3% ±1.3 | +1.2% ±0.8 | +2.8% ±1.5 | +1.1% ±0.9 | +2.5% ±1.5 |
-| beta-loaded 450/day | 2.80 ±0.06 | 6.7 ±0.3 | 428 ±4 | +2.5% ±1.4 | +9.8% ±6.1 | +0.2% ±0.3 | +0.5% ±0.6 | +1.7% ±1.2 | +7.1% ±7.1 | +1.9% ±1.2 | +3.3% ±4.4 | +1.7% ±1.1 | +2.5% ±4.2 |
-| beta-loaded 600/day | 2.34 ±0.05 | 8.6 ±1.1 | 565 ±5 | +3.1% ±1.2 | +94.2% ±87.1 | +0.0% ±0.4 | -1.3% ±4.3 | +1.2% ±0.6 | +8.8% ±8.5 | +2.3% ±0.6 | +24.9% ±17.7 | +2.0% ±0.4 | +11.5% ±5.8 |
-| beta-loaded 700/day | 2.12 ±0.06 | 16.5 ±7.4 | 649 ±11 | +4.0% ±1.9 | +202.0% ±137.6 | +0.2% ±0.3 | +3.8% ±5.5 | +0.5% ±0.9 | -10.2% ±16.8 | +1.2% ±1.6 | +49.5% ±82.9 | +0.7% ±1.0 | +5.9% ±22.7 |
-| beta-loaded 800/day | 1.94 ±0.06 | 38.4 ±18.4 | 733 ±20 | +9.4% ±5.5 | +203.9% ±99.7 | +0.3% ±0.6 | +13.6% ±16.1 | +0.0% ±0.7 | +3.0% ±13.6 | +0.9% ±1.2 | +29.4% ±43.7 | -0.4% ±1.0 | -4.6% ±24.2 |
+| workload | baseline runner-min/landed | baseline p50 (min) | baseline landed/day | global-adaptive 0.8 Δ min | global-adaptive 0.8 Δ p50 | global-adaptive 0.8 + guard Δ min | global-adaptive 0.8 + guard Δ p50 | global-adaptive 0.8 + sim guard Δ min | global-adaptive 0.8 + sim guard Δ p50 | global-adaptive 0.6 Δ min | global-adaptive 0.6 Δ p50 | risk-sized Δ min | risk-sized Δ p50 | risk-sized + sim guard Δ min | risk-sized + sim guard Δ p50 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| beta-loaded 300/day | 3.37 ±0.10 | 5.7 ±0.2 | 287 ±4 | +0.4% ±0.5 | +1.2% ±1.3 | -0.0% ±0.0 | +0.0% ±0.1 | +0.5% ±0.5 | +1.3% ±1.3 | -0.0% ±0.1 | +0.0% ±0.2 | +1.2% ±0.8 | +2.8% ±1.5 | +1.1% ±0.9 | +2.5% ±1.5 |
+| beta-loaded 450/day | 2.80 ±0.06 | 6.7 ±0.3 | 428 ±4 | +2.5% ±1.4 | +9.8% ±6.1 | +0.1% ±0.2 | +0.1% ±0.3 | +1.7% ±1.2 | +7.1% ±7.1 | +0.2% ±0.3 | +0.5% ±0.6 | +1.9% ±1.2 | +3.3% ±4.4 | +1.7% ±1.1 | +2.5% ±4.2 |
+| beta-loaded 600/day | 2.34 ±0.05 | 8.6 ±1.1 | 565 ±5 | +3.1% ±1.2 | +94.2% ±87.1 | +0.0% ±0.1 | +0.3% ±0.6 | +1.2% ±0.6 | +8.8% ±8.5 | +0.0% ±0.4 | -1.3% ±4.3 | +2.3% ±0.6 | +24.9% ±17.7 | +2.0% ±0.4 | +11.5% ±5.8 |
+| beta-loaded 700/day | 2.12 ±0.06 | 16.5 ±7.4 | 649 ±11 | +4.0% ±1.9 | +202.0% ±137.6 | +0.0% ±0.0 | +0.0% ±0.0 | +0.5% ±0.9 | -10.2% ±16.8 | +0.2% ±0.3 | +3.8% ±5.5 | +1.2% ±1.6 | +49.5% ±82.9 | +0.7% ±1.0 | +5.9% ±22.7 |
+| beta-loaded 800/day | 1.94 ±0.06 | 38.4 ±18.4 | 733 ±20 | +9.4% ±5.5 | +203.9% ±99.7 | +0.0% ±0.0 | +0.0% ±0.0 | +0.0% ±0.7 | +3.0% ±13.6 | +0.3% ±0.6 | +13.6% ±16.1 | +0.9% ±1.2 | +29.4% ±43.7 | -0.4% ±1.0 | -4.6% ±24.2 |
+
+### Matrix: guard-depth4
+
+The backlog guard against the depth-four profiles, where adaptive sizing helps: the ADR 0009 adaptive profile and the main depth-four workloads. The production guard fires only while failures have halved the window to 1.
+
+| workload | baseline runner-min/landed | baseline p50 (min) | baseline landed/day | global-adaptive 0.8 Δ min | global-adaptive 0.8 Δ p50 | global-adaptive 0.8 + guard Δ min | global-adaptive 0.8 + guard Δ p50 | global-adaptive 0.8 + sim guard Δ min | global-adaptive 0.8 + sim guard Δ p50 |
+|---|---|---|---|---|---|---|---|---|---|
+| adr0009-depth4 | 1.47 ±0.12 | 7.7 ±0.9 | 849 ±7 | +0.2% ±2.5 | -15.8% ±10.0 | +0.1% ±2.6 | -15.8% ±10.0 | +1.0% ±1.6 | -11.4% ±8.4 |
+| agent-burst-depth4 | 1.59 ±0.10 | 15.9 ±5.0 | 846 ±10 | -1.0% ±1.9 | -28.7% ±7.7 | -1.0% ±1.9 | -28.7% ±7.7 | -0.1% ±1.8 | -18.1% ±6.4 |
+| agent-burst-depth4-var | 1.79 ±0.12 | 26.2 ±8.1 | 842 ±14 | -0.6% ±2.2 | -24.2% ±3.5 | -0.6% ±2.2 | -24.2% ±3.5 | +1.7% ±2.5 | -10.6% ±5.0 |
+| agent-burst-depth4-churn | 1.94 ±0.14 | 29.1 ±7.3 | 819 ±18 | -1.7% ±4.6 | -32.4% ±12.1 | -1.7% ±4.6 | -32.4% ±12.1 | -0.3% ±2.0 | -8.2% ±11.3 |
+| team-slow-depth4 | 29.54 ±0.35 | 35.0 ±0.0 | 20 ±0 | +0.0% ±0.0 | +0.0% ±0.0 | +0.0% ±0.0 | +0.0% ±0.0 | +0.0% ±0.0 | +0.0% ±0.0 |
+| team-slow-depth4-churn | 35.84 ±0.58 | 38.0 ±0.8 | 19 ±0 | +0.0% ±0.0 | +0.0% ±0.0 | +0.0% ±0.0 | +0.0% ±0.0 | +0.0% ±0.0 | +0.0% ±0.0 |
 
 ### Matrix: score-noise
 
