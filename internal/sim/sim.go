@@ -32,6 +32,8 @@ type pullRequest struct {
 	enqueued, landed         time.Time
 	firstEnqueued            time.Time
 	externalBeforeLand       bool
+	risk, score              float64
+	labInvalidation          *labInvalidation
 	dequeued                 queue.DequeueReason
 }
 
@@ -94,6 +96,7 @@ type simulation struct {
 	abandonedAttempts          map[string]bool
 	observed                   map[string]*forgeLanding
 	lastFence                  string
+	lab                        *labState
 }
 
 // Run drains a workload, outstanding CI, and durable side effects. It returns a
@@ -135,6 +138,9 @@ func newSimulation(cfg Config, compactTrees ...bool) (*simulation, error) {
 	if compact {
 		s.forge.CompactTrees(s.repo)
 	}
+	if cfg.Lab != nil {
+		s.lab = newLabState(cfg)
+	}
 	base, fence := s.forge.Init(s.repo, "main", "openmerge/fence/main")
 	s.lastFence = fence
 	s.boundary = &faultForge{Forge: s.forge, sim: s, scope: "setup"}
@@ -174,12 +180,15 @@ func newSimulation(cfg Config, compactTrees ...bool) (*simulation, error) {
 		p.repush = churn.Float64() < cfg.RepushRate && !p.untrusted
 		p.externalBeforeLand = external.Float64() < cfg.ExternalPushRate && !p.untrusted
 		p.broken = !p.untrusted && rng.Float64() < cfg.BrokenRate
-		if p.broken {
-			s.result.Broken++
-		}
 		var delay time.Duration
 		if cfg.ArrivalWindow > 0 {
 			delay = time.Duration(rng.Int64N(int64(cfg.ArrivalWindow)))
+		}
+		if s.lab != nil && !p.untrusted {
+			delay = s.drawChange(p, p.broken, delay)
+		}
+		if p.broken {
+			s.result.Broken++
 		}
 		s.schedule(s.start.Add(delay), arrival, pr, "")
 		if p.externalBeforeLand {
@@ -271,7 +280,7 @@ func (s *simulation) step() (bool, error) {
 	if len(s.scheduled) > 0 {
 		consider(s.scheduled[0].at)
 	}
-	if at, ok := queue.NextWake(s.cfg.Planner, s.state, s.now); ok {
+	if at, ok := queue.NextWake(s.plannerConfig(), s.state, s.now); ok {
 		consider(at)
 	}
 	if !next.IsZero() {
@@ -366,6 +375,10 @@ func (s *simulation) execute(action queue.Action) error {
 func (s *simulation) record(event queue.Event) {
 	batch := s.state.Active
 	switch event := event.(type) {
+	case queue.BatchStarted:
+		s.labBatchStarted(event.PRs)
+	case queue.ChainedBatchStarted:
+		s.labBatchStarted(event.PRs)
 	case queue.ChainedTestRefBuilt:
 		if run := s.tests[event.TestedSHA]; run != nil {
 			run.startedTestingAt = event.At
@@ -447,7 +460,7 @@ func (s *simulation) record(event queue.Event) {
 		}
 	}
 	if reopened, ok := event.(queue.ChecksReopened); ok && batch != nil && batch.Phase == queue.Testing && batch.TestedSHA == reopened.TestedSHA {
-		for _, action := range queue.Plan(s.cfg.Planner, s.state, s.now) {
+		for _, action := range queue.Plan(s.plannerConfig(), s.state, s.now) {
 			if _, landing := action.(queue.Land); landing {
 				s.violation = fmt.Errorf("reopened checks for %s still authorize landing", reopened.TestedSHA)
 			}
@@ -517,11 +530,13 @@ func (s *simulation) startCI(sha string, prs []int) {
 		s.result.BisectionCIRuns++
 	}
 	s.forge.SetCheckRuns(s.repo, sha, []forge.CheckRun{{ID: 1, Attempt: 1, Name: "ci", State: forge.Pending}})
-	duration := s.ciDuration()
-	if s.cfg.CI == nil {
-		s.schedule(s.now.Add(duration), ciComplete, 0, sha)
-	} else {
-		s.submitCI(sha, duration)
+	switch {
+	case s.cfg.CI == nil:
+		s.schedule(s.now.Add(s.ciDuration()), ciComplete, 0, sha)
+	case s.lab != nil:
+		s.labSubmit(sha, run, batch)
+	default:
+		s.submitCI(sha, s.ciDuration())
 	}
 }
 
@@ -568,6 +583,9 @@ func (s *simulation) metrics() Result {
 	if s.cfg.CI != nil {
 		r.CI = s.ciMetrics(r.Merged)
 	}
+	if s.lab != nil {
+		r.Lab = s.labMetrics(r.Merged)
+	}
 	return r
 }
 
@@ -584,7 +602,7 @@ func percentiles(times []time.Duration) (median, p95 time.Duration) {
 // Retain planned payloads independently of execution so a reused key cannot
 // silently replace a previously published composition.
 func (s *simulation) plan() ([]queue.Action, error) {
-	actions := queue.Plan(s.cfg.Planner, s.state, s.now)
+	actions := queue.Plan(s.plannerConfig(), s.state, s.now)
 	for _, action := range actions {
 		if previous, exists := s.planned[action.Key()]; exists && !reflect.DeepEqual(previous, action) {
 			return nil, fmt.Errorf("action key %s reused for a changed payload", action.Key())
@@ -597,7 +615,7 @@ func (s *simulation) plan() ([]queue.Action, error) {
 func (s *simulation) authorizeStart(action queue.Action, event queue.Event) error {
 	switch event.(type) {
 	case queue.ChainedBatchStarted, queue.BatchStarted, queue.CheckRerunRequested, queue.LandingStarted:
-		if !queue.CanStart(s.cfg.Planner, s.state, action, event) {
+		if !queue.CanStart(s.plannerConfig(), s.state, action, event) {
 			return errStale
 		}
 	}

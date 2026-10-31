@@ -24,6 +24,7 @@ const (
 	delayedPush
 	duplicateLand
 	externalPush
+	labDequeue
 )
 
 type scheduledEvent struct {
@@ -106,6 +107,10 @@ func (s *simulation) deliver(event scheduledEvent) error {
 		}
 		s.prs[event.pr].head = pr.HeadSHA
 		s.record(queue.PRObserved{PR: event.pr, HeadSHA: pr.HeadSHA, Eligible: true, Trusted: !s.prs[event.pr].untrusted})
+	case labDequeue:
+		if slices.ContainsFunc(s.state.Entries, func(e queue.Entry) bool { return e.PR == event.pr }) {
+			s.record(queue.DequeueRequested{PR: event.pr})
+		}
 	case externalPush:
 		return s.pushExternalBase()
 	case delayedPush:
@@ -147,6 +152,7 @@ func (s *simulation) deliver(event scheduledEvent) error {
 			return fmt.Errorf("CI completion for unknown tested SHA %s", event.sha)
 		}
 		run.done = true
+		s.labCompleted(event.job, run.success)
 		state := forge.Failure
 		if run.success {
 			state = forge.Success

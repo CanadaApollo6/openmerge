@@ -94,4 +94,13 @@
 // heads. Each build tests a unique empty marker above the head. The simulator
 // checks marker CI coverage against the landed parent's history and binds the
 // marker to the attempt through the landing fence.
+//
+// Config.Lab opts into the CI efficiency lab (lab.go): a per-run runner-minute
+// ledger with waste causes, heterogeneous per-change risk with a noisy score,
+// lognormal and fail-fast CI durations, bursty arrivals, tree identity, and
+// sim-only strategies (exact tree dedupe; risk-weighted BatchMaxSize passed to
+// the real planner). Nil leaves every legacy draw and byte unchanged.
+// TestEfficiencyLab runs the workload × strategy × seed matrix (labbench.go);
+// Isolate models culprit isolation policies that would need a reducer change.
+// Results: docs/research/ci-efficiency-lab.md.
 package sim
