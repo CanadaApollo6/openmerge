@@ -144,6 +144,7 @@ var shadowKey = store.QueueKey{Installation: "7", Repository: repo.Path, BaseBra
 // boundary: the same scenario with the shadow off, on, and failing yields the
 // same journal kinds, batch compositions, dequeues, forge statuses and base.
 func TestTreeDedupeShadowChangesNothing(t *testing.T) {
+	t.Parallel()
 	off, offDB, _ := shadowRun(t, func(*fake.Forge) *TreeDedupeShadow { return nil })
 	if _, ok := shadowLedger(t, offDB, shadowKey); ok {
 		t.Fatal("disabled shadow wrote a ledger")
@@ -198,6 +199,7 @@ func TestTreeDedupeShadowChangesNothing(t *testing.T) {
 // TestTreeDedupeShadowUnknownImageAndStoreFailure checks the fail-closed key
 // and that a store failure is only logged.
 func TestTreeDedupeShadowUnknownImageAndStoreFailure(t *testing.T) {
+	t.Parallel()
 	_, db, id := shadowRun(t, func(f *fake.Forge) *TreeDedupeShadow {
 		return &TreeDedupeShadow{Inputs: fakeTreeInputs(f)} // no runner image
 	})
