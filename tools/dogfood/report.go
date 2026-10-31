@@ -2,13 +2,13 @@ package main
 
 import (
 	"fmt"
-	"math"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
+	"github.com/CanadaApollo6/openmerge/internal/queuemetrics"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
@@ -162,14 +162,7 @@ type landing struct {
 	Accepted   bool
 }
 
-func entry(s queue.State, pr int) *queue.Entry {
-	for _, e := range s.Entries {
-		if e.PR == pr {
-			return &e
-		}
-	}
-	return nil
-}
+func entry(s queue.State, pr int) *queue.Entry { return queuemetrics.Entry(s, pr) }
 func effectiveConfig(cfg queue.Config, before, after queue.State, e queue.Event) queue.Config {
 	changed := before.ConfigDigest != after.ConfigDigest || !before.WindowInitialized() && after.WindowInitialized()
 	if c, ok := e.(queue.ConfigApplied); ok && changed && c.Validate() == nil && after.ConfigDigest == c.Digest {
@@ -258,28 +251,24 @@ func reportJournalAt(j store.Journal, w Window, asOf time.Time) (Report, error) 
 				r.Batches = append(r.Batches, id)
 			}
 		}
-		if e, ok := rec.Event.(queue.EnqueueRequested); ok {
-			a, b := entry(before, e.PR), entry(s, e.PR)
-			if b != nil && (a == nil || a.AdmissionID != b.AdmissionID) {
-				ad := Admission{EventID: rec.ID, PR: e.PR, AdmissionID: b.AdmissionID, AcceptedAt: rec.RecordedAt, EnqueuedAt: b.EnqueuedAt, QueueLength: len(s.Entries)}
-				admissions[b.AdmissionID] = ad
-				if _, ok := first[e.PR]; !ok {
-					first[e.PR] = e.At
-				}
-				if inside {
-					cohort[b.AdmissionID], pending[b.AdmissionID] = true, true
-					r.Admissions = append(r.Admissions, ad)
-					r.ArrivalsByDay[rec.RecordedAt.UTC().Format("2006-01-02")]++
-				} else if inPeriod && !periodEnded {
-					r.Warnings = append(r.Warnings, fmt.Sprintf("admission %d accepted after window close; operator must stop queueing during drain", b.AdmissionID))
-					r.QueueDrainedAt = time.Time{}
-				}
+		if b, ok := queuemetrics.Admitted(before, s, rec.Event); ok {
+			e := rec.Event.(queue.EnqueueRequested)
+			ad := Admission{EventID: rec.ID, PR: e.PR, AdmissionID: b.AdmissionID, AcceptedAt: rec.RecordedAt, EnqueuedAt: b.EnqueuedAt, QueueLength: len(s.Entries)}
+			admissions[b.AdmissionID] = ad
+			if _, ok := first[e.PR]; !ok {
+				first[e.PR] = e.At
+			}
+			if inside {
+				cohort[b.AdmissionID], pending[b.AdmissionID] = true, true
+				r.Admissions = append(r.Admissions, ad)
+				r.ArrivalsByDay[rec.RecordedAt.UTC().Format("2006-01-02")]++
+			} else if inPeriod && !periodEnded {
+				r.Warnings = append(r.Warnings, fmt.Sprintf("admission %d accepted after window close; operator must stop queueing during drain", b.AdmissionID))
+				r.QueueDrainedAt = time.Time{}
 			}
 		}
 		landed := map[uint64]bool{}
-		if e, ok := rec.Event.(queue.Landed); ok {
-			b := before.Batch(e.BatchID)
-			accepted := b != nil && b.Phase == queue.Landing && s.Batch(e.BatchID) == nil
+		if b, accepted, ok := queuemetrics.LandedBatch(before, s, rec.Event); ok {
 			if !accepted && inPeriod {
 				return r, fmt.Errorf("landed event %d was not accepted by replay; run audit", rec.ID)
 			}
@@ -382,12 +371,9 @@ func heldArrivals(j store.Journal, closedAt, end, asOf time.Time) []HeldArrival 
 		}
 		before := s
 		s = queue.Apply(s, rec.Event)
-		if e, ok := rec.Event.(queue.EnqueueRequested); ok {
-			a, b := entry(before, e.PR), entry(s, e.PR)
-			if b != nil && (a == nil || a.AdmissionID != b.AdmissionID) {
-				if _, seen := admitted[e.PR]; !seen {
-					admitted[e.PR] = rec.RecordedAt
-				}
+		if b, ok := queuemetrics.Admitted(before, s, rec.Event); ok {
+			if _, seen := admitted[b.PR]; !seen {
+				admitted[b.PR] = rec.RecordedAt
 			}
 		}
 	}
@@ -432,7 +418,5 @@ func percentiles(values []float64) Percentiles {
 	if len(values) == 0 {
 		return Percentiles{}
 	}
-	values = slices.Clone(values)
-	slices.Sort(values)
-	return Percentiles{Median: values[int(math.Ceil(float64(len(values))*.5))-1], P95: values[int(math.Ceil(float64(len(values))*.95))-1]}
+	return Percentiles{Median: queuemetrics.Percentile(values, .5), P95: queuemetrics.Percentile(values, .95)}
 }

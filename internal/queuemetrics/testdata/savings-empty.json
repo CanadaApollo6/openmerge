@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "installation": "1",
+  "repository": "fixture/app",
+  "base_branch": "main",
+  "lane": "",
+  "since": "2026-10-01T00:00:00Z",
+  "until": "2026-10-01T00:00:01Z",
+  "baseline_definition": "one full CI run per PR landed in the window, plus every CI rerun the queue dispatched for the runs counted as executed. It models testing each PR alone before it merges, with the same flaky reruns. It ignores the runs a one-at-a-time queue would also spend on PRs that failed or were dequeued, and on retesting after the base moves, so it is a lower bound on the cost without batching.",
+  "executed_definition": "one full CI run per queue test ref OpenMerge pushed, whatever happened to it afterwards (landed, failed, bisected, invalidated by speculation, or still running at --until), plus each rerun the forge accepted. Pushes and rerun acceptances recorded after their batch left the queue still count; repeated confirmations count once. A run belongs to the window when its test ref was pushed in [since, until) or it tested a PR that landed in the window. Batches whose test ref was never pushed (build failure or conflict) ran no CI and are not counted.",
+  "prs_landed": 0,
+  "batches": {
+    "landed": 0,
+    "mean_size": 0,
+    "p50_size": 0,
+    "p90_size": 0,
+    "max_size": 0
+  },
+  "ci_runs": {
+    "executed": 0,
+    "test_refs_built": 0,
+    "reruns": 0,
+    "carried_in": 0,
+    "reruns_unconfirmed": 0,
+    "test_ref_outcomes": {
+      "landed": 0,
+      "invalidated": 0,
+      "discarded": 0,
+      "open": 0
+    },
+    "baseline": 0,
+    "saved": 0,
+    "saved_fraction": 0,
+    "runs_per_landed_pr": 0
+  },
+  "ci_minutes": {
+    "source": "unavailable",
+    "note": "no completed CI run in the window and no --full-suite-minutes; minutes are not estimated",
+    "per_run_minutes": 0,
+    "observed_runs": 0,
+    "observed_median_minutes": 0,
+    "observed_max_minutes": 0,
+    "executed_minutes": 0,
+    "baseline_minutes": 0,
+    "saved_minutes": 0
+  },
+  "enqueue_to_landed": {
+    "count": 0,
+    "p50_seconds": 0,
+    "p90_seconds": 0
+  },
+  "failure_isolation": {
+    "bisections": 0,
+    "bisection_runs": 0,
+    "dequeued": 0,
+    "dequeues_by_reason": {}
+  },
+  "warnings": []
+}

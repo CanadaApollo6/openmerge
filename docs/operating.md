@@ -12,6 +12,11 @@ and use `openmerge queue status [--json]`. The [API guide](api.md) documents the
 bearer token requirements, response contract, CLI and exit codes. No database or
 GitHub credentials are needed by an API client.
 
+To show how many CI runs, CI minutes and how much waiting OpenMerge saved one
+queue over a period, run the read-only `openmerge report savings`. The
+[CI savings report guide](savings-report.md) defines its baseline and explains
+how to read it with a design partner.
+
 ## Installation discovery and onboarding
 
 One `serve` process serves one GitHub App, across its installations. At startup,

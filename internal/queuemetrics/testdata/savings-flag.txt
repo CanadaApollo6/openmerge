@@ -1,0 +1,23 @@
+OpenMerge CI savings report
+Queue:  fixture/app main (installation 1)
+Window: 2026-10-01T00:00:00Z -> 2026-10-01T00:16:40Z (exclusive)
+
+PRs landed             14
+Batches landed         6          mean 2.33 PRs; p50 1; p90 8; max 8
+CI runs executed       13         12 test refs + 1 rerun(s); 1 carried in from before --since
+  test ref outcomes               landed 6; invalidated 1; discarded 4; open 1
+Baseline CI runs       15         14 landed PRs + 1 rerun(s)
+CI runs saved          2          lower bound; 13.3% of baseline; 0.93 runs per landed PR
+CI minutes per run     12.5       source: full-suite-minutes (operator-supplied minutes for one full CI run)
+CI minutes executed    162.5
+CI minutes baseline    187.5
+CI minutes saved       25.0
+Observed run duration  1.0        median minutes over 10 completed runs; max 1.8
+Enqueue to landed      p50 1m10s  p90 2m20s (14 PRs)
+Bisections             2          4 bisection runs
+Dequeued               2          checks-failed 1; requested 1
+
+Baseline: one full CI run per PR landed in the window, plus every CI rerun the queue dispatched for the runs counted as executed. It models testing each PR alone before it merges, with the same flaky reruns. It ignores the runs a one-at-a-time queue would also spend on PRs that failed or were dequeued, and on retesting after the base moves, so it is a lower bound on the cost without batching.
+Executed: one full CI run per queue test ref OpenMerge pushed, whatever happened to it afterwards (landed, failed, bisected, invalidated by speculation, or still running at --until), plus each rerun the forge accepted. Pushes and rerun acceptances recorded after their batch left the queue still count; repeated confirmations count once. A run belongs to the window when its test ref was pushed in [since, until) or it tested a PR that landed in the window. Batches whose test ref was never pushed (build failure or conflict) ran no CI and are not counted.
+WARNING: 1 test ref(s) pushed before --since tested PRs that landed in the window; they are counted as executed
+WARNING: 1 test ref(s) were still open at --until; they are counted as executed, and their PRs count only if they landed in the window
