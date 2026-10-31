@@ -33,6 +33,7 @@ type pullRequest struct {
 	firstEnqueued            time.Time
 	externalBeforeLand       bool
 	risk, score              float64
+	labInvalidation          *labInvalidation
 	dequeued                 queue.DequeueReason
 }
 
@@ -374,6 +375,10 @@ func (s *simulation) execute(action queue.Action) error {
 func (s *simulation) record(event queue.Event) {
 	batch := s.state.Active
 	switch event := event.(type) {
+	case queue.BatchStarted:
+		s.labBatchStarted(event.PRs)
+	case queue.ChainedBatchStarted:
+		s.labBatchStarted(event.PRs)
 	case queue.ChainedTestRefBuilt:
 		if run := s.tests[event.TestedSHA]; run != nil {
 			run.startedTestingAt = event.At

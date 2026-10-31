@@ -2,6 +2,7 @@ package sim
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"math/rand/v2"
 	"testing"
@@ -75,7 +76,7 @@ func TestLabLedgerReconcilesWithCIMetrics(t *testing.T) {
 			if m.Runs != r.CI.RunsStarted || m.WastedRuns != r.CI.WastedRuns || math.Abs(m.RunnerMinutes-r.CI.RunnerMinutes) > 1e-9 {
 				t.Fatalf("%s dedupe=%v: ledger %d runs/%d wasted/%.3f min, CI %d/%d/%.3f", name, dedupe, m.Runs, m.WastedRuns, m.RunnerMinutes, r.CI.RunsStarted, r.CI.WastedRuns, r.CI.RunnerMinutes)
 			}
-			parts := m.FailedMinutes + m.InvalidatedMinutes + m.CancelledMinutes + m.SupersededMinutes
+			parts := m.FailedMinutes + m.InvalidatedMinutes + m.CancelledResidualMinutes + m.SupersededMinutes
 			if math.Abs(parts-m.WastedMinutes) > 1e-9 || m.WastedMinutes > m.RunnerMinutes+1e-9 {
 				t.Fatalf("%s: waste causes %.3f do not sum to %.3f", name, parts, m.WastedMinutes)
 			}
@@ -110,20 +111,24 @@ func TestLabDeterministicPerSeed(t *testing.T) {
 // is dequeued, as in the baseline, with fewer runs.
 func TestTreeDedupePreservesOutcomes(t *testing.T) {
 	t.Parallel()
-	base := labDay()
-	dedupe := labDay()
-	dedupe.Lab.Strategy.TreeDedupe = true
-	b, d := mustRun(t, base), mustRun(t, dedupe)
-	if d.Lab.DedupeHits == 0 || d.Lab.Runs >= b.Lab.Runs {
-		t.Fatalf("dedupe saved nothing: %d hits, %d runs vs %d", d.Lab.DedupeHits, d.Lab.Runs, b.Lab.Runs)
-	}
-	if b.Lab.DuplicateTreeRuns == 0 {
-		t.Fatal("baseline ledger did not observe repeated trees")
-	}
-	for _, r := range []Result{b, d} {
-		if r.Merged != r.PRs-r.Broken || r.Dequeued[queue.ChecksFailed] != r.Broken || r.Lab.WrongfulDequeues != 0 {
-			t.Fatalf("outcomes changed: %+v", r)
+	hits, duplicates, baseRuns, dedupeRuns := 0, 0, 0, 0
+	for _, seed := range []uint64{1, 2, 3} {
+		base := labDay()
+		base.Seed = seed
+		dedupe := base
+		lab := *base.Lab
+		lab.Strategy.TreeDedupe = true
+		dedupe.Lab = &lab
+		b, d := mustRun(t, base), mustRun(t, dedupe)
+		hits, duplicates, baseRuns, dedupeRuns = hits+d.Lab.DedupeHits, duplicates+b.Lab.DuplicateTreeRuns, baseRuns+b.Lab.Runs, dedupeRuns+d.Lab.Runs
+		for _, r := range []Result{b, d} {
+			if r.Merged != r.PRs-r.Broken || r.Dequeued[queue.ChecksFailed] != r.Broken || r.Lab.WrongfulDequeues != 0 {
+				t.Fatalf("seed %d: outcomes changed: %+v", seed, r)
+			}
 		}
+	}
+	if hits == 0 || dedupeRuns >= baseRuns || duplicates == 0 {
+		t.Fatalf("dedupe saved nothing: %d hits, %d runs vs %d, %d baseline duplicate trees", hits, dedupeRuns, baseRuns, duplicates)
 	}
 }
 
@@ -217,6 +222,11 @@ func TestLabValidation(t *testing.T) {
 		"burst size":     func(c *Config) { c.Lab.Bursts = BurstModel{Fraction: .5} },
 		"risk target":    func(c *Config) { c.Lab.Strategy.RiskBatchTarget = 1 },
 		"negative noise": func(c *Config) { c.Lab.Risk.ScoreNoise = -1 },
+		"repush rate":    func(c *Config) { c.Lab.Invalidation.RepushRate = 1.5 },
+		"no delay":       func(c *Config) { c.Lab.Invalidation.DequeueRate = .1 },
+		"delay kind": func(c *Config) {
+			c.Lab.Invalidation = InvalidationModel{RepushRate: .1, Delay: DelayModel{Kind: "pareto", Mean: time.Minute}}
+		},
 	} {
 		cfg := labDay()
 		change(&cfg)
@@ -282,5 +292,111 @@ func TestIsolationModelCalibration(t *testing.T) {
 		if r.BisectionCIRuns == 0 || !r.Lab.ModelCalibrationMatches {
 			t.Fatalf("seed %d: model %d bisection runs, planner %d", seed, r.Lab.ModelHalvingBisectRuns, r.BisectionCIRuns)
 		}
+	}
+}
+
+// Mid-flight invalidation re-pushes and dequeues changes after their batch has
+// started; with cancellation the invalidated runs stop early, and without it
+// they run to completion and cost more.
+func TestLabMidFlightInvalidation(t *testing.T) {
+	t.Parallel()
+	cfg := labDepth4()
+	cfg.Lab.Duration = DurationModel{Kind: "lognormal", Median: 2 * time.Minute, Sigma: .6}
+	cfg.Planner.CheckTimeout = 6 * time.Minute
+	cfg.Lab.Invalidation = InvalidationModel{RepushRate: .3, DequeueRate: .1, Delay: DelayModel{Kind: "uniform", Mean: time.Minute}}
+	on := mustRun(t, cfg)
+	off := cfg
+	noCancel(&off)
+	without := mustRun(t, off)
+	for name, r := range map[string]Result{"on": on, "off": without} {
+		if r.Dequeued[queue.HeadChanged] == 0 || r.Dequeued[queue.Requested] == 0 {
+			t.Fatalf("%s: no mid-flight invalidation: %v", name, r.Dequeued)
+		}
+	}
+	if on.CI.CancellationsConfirmed == 0 || on.Lab.CancelledResidualMinutes == 0 || without.CI.CancellationsConfirmed != 0 {
+		t.Fatalf("cancellation not exercised: on %+v, off %+v", on.CI, without.CI)
+	}
+	if without.Lab.RunnerMinutesPerLanded <= on.Lab.RunnerMinutesPerLanded {
+		t.Fatalf("cancellation saved nothing: on %.3f, off %.3f min/landed", on.Lab.RunnerMinutesPerLanded, without.Lab.RunnerMinutesPerLanded)
+	}
+}
+
+// A run's duration depends on the seed, its tree and its attempt only, so arms
+// that skip runs still see the same durations for the same trees.
+func TestLabDurationsArePairedByTree(t *testing.T) {
+	t.Parallel()
+	cfg := labDay()
+	cfg.Lab.Duration = DurationModel{Kind: "lognormal", Median: 2 * time.Minute, Sigma: .6}
+	durations := func(dedupe bool) map[string]time.Duration {
+		c := cfg
+		lab := *cfg.Lab
+		lab.Strategy.TreeDedupe = dedupe
+		c.Lab = &lab
+		s, _ := runScenario(t, c)
+		out := map[string]time.Duration{}
+		for _, job := range s.ciJobs {
+			if job.lab != nil && !job.lab.deduped {
+				out[fmt.Sprintf("%s/%d", job.lab.tree, job.attempt)] = job.duration
+			}
+		}
+		return out
+	}
+	base, dedupe := durations(false), durations(true)
+	shared, distinct := 0, map[time.Duration]bool{}
+	for key, d := range dedupe {
+		distinct[d] = true
+		if b, ok := base[key]; ok {
+			shared++
+			if b != d {
+				t.Fatalf("tree %s: baseline duration %s, dedupe arm %s", key, b, d)
+			}
+		}
+	}
+	if shared < len(dedupe)/2 || len(distinct) < 10 {
+		t.Fatalf("too little overlap to test pairing: %d shared of %d, %d distinct durations", shared, len(dedupe), len(distinct))
+	}
+}
+
+// With a full batch waiting, the backlog guard keeps the configured maximum
+// that risk sizing would otherwise shrink.
+func TestBacklogGuardKeepsMaximum(t *testing.T) {
+	t.Parallel()
+	largest := func(guard bool) int {
+		cfg := labDay()
+		cfg.Lab.Risk = RiskModel{}
+		cfg.BrokenRate = .05
+		cfg.Lab.Strategy = LabStrategy{RiskBatchTarget: .8, BacklogGuard: guard}
+		cfg.ArrivalWindow = 20 * time.Minute
+		s, r := runScenario(t, cfg)
+		if r.Merged != r.PRs-r.Broken {
+			t.Fatalf("guard=%v: outcomes changed: %+v", guard, r)
+		}
+		n := 0
+		for _, e := range s.events {
+			if started, ok := e.Event.(queue.BatchStarted); ok {
+				n = max(n, len(started.PRs))
+			}
+		}
+		return n
+	}
+	if unguarded, guarded := largest(false), largest(true); unguarded != 4 || guarded != 8 {
+		t.Fatalf("largest batch %d unguarded, %d guarded; want 4 and 8", unguarded, guarded)
+	}
+}
+
+// Score noise is drawn on its own stream: changing it alters scores only, so a
+// baseline that ignores scores is identical at every noise level.
+func TestScoreNoiseKeepsTruth(t *testing.T) {
+	t.Parallel()
+	run := func(noise float64) []byte {
+		cfg := labDay()
+		cfg.Lab.Risk.ScoreNoise = noise
+		r := mustRun(t, cfg)
+		r.Config.Lab = nil
+		data, _ := json.Marshal(r)
+		return data
+	}
+	if a, b := run(0), run(2); string(a) != string(b) {
+		t.Fatal("score noise changed the baseline workload")
 	}
 }

@@ -3,6 +3,7 @@ package sim
 import (
 	"container/heap"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -19,14 +20,50 @@ import (
 // executor or store except through the documented BatchMaxSize override below.
 // The lab requires Config.CI so every run has a ledger entry.
 //
-// Lab draws use their own PCG stream (seed, 8), so arrivals, flakes and faults
-// keep their legacy streams and two strategies over the same seed see the same
-// changes, risks and arrival times (common random numbers).
+// Lab draws never touch the legacy streams, so arrivals, flakes and faults keep
+// their legacy draws, and every strategy over the same seed sees the same
+// changes (common random numbers). Truth (risk, brokenness, bursts) uses PCG
+// (seed, 8); score noise uses (seed, 10) so a noise sweep keeps the truth; and
+// invalidations use (seed, 9). Each run's duration is derived from the seed,
+// the tested tree and the attempt number, so a strategy that skips a run (tree
+// dedupe) does not shift the durations of later runs.
 type LabConfig struct {
-	Risk     RiskModel
-	Duration DurationModel
-	Bursts   BurstModel
-	Strategy LabStrategy
+	Risk         RiskModel
+	Duration     DurationModel
+	Bursts       BurstModel
+	Invalidation InvalidationModel
+	Strategy     LabStrategy
+}
+
+// InvalidationModel adds mid-flight invalidation sources that the legacy
+// RepushRate (which fires within a second of arrival) does not exercise. Each
+// trusted change independently draws whether it will be re-pushed and whether
+// its author will request a dequeue; the clock starts when the change first
+// enters a started batch, and the event fires Delay later if the change is
+// still queued. A re-push changes the head (head-changed dequeue and a
+// re-enqueue); a dequeue request removes the change for good.
+type InvalidationModel struct {
+	RepushRate, DequeueRate float64
+	Delay                   DelayModel
+}
+
+// DelayModel is "uniform" on [0, 2·Mean) or "exponential" with Mean, clamped to
+// 10·Mean. Every draw is at least one nanosecond.
+type DelayModel struct {
+	Kind string
+	Mean time.Duration
+}
+
+func (d DelayModel) draw(r *rand.Rand) time.Duration {
+	x := r.Float64()
+	var f float64
+	switch d.Kind {
+	case "exponential":
+		f = min(-math.Log(1-x), 10)
+	default:
+		f = 2 * x
+	}
+	return max(time.Nanosecond, time.Duration(f*float64(d.Mean)))
 }
 
 // RiskModel draws a true failure probability per trusted change. Kind "" keeps
@@ -72,9 +109,16 @@ type BurstModel struct {
 // changes stays at or above the target. It never exceeds Planner.BatchMaxSize.
 // When every waiting change fits, the configured maximum is passed unchanged so
 // the planner's own BatchMaxWait logic is preserved.
+//
+// BacklogGuard keeps the configured BatchMaxSize, disabling both risk sizing
+// and the production BatchTargetPassRate for that pass, whenever at least
+// BatchMaxSize unbatched trusted changes are waiting. A full batch's worth of
+// backlog is a queue-observable sign of high utilisation, where shrinking fresh
+// batches cuts serial throughput. It is a candidate rule, not production code.
 type LabStrategy struct {
 	TreeDedupe      bool
 	RiskBatchTarget float64
+	BacklogGuard    bool
 }
 
 func (c LabConfig) validate(cfg Config) error {
@@ -118,6 +162,13 @@ func (c LabConfig) validate(cfg Config) error {
 	if bad(b.Fraction) || b.Fraction < 0 || b.Fraction > 1 || b.Fraction > 0 && b.Size < 1 || b.Spread < 0 {
 		return fmt.Errorf("invalid burst model")
 	}
+	v := c.Invalidation
+	if bad(v.RepushRate) || bad(v.DequeueRate) || v.RepushRate < 0 || v.RepushRate > 1 || v.DequeueRate < 0 || v.DequeueRate > 1 {
+		return fmt.Errorf("invalidation rates must be between 0 and 1")
+	}
+	if v.RepushRate+v.DequeueRate > 0 && (v.Delay.Mean <= 0 || v.Delay.Kind != "uniform" && v.Delay.Kind != "exponential") {
+		return fmt.Errorf("invalidation requires a uniform or exponential delay with a positive mean")
+	}
 	t := c.Strategy.RiskBatchTarget
 	if bad(t) || t < 0 || t >= 1 {
 		return fmt.Errorf("risk batch target must be in [0, 1)")
@@ -132,17 +183,26 @@ func (c LabConfig) MarshalJSON() ([]byte, error) {
 			"low_rate": c.Risk.LowRate, "high_rate": c.Risk.HighRate, "high_fraction": c.Risk.HighFr, "score_noise": c.Risk.ScoreNoise},
 		"duration": map[string]any{"kind": c.Duration.Kind, "median_seconds": c.Duration.Median.Seconds(),
 			"sigma": c.Duration.Sigma, "fail_fast_fraction": c.Duration.FailFastFraction},
-		"bursts":   map[string]any{"fraction": c.Bursts.Fraction, "size": c.Bursts.Size, "spread_seconds": c.Bursts.Spread.Seconds()},
-		"strategy": map[string]any{"tree_dedupe": c.Strategy.TreeDedupe, "risk_batch_target": c.Strategy.RiskBatchTarget},
+		"bursts": map[string]any{"fraction": c.Bursts.Fraction, "size": c.Bursts.Size, "spread_seconds": c.Bursts.Spread.Seconds()},
+		"invalidation": map[string]any{"repush_rate": c.Invalidation.RepushRate, "dequeue_rate": c.Invalidation.DequeueRate,
+			"delay_kind": c.Invalidation.Delay.Kind, "delay_mean_seconds": c.Invalidation.Delay.Mean.Seconds()},
+		"strategy": map[string]any{"tree_dedupe": c.Strategy.TreeDedupe, "risk_batch_target": c.Strategy.RiskBatchTarget, "backlog_guard": c.Strategy.BacklogGuard},
 	})
 }
 
 // labState is per-simulation lab bookkeeping. trees holds the latest completed
 // result per tree; seen records every tree that has completed at least once.
 type labState struct {
-	rng          *rand.Rand
-	burstCenters []time.Duration
-	trees        map[string]bool
+	rng, scores, invalidations *rand.Rand
+	burstCenters               []time.Duration
+	trees                      map[string]bool
+}
+
+// labInvalidation is one change's pending mid-flight invalidation. Zero delays
+// mean none; armed is set when the change first enters a started batch.
+type labInvalidation struct {
+	repushIn, dequeueIn time.Duration
+	armed               bool
 }
 
 // labJob tags a ledger entry. A deduplicated job never occupies a runner.
@@ -159,7 +219,8 @@ type labJob struct {
 }
 
 func newLabState(cfg Config) *labState {
-	l := &labState{rng: rand.New(rand.NewPCG(cfg.Seed, 8)), trees: make(map[string]bool)}
+	l := &labState{rng: rand.New(rand.NewPCG(cfg.Seed, 8)), scores: rand.New(rand.NewPCG(cfg.Seed, 10)),
+		invalidations: rand.New(rand.NewPCG(cfg.Seed, 9)), trees: make(map[string]bool)}
 	if b := cfg.Lab.Bursts; b.Fraction > 0 && cfg.ArrivalWindow > 0 {
 		n := max(1, int(math.Round(b.Fraction*float64(cfg.PRs)/float64(b.Size))))
 		for range n {
@@ -187,9 +248,24 @@ func (s *simulation) drawChange(p *pullRequest, legacyBroken bool, legacyDelay t
 	if cfg.Risk.Kind != "" {
 		p.broken = lab.rng.Float64() < p.risk
 	}
+	// Draw the noise unconditionally so every noise level sees the same z.
+	z := lab.scores.NormFloat64()
 	p.score = p.risk
 	if cfg.Risk.ScoreNoise > 0 {
-		p.score = sigmoid(logit(p.risk) + cfg.Risk.ScoreNoise*lab.rng.NormFloat64())
+		p.score = sigmoid(logit(p.risk) + cfg.Risk.ScoreNoise*z)
+	}
+	// Likewise draw every invalidation variate, so rate sweeps stay paired.
+	v := cfg.Invalidation
+	repush, dequeue := lab.invalidations.Float64(), lab.invalidations.Float64()
+	repushIn, dequeueIn := v.Delay.draw(lab.invalidations), v.Delay.draw(lab.invalidations)
+	if repush < v.RepushRate || dequeue < v.DequeueRate {
+		p.labInvalidation = &labInvalidation{}
+		if repush < v.RepushRate {
+			p.labInvalidation.repushIn = repushIn
+		}
+		if dequeue < v.DequeueRate {
+			p.labInvalidation.dequeueIn = dequeueIn
+		}
 	}
 	delay := legacyDelay
 	if len(lab.burstCenters) > 0 && lab.rng.Float64() < cfg.Bursts.Fraction {
@@ -240,8 +316,11 @@ func gammaDraw(r *rand.Rand, shape float64) float64 {
 }
 
 // runDuration draws a run's service time. Legacy workloads use ciDuration
-// unchanged; lab workloads draw from the lab stream and apply fail-fast.
-func (s *simulation) runDuration(success bool) time.Duration {
+// unchanged. Lognormal draws come from a generator keyed by the seed, the tested
+// tree and the attempt, so the same tree's nth attempt has the same duration in
+// every strategy arm regardless of how many runs another arm skipped. Fail-fast
+// applies to both.
+func (s *simulation) runDuration(tree string, attempt uint64, success bool) time.Duration {
 	if s.lab == nil {
 		return s.ciDuration()
 	}
@@ -249,7 +328,7 @@ func (s *simulation) runDuration(success bool) time.Duration {
 	var d time.Duration
 	switch m.Kind {
 	case "lognormal":
-		f := math.Exp(m.Sigma * s.lab.rng.NormFloat64())
+		f := math.Exp(m.Sigma * runRNG(s.cfg.Seed, tree, attempt).NormFloat64())
 		f = min(max(f, 0.25), 3)
 		d = time.Duration(float64(m.Median) * f)
 	default:
@@ -259,6 +338,43 @@ func (s *simulation) runDuration(success bool) time.Duration {
 		d = max(time.Second, time.Duration(float64(d)*m.FailFastFraction))
 	}
 	return d
+}
+
+// runRNG is a generator for one (seed, tree, attempt) run identity.
+func runRNG(seed uint64, tree string, attempt uint64) *rand.Rand {
+	h := sha256.Sum256(fmt.Appendf(nil, "%d/%s/%d", seed, tree, attempt))
+	return rand.New(rand.NewPCG(binary.BigEndian.Uint64(h[:8]), binary.BigEndian.Uint64(h[8:16])))
+}
+
+// rerunDuration draws the duration of an explicit same-SHA rerun from the
+// previous attempt's ledger tag.
+func (s *simulation) rerunDuration(sha string, success bool) time.Duration {
+	run := s.tests[sha]
+	if s.lab == nil || run == nil || run.job == nil || run.job.lab == nil {
+		return s.runDuration("", 0, success)
+	}
+	return s.runDuration(run.job.lab.tree, run.job.attempt+1, success)
+}
+
+// labBatchStarted arms each member's pending invalidation the first time it
+// enters a started batch.
+func (s *simulation) labBatchStarted(prs []queue.BatchPR) {
+	if s.lab == nil {
+		return
+	}
+	for _, pr := range prs {
+		v := s.prs[pr.PR].labInvalidation
+		if v == nil || v.armed {
+			continue
+		}
+		v.armed = true
+		if v.repushIn > 0 {
+			s.schedule(s.now.Add(v.repushIn), repush, pr.PR, "")
+		}
+		if v.dequeueIn > 0 {
+			s.schedule(s.now.Add(v.dequeueIn), labDequeue, pr.PR, "")
+		}
+	}
 }
 
 // treeKey hashes the exact file tree of a test commit. Commit SHAs differ for
@@ -303,7 +419,7 @@ func (s *simulation) labSubmit(sha string, run *testRun, batch *queue.Batch) {
 		return
 	}
 	tag.plannedSuccess = run.success
-	s.submitCI(sha, s.runDuration(run.success))
+	s.submitCI(sha, s.runDuration(tree, 1, run.success))
 	run.job.lab = tag
 }
 
@@ -330,28 +446,47 @@ func (s *simulation) labCompleted(job *ciJob, success bool) {
 // risk-sizing strategy it is exactly cfg.Planner.
 func (s *simulation) plannerConfig() queue.Config {
 	cfg := s.cfg.Planner
-	if s.lab == nil || s.cfg.Lab.Strategy.RiskBatchTarget == 0 {
+	if s.lab == nil {
 		return cfg
 	}
-	cfg.BatchMaxSize = s.riskBatchSize()
+	strategy := s.cfg.Lab.Strategy
+	if strategy.RiskBatchTarget == 0 && !strategy.BacklogGuard {
+		return cfg
+	}
+	waiting := s.waitingTrusted()
+	if strategy.BacklogGuard && len(waiting) >= max(1, cfg.BatchMaxSize) {
+		cfg.BatchTargetPassRate = 0
+		return cfg
+	}
+	if strategy.RiskBatchTarget > 0 {
+		cfg.BatchMaxSize = s.riskBatchSize(waiting)
+	}
 	return cfg
 }
 
-func (s *simulation) riskBatchSize() int {
-	limit := max(1, s.cfg.Planner.BatchMaxSize)
-	target := s.cfg.Lab.Strategy.RiskBatchTarget
+// waitingTrusted lists unbatched trusted entries in queue order.
+func (s *simulation) waitingTrusted() []int {
 	batched := make(map[int]bool)
 	for _, b := range s.state.Batches() {
 		for _, pr := range b.PRs {
 			batched[pr.PR] = true
 		}
 	}
-	pass, k := 1.0, 0
+	var waiting []int
 	for _, entry := range s.state.Entries {
-		if batched[entry.PR] || s.prs[entry.PR].untrusted {
-			continue
+		if !batched[entry.PR] && !s.prs[entry.PR].untrusted {
+			waiting = append(waiting, entry.PR)
 		}
-		pass *= 1 - s.prs[entry.PR].score
+	}
+	return waiting
+}
+
+func (s *simulation) riskBatchSize(waiting []int) int {
+	limit := max(1, s.cfg.Planner.BatchMaxSize)
+	target := s.cfg.Lab.Strategy.RiskBatchTarget
+	pass, k := 1.0, 0
+	for _, pr := range waiting {
+		pass *= 1 - s.prs[pr].score
 		if k > 0 && pass < target {
 			return k
 		}
@@ -367,6 +502,10 @@ func (s *simulation) riskBatchSize() int {
 
 // LabMetrics is the per-run ledger summary. Minutes are runner-minutes; a run
 // contributed when it is the final, uncancelled run of a tested SHA that landed.
+//
+// CancelledResidualMinutes is residual waste: the elapsed time charged to runs
+// before they were cancelled. It is not the time cancellation recovered; that
+// is the paired difference against an arm without cancellation support.
 type LabMetrics struct {
 	Landed, Dequeued        int
 	Runs, DedupeHits        int
@@ -380,7 +519,7 @@ type LabMetrics struct {
 	WasteFraction           float64
 	FailedMinutes           float64
 	InvalidatedMinutes      float64
-	CancelledMinutes        float64
+	CancelledResidualMinutes float64
 	SupersededMinutes       float64
 	BisectionRuns           int
 	BisectionMinutes        float64
@@ -449,7 +588,7 @@ func (s *simulation) labMetrics(merged int) *LabMetrics {
 		m.WastedMinutes += minutes
 		switch {
 		case job.cancelled:
-			m.CancelledMinutes += minutes
+			m.CancelledResidualMinutes += minutes
 		case !job.finished.IsZero() && !job.success:
 			m.FailedMinutes += minutes
 		case run != nil && run.landed:

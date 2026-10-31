@@ -148,7 +148,7 @@ func (s *simulation) rerunFailedCI(sha string) bool {
 		run.success = false
 	}
 	// Keep done through submit so the ledger identifies a rerun.
-	s.submitCI(sha, s.runDuration(run.success))
+	s.submitCI(sha, s.rerunDuration(sha, run.success))
 	s.tagRerun(sha)
 	run.done = false
 	s.result.CIReruns++
