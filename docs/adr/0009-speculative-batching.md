@@ -305,11 +305,12 @@ equal length afterwards, both under the same CI configuration. The plan, metrics
 and log are in [the dogfooding report](../research/phase2-dogfood.md).
 
 **2026-10-31: experiment stopped by the owner.** Before period B began, the
-project owner stopped the A/B comparison. Period A had run its full 14 days.
-It landed 131 changes, 21 of them from chain position 2 or deeper and 3 from
-position 3 or deeper. Daily audits found 0 incorrect landings. That settles the
-correctness question at depth 4 on a live repository. Period B (depth 1) was
-not run, so the performance comparison this section required was never made.
+project owner stopped the A/B comparison. Period A ran just under its 14 days
+(about 13.95), with its landing and engagement gates met. It landed 131 changes,
+21 of them from chain position 2 or deeper and 3 from position 3 or deeper.
+Daily audits found no incorrect landings at depth 4 on this live repository.
+Period B (depth 1) was not run, so the performance comparison this section
+required was never made.
 
 - **This repository's queue** stays at `max_depth: 4`.
 - **The product default** stays at 1. Repositories opt in to depth 4.
