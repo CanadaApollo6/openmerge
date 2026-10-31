@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"errors"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -37,14 +36,4 @@ func (s *Store) UpdateTreeDedupeShadow(ctx context.Context, q QueueID, update fu
 		_, err = tx.Exec(ctx, `UPDATE observations SET value = $3 WHERE queue_id = $1 AND key = $2`, q, TreeDedupeShadowKey, next)
 		return err
 	})
-}
-
-// readTreeDedupeShadow returns the raw ledger, or nil when the queue has none.
-func readTreeDedupeShadow(ctx context.Context, tx pgx.Tx, q QueueID) ([]byte, error) {
-	var raw []byte
-	err := tx.QueryRow(ctx, `SELECT value FROM observations WHERE queue_id = $1 AND key = $2`, q, TreeDedupeShadowKey).Scan(&raw)
-	if errors.Is(err, pgx.ErrNoRows) || err == nil && len(raw) == 0 {
-		return nil, nil
-	}
-	return raw, err
 }
