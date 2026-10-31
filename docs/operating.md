@@ -397,6 +397,10 @@ suite's `head_branch` exactly equals the batch's test ref name, for example
 by that push report this branch name; the repository's
 [CI workflow](../.github/workflows/ci.yml) enables these pushes.
 
+To run only a light suite on PRs and the full required suite on queue refs, see
+the [queue-only full CI guide](guides/queue-only-ci.md). It covers which check
+names a ruleset may require, workflow and ruleset examples, and migration.
+
 Each build publishes a unique tested SHA: a composed commit for merge, squash,
 or rebase, or an empty marker above the pinned head for fast-forward. The SHA
 and suite branch together bind check runs to that queue execution. A contributor

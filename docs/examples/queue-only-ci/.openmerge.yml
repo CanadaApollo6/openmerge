@@ -1,0 +1,16 @@
+# Copy to your repository root as .openmerge.yml (default branch).
+# Queue-only full CI: `pr-light` gates admission on the PR head; only the
+# queue-tested `queue-full` check gates landing. See docs/guides/queue-only-ci.md.
+version: 1
+queues:
+  - name: default
+    enter_when:
+      - "-draft"
+      - check-success = pr-light
+    merge_when:
+      - check-success = queue-full
+    merge_method: squash
+    check_timeout: 1h
+    batch:
+      max_size: 4
+      max_wait: 2m

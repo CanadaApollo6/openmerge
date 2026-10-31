@@ -1,0 +1,50 @@
+# Copy to .github/workflows/queue-full.yml in your repository.
+# Full required suite, run only on OpenMerge's queue test refs. `queue-full` is
+# the only check name the ruleset and `merge_when` require.
+# See docs/guides/queue-only-ci.md.
+name: queue-full
+
+on:
+  push:
+    # No `paths:` / `paths-ignore:` filter: a required check that never runs
+    # leaves the batch waiting until `check_timeout`.
+    branches: ["openmerge/queue/**"]
+
+permissions:
+  contents: read
+
+# Deliberately no `concurrency:` block. Every queue build has its own ref and
+# SHA, and OpenMerge cancels invalidated speculative builds itself. A shared
+# group with cancel-in-progress would cancel other batches' required runs.
+
+jobs:
+  test:
+    name: test (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Replace with your full suite: integration, end-to-end, race tests.
+      - run: make test-full SHARD=${{ matrix.shard }} SHARDS=3
+
+  # One stable required name, whatever the matrix size. It runs even when a
+  # shard fails or is cancelled, and fails unless every shard succeeded.
+  queue-full:
+    name: queue-full
+    needs: [test]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every shard to succeed
+        env:
+          RESULT: ${{ needs.test.result }}
+        run: |
+          echo "test matrix result: $RESULT"
+          test "$RESULT" = success
