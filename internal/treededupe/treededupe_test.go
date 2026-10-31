@@ -256,6 +256,162 @@ func TestLedgerReusesOnlyTrustedSuccessesAndConfirmedFailures(t *testing.T) {
 	})
 }
 
+// TestLedgerFollowsResultOrder pins Astra round 1: the newest result or
+// revocation for a key decides reuse regardless of which build started first,
+// and a verdict always reflects the build's current terminal result.
+func TestLedgerFollowsResultOrder(t *testing.T) {
+	// A starts before B; the closures order their results.
+	twoBuilds := func(results func(l *Ledger)) Build {
+		var l Ledger
+		l.ObserveBuild(build("A", 'a', 0, "k"))
+		l.ObserveBuild(build("B", 'b', 1, "k"))
+		results(&l)
+		l.ObserveBuild(build("C", 'c', 30, "k"))
+		return l.Builds[2]
+	}
+	singletonFail := func(l *Ledger, c byte, minute int) {
+		l.find(sha(c)).Singleton = true // confirmed: no retry will revisit it
+		l.ObserveOutcome(sha(c), at(minute), false)
+	}
+	cases := []struct {
+		name    string
+		results func(l *Ledger)
+		hit     string
+		source  string
+	}{
+		{"B succeeds then A fails unconfirmed", func(l *Ledger) {
+			l.ObserveOutcome(sha('b'), at(10), true)
+			l.ObserveOutcome(sha('a'), at(20), false)
+		}, "", ""},
+		{"B succeeds then A fails confirmed", func(l *Ledger) {
+			l.ObserveOutcome(sha('b'), at(10), true)
+			singletonFail(l, 'a', 20)
+		}, WouldReuseFailure, "A"},
+		{"B succeeds then A's success is revoked", func(l *Ledger) {
+			l.ObserveOutcome(sha('a'), at(5), true)
+			l.ObserveOutcome(sha('b'), at(10), true)
+			l.ObserveReopened(sha('a'))
+		}, "", ""},
+		{"B fails confirmed then A succeeds", func(l *Ledger) {
+			singletonFail(l, 'b', 10)
+			l.ObserveOutcome(sha('a'), at(20), true)
+		}, WouldReuseSuccess, "A"},
+		{"A succeeds then B's confirmed failure is revoked", func(l *Ledger) {
+			singletonFail(l, 'b', 5)
+			l.ObserveOutcome(sha('a'), at(10), true)
+			l.ObserveReopened(sha('b'))
+		}, "", ""},
+		{"revoked result replaced by a success decides again", func(l *Ledger) {
+			l.ObserveOutcome(sha('b'), at(10), true)
+			l.ObserveOutcome(sha('a'), at(20), true)
+			l.ObserveReopened(sha('a'))
+			l.ObserveOutcome(sha('b'), at(25), false) // B replaced too, unconfirmed
+			l.ObserveOutcome(sha('a'), at(28), true)
+		}, WouldReuseSuccess, "A"},
+		{"repeated poll of an older result does not reorder", func(l *Ledger) {
+			l.ObserveOutcome(sha('b'), at(10), true)
+			l.ObserveOutcome(sha('a'), at(20), false)
+			l.ObserveOutcome(sha('b'), at(25), true)
+		}, "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := twoBuilds(tc.results)
+			if c.Hit != tc.hit || c.SourceBatchID != tc.source {
+				t.Fatalf("C hit=%q source=%q, want %q from %q", c.Hit, c.SourceBatchID, tc.hit, tc.source)
+			}
+		})
+	}
+	t.Run("replacement result keeps the first terminal duration", func(t *testing.T) {
+		var l Ledger
+		l.ObserveBuild(build("A", 'a', 0, "k"))
+		l.ObserveOutcome(sha('a'), at(10), true)
+		l.ObserveReopened(sha('a'))
+		l.ObserveOutcome(sha('a'), at(25), true)
+		l.ObserveBuild(build("C", 'c', 30, "k"))
+		if c := l.Builds[1]; c.Hit != WouldReuseSuccess || c.AvoidableSeconds != 600 {
+			t.Fatalf("C = %+v", c)
+		}
+	})
+	t.Run("evicted newer result still outranks a retained older one", func(t *testing.T) {
+		var l Ledger
+		l.ObserveBuild(build("A", 'a', 0, "k"))
+		l.ObserveBuild(build("B", 'b', 1, "k"))
+		l.ObserveOutcome(sha('b'), at(10), true)
+		l.ObserveOutcome(sha('a'), at(20), false) // newest, unconfirmed
+		for i := range MaxBuilds - 2 {
+			l.ObserveBuild(Build{At: at(21), BatchID: "f", SHA: fmt.Sprintf("%040d", i), Kind: KindBatch, Key: "filler"})
+		}
+		l.ObserveBuild(build("C", 'c', 30, "k")) // evicts A
+		if c := l.Builds[len(l.Builds)-1]; c.Hit != "" || l.Builds[0].BatchID != "B" {
+			t.Fatalf("C reused B past evicted A: %+v first=%s", c, l.Builds[0].BatchID)
+		}
+		if l.Floor["k"] == 0 || l.Floor["filler"] != 0 {
+			t.Fatalf("floor = %v", l.Floor)
+		}
+	})
+}
+
+// TestLedgerVerdictTracksReplacementResult pins Astra round 1: a reopen clears
+// a verdict and the replacement terminal result recomputes it.
+func TestLedgerVerdictTracksReplacementResult(t *testing.T) {
+	setup := func(retry bool) *Ledger {
+		var l Ledger
+		l.ObserveBuild(build("b1", '1', 0, "k"))
+		l.ObserveOutcome(sha('1'), at(10), true)
+		b := build("b2", '2', 11, "k")
+		b.RetryConfigured = retry
+		l.ObserveBuild(b)
+		l.ObserveOutcome(sha('2'), at(20), true)
+		if s := summary(l); s.Agreed != 1 {
+			t.Fatalf("initial summary = %+v", s)
+		}
+		l.ObserveReopened(sha('2'))
+		if s := summary(l); s.Agreed != 0 || s.Disagreed != 0 {
+			t.Fatalf("reopened summary kept a verdict: %+v", s)
+		}
+		return &l
+	}
+	t.Run("pass, reopen, fail without retry disagrees", func(t *testing.T) {
+		l := setup(false)
+		l.ObserveOutcome(sha('2'), at(30), false)
+		if s := summary(*l); s.Agreed != 0 || s.Disagreed != 1 {
+			t.Fatalf("summary = %+v", s)
+		}
+	})
+	t.Run("pass, reopen, unconfirmed fail awaits, confirmed fail disagrees", func(t *testing.T) {
+		l := setup(true)
+		l.ObserveOutcome(sha('2'), at(30), false)
+		if s := summary(*l); s.Agreed != 0 || s.Disagreed != 0 {
+			t.Fatalf("unconfirmed summary = %+v", s)
+		}
+		l.ObserveConfirmedFailure("b2", sha('2'), at(40))
+		if s := summary(*l); s.Agreed != 0 || s.Disagreed != 1 {
+			t.Fatalf("confirmed summary = %+v", s)
+		}
+	})
+	t.Run("pass, reopen, pass agrees", func(t *testing.T) {
+		l := setup(false)
+		l.ObserveOutcome(sha('2'), at(30), true)
+		if s := summary(*l); s.Agreed != 1 || s.Disagreed != 0 {
+			t.Fatalf("summary = %+v", s)
+		}
+	})
+	t.Run("a repeated terminal poll changes nothing", func(t *testing.T) {
+		l := setup(false)
+		l.ObserveOutcome(sha('2'), at(30), true)
+		before, err := l.Encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.ObserveOutcome(sha('2'), at(31), true)
+		l.ObserveReopened(sha('9'))
+		if after, _ := l.Encode(); string(after) != string(before) {
+			t.Fatalf("no-op poll rewrote the ledger:\n%s\n%s", before, after)
+		}
+	})
+}
+
 func TestLedgerBoundWindowAndCodec(t *testing.T) {
 	var l Ledger
 	for i := range MaxBuilds + 3 {
