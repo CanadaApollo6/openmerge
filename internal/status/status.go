@@ -11,6 +11,7 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
+	"github.com/CanadaApollo6/openmerge/internal/treededupe"
 )
 
 // Version is the public response schema version.
@@ -63,6 +64,10 @@ type Queue struct {
 	RulesSources       []RulesSource `json:"rules_sources,omitempty"`
 
 	ProvenanceCapacity *store.ProvenanceCapacity `json:"provenance_capacity,omitempty"`
+	// TreeDedupeShadow reports ADR 0015 shadow counts: what exact-tree dedupe
+	// would have reused. Nothing in it was applied. It aggregates only this
+	// queue's own test builds and keys, never cross-repository evidence.
+	TreeDedupeShadow *treededupe.Summary `json:"tree_dedupe_shadow,omitempty"`
 }
 
 // OutsidePush identifies durable evidence for a base move after fence settlement.
@@ -339,7 +344,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 		e.HeadSHA = head
 		known[n] = e
 	}
-	q := Queue{ProvenanceCapacity: j.ProvenanceCapacity, hasAuthorityPin: j.HasAuthorityPin || s.AuthorityPin() != nil, OutsideWarnings: ProjectOutsideWarnings(j.OutsideWarnings), OutsidePushes: outsidePushes, State: s.LifecycleState(), Installation: j.Key.Installation, Repository: j.Key.Repository, Base: j.Key.BaseBranch, Lane: j.Key.Lane,
+	q := Queue{ProvenanceCapacity: j.ProvenanceCapacity, TreeDedupeShadow: treeDedupeShadow(j.TreeDedupeShadow), hasAuthorityPin: j.HasAuthorityPin || s.AuthorityPin() != nil, OutsideWarnings: ProjectOutsideWarnings(j.OutsideWarnings), OutsidePushes: outsidePushes, State: s.LifecycleState(), Installation: j.Key.Installation, Repository: j.Key.Repository, Base: j.Key.BaseBranch, Lane: j.Key.Lane,
 		Watermark: watermark, BaseSHA: s.BaseSHA, PauseReason: sanitizer.Sanitize(s.PauseReason(queue.Config{})), PauseDetail: sanitizer.Sanitize(s.PauseDetail(queue.Config{})), Blocks: make([]Block, 0), Entries: make([]Entry, 0, len(s.Entries))}
 	for _, block := range s.Blocks(queue.Config{}) {
 		q.Blocks = append(q.Blocks, Block{Source: string(block.Source), Revision: block.Revision, Reason: sanitizer.Sanitize(block.Reason), Detail: sanitizer.Sanitize(block.Detail)})
@@ -972,4 +977,18 @@ type FailureEstimate struct {
 	Samples        int     `json:"samples"`
 	Rate           float64 `json:"rate"`
 	TargetPassRate float64 `json:"target_pass_rate,omitempty"`
+}
+
+// treeDedupeShadow summarizes a stored shadow ledger. Absent or unreadable
+// ledgers (including a newer format) are omitted rather than guessed.
+func treeDedupeShadow(raw []byte) *treededupe.Summary {
+	if raw == nil {
+		return nil
+	}
+	ledger, err := treededupe.Decode(raw)
+	if err != nil {
+		return nil
+	}
+	summary := ledger.Summarize(time.Time{}, time.Time{})
+	return &summary
 }
