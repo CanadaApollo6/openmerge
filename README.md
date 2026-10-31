@@ -21,6 +21,8 @@ Agents now open pull requests faster than CI and humans can land them. The merge
 ## Docs
 
 - [Roadmap](ROADMAP.md): principles, architecture, phases, and decisions
+- [Operating guide](docs/operating.md): deployment, recovery, and queue CI provenance
+- [Queue-only full CI](docs/guides/queue-only-ci.md): light PR suites, full suites only on queue refs
 - [Architecture decisions](docs/adr/README.md): the ADRs behind the design
 - [Research](docs/research/README.md): how Mergify works, and the wider merge-queue landscape
 

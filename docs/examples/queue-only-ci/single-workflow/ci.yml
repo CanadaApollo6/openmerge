@@ -1,0 +1,46 @@
+# Copy to .github/workflows/ci.yml in your repository.
+# One workflow; job-level `if:` picks the light or full suite.
+#
+# WARNING (forge-authority mode): on a pull request the `queue-full` job is
+# skipped, and GitHub reports a skipped job as "Success", even for a required
+# check. A ruleset requiring `queue-full` therefore does NOT block the merge
+# button with this layout. Prefer the two-workflow layout, or block manual
+# merges another way. See docs/guides/queue-only-ci.md.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: ["openmerge/queue/**"]
+
+permissions:
+  contents: read
+
+# PR runs share a group per PR and cancel superseded runs. Queue runs get a
+# group per SHA, so they are never cancelled by another push.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  pr-light:
+    name: pr-light
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: make lint test-unit
+
+  queue-full:
+    name: queue-full
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/openmerge/queue/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: make test-full
