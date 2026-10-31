@@ -17,6 +17,7 @@ An ADR records one significant decision: the context that forced it, what we cho
 | [0011](0011-cross-repository-dependent-changes.md) | Cross-repository dependent changes | Accepted |
 | [0012](0012-hosted-service-architecture.md) | Hosted service architecture | Accepted |
 | [0013](0013-ci-cost-executors.md) | Reduce CI cost with pluggable CI executors | Proposed |
+| [0015](0015-ci-efficiency-engine.md) | CI efficiency engine | Proposed |
 
 ## Writing a new ADR
 
