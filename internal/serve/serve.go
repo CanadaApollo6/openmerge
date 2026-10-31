@@ -75,6 +75,9 @@ type Options struct {
 	// OutsidePushHistory must use independent credentials, caches and locks;
 	// audit enrichment must never contend with settlement's Git operations.
 	OutsidePushHistory func(context.Context, store.QueueKey) (forge.OutsidePushHistory, error)
+	// TreeDedupeShadow is an internal ADR 0015 seam with no CLI or config
+	// surface. Nil, the production default, disables shadow observation.
+	TreeDedupeShadow *TreeDedupeShadow
 }
 
 // Server owns one serial reconciler/worker per target, with bounded concurrency.

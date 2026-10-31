@@ -57,6 +57,8 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		ctx = store.WithDependencyActivation(ctx, w.id, w.dependencies.binding)
 	}
 	completion := store.Done
+	// Nil unless the internal ADR 0015 shadow seam is set.
+	var shadow *treeDedupeCapture
 	// Completion survives shutdown cancellation. Uncertain writes are retried via
 	// their durable idempotency keys or resolved through the landing fence.
 	defer func() {
@@ -69,6 +71,8 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 			result = errors.Join(result, err)
 		}
 		w.publishProgress(time.Now())
+		// After completion, outside every queue transaction; never fails.
+		s.recordTreeDedupeShadow(w, shadow)
 	}()
 	actionCtx, cancel := context.WithTimeout(ctx, s.options.ActionTimeout)
 	defer cancel()
@@ -108,6 +112,7 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 	if err != nil {
 		return err
 	}
+	shadow = s.treeDedupeCapture(w, state, cfg)
 	if !store.Consequential(claim.Action) {
 		current := false
 		for _, action := range queue.Plan(cfg, state, time.Now()) {
@@ -327,6 +332,7 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		if err := emit(event); err != nil {
 			return err
 		}
+		shadow.add(event)
 		if w.provenance != nil {
 			if _, landed := event.(queue.Landed); landed {
 				if err := s.store.RecoverProvenance(actionCtx, w.id); err != nil {
