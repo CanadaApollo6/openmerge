@@ -8,9 +8,37 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request makes its older run pointless. Queue and main
+# runs are never cancelled: OpenMerge records and observes those attempts.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  check:
+  lint:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: make fmt
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.14.0
+
+  # Each shard is a separate 4-vCPU runner with its own Postgres. The test
+  # suite is CPU-bound, so more runners buy cores. scripts/test-shard.sh owns
+  # the package split and fails if this matrix drops a shard.
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [internal/store, internal/serve, internal/queue, rest]
     services:
       postgres:
         image: postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c
@@ -34,13 +62,41 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - run: make fmt
-      - run: make test
+      # Pull requests can read caches saved on main but not each other's, so
+      # only main saves (below). Without that every pull request starts cold.
+      - id: go-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: go-build-race-${{ matrix.shard }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-build-race-${{ matrix.shard }}-${{ hashFiles('go.mod', 'go.sum') }}-
+            go-build-race-${{ matrix.shard }}-
+      - name: make test (${{ matrix.shard }})
         env:
           OPENMERGE_TEST_DATABASE_URL: postgres://postgres:openmerge@localhost:5432/postgres?sslmode=disable
-      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+          SHARD: ${{ matrix.shard }}
+          SHARD_TOTAL: ${{ strategy.job-total }}
+        run: |
+          pkgs=$(sh scripts/test-shard.sh "$SHARD" "$SHARD_TOTAL")
+          make test TEST_PKGS="$(printf '%s\n' "$pkgs" | tr '\n' ' ')"
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          version: v2.14.0
+          path: ~/.cache/go-build
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
       - run: make build
       - run: docker compose -f deploy/compose.yaml config --quiet
         env:
@@ -52,6 +108,20 @@ jobs:
           OPENMERGE_API_TOKEN: ci-placeholder-token
       - run: docker build --tag openmerge:ci .
       - run: docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version'
+
+  # The required check. It keeps the name `check` that branch protection and
+  # .openmerge.yml require, and passes only when every job it needs succeeded:
+  # a failed, cancelled or skipped shard fails it.
+  check:
+    if: always()
+    needs: [lint, test, build]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "needs: $RESULTS"
+          test "$(printf '%s' "$RESULTS" | jq -r 'map(select(. != "success")) | length')" = 0
 
   sim-exits:
     runs-on: ubuntu-latest
