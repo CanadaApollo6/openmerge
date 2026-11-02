@@ -70,6 +70,43 @@ class ComparisonTest(unittest.TestCase):
         new = checkpoint(boundary_probes=[{"at": "t", "actions": [1]}])
         self.assertIsNotNone(replay.compare_checkpoints([old], [new], False)["first_boundary_divergence"])
 
+    def test_hold_field_exceptions_are_exact_zero_only(self):
+        nil_map = lambda typ: dict(type=typ, kind="map", zero=True, nil=True, value={})
+        allowed = {
+            "classifications": nil_map("queue.classifications"),
+            "authority": dict(type="*queue.authorityProjection", kind="ptr", zero=True, nil=True),
+            "heldRequests": nil_map("map[int]queue.HeldRequest"),
+            "dependencyWaits": nil_map("map[int]queue.DependencyWait"),
+        }
+        for name, zero in allowed.items():
+            with self.subTest(name=name):
+                self.assertEqual(replay.structural_differences(node({}), node({}) | dict(value={name: zero})), {})
+                for bad in (zero | dict(zero=False), zero | dict(nil=False), zero | dict(type="other"), node(False)):
+                    differences = replay.structural_differences(node({}), node({}) | dict(value={name: bad}))
+                    self.assertIn(name, differences)
+        unknown = replay.structural_differences(node({}), node({}) | dict(value={"brandNew": nil_map("x")}))
+        self.assertIn("brandNew", unknown)
+
+    def test_pending_conditions_exception_matches_any_observation_shard(self):
+        key = json.dumps(node(42), sort_keys=True)
+
+        def observations(entry):
+            shard = dict(type="map[int]fixture", kind="map", zero=False, nil=False, value={key: entry})
+            shards = dict(type="[]fixture", kind="array", zero=False, value=[node({}), shard])
+            return node({}) | dict(value={"observations": node({}) | dict(value={"shards": shards})})
+
+        old = observations(node({"Head": "abc"}))
+        empty = observations(node({"Head": "abc"}) | dict(value={"Head": node("abc"), "PendingConditions": node("")}))
+        self.assertEqual(replay.structural_differences(old, empty), {})
+        held = observations(node({"Head": "abc"}) | dict(value={"Head": node("abc"), "PendingConditions": node("ci")}))
+        differences = replay.structural_differences(old, held)
+        self.assertEqual(len(differences), 1)
+        self.assertTrue(next(iter(differences)).endswith(".PendingConditions"))
+        self.assertEqual(replay.exception_name(next(iter(differences))), "observations.shards[*].{pr}.PendingConditions")
+        # The wildcard covers only per-PR observation entries, not other paths.
+        elsewhere = node({}) | dict(value={"PendingConditions": node("")})
+        self.assertIn("PendingConditions", replay.structural_differences(node({}), elsewhere))
+
     def test_approval_exception_is_nil_only(self):
         old = checkpoint()
         value = json.loads(old)
