@@ -1,13 +1,15 @@
 TOOLCHAIN := $(if $(shell command -v go 2>/dev/null),,mise exec --)
 VERSION ?= $(shell git describe --tags --always --dirty)
+# CI narrows this to one shard's packages; see scripts/test-shard.sh.
+TEST_PKGS ?= ./...
 
-.PHONY: build test test-sim-exits test-sim-adaptive-full lint fmt check ci clean db db-stop
+.PHONY: build test test-sim-exits test-sim-adaptive-full lint fmt check ci clean db db-stop hooks
 
 build:
 	CGO_ENABLED=0 $(TOOLCHAIN) go build -ldflags "-X main.version=$(VERSION)" -o bin/openmerge ./cmd/openmerge
 
 test:
-	$(TOOLCHAIN) go test -race -short -count=1 -timeout=15m ./...
+	$(TOOLCHAIN) go test -race -short -count=1 -timeout=15m $(TEST_PKGS)
 
 # Required deterministic simulator workloads; the full adaptive exit is separate.
 test-sim-exits:
@@ -40,3 +42,7 @@ db:
 
 db-stop:
 	@sh scripts/dev-db.sh stop
+
+# Run gofmt, vet and lint before every push (.githooks/pre-push).
+hooks:
+	git config core.hooksPath .githooks

@@ -16,6 +16,7 @@ You need Go (the version in `go.mod`), `git`, and `make`. If you use [mise](http
 ```bash
 git clone https://github.com/CanadaApollo6/openmerge
 cd openmerge
+make hooks   # once per clone: gofmt, vet and lint run before every push
 make ci      # Go checks from both required CI jobs: check and sim-exits
 make build   # produces bin/openmerge
 ```
@@ -32,9 +33,13 @@ make build   # produces bin/openmerge
 | `make ci` | Runs `make check` and `make test-sim-exits` |
 | `make db` | Starts a disposable Postgres 18.6 container, or user-owned Postgres through mise |
 | `make db-stop` | Stops the development Postgres |
+| `make hooks` | Installs the pre-push hook in `.githooks/`: gofmt and golangci-lint on changed packages, `go vet` on the whole module. Bypass once with `git push --no-verify` |
 
-Both `check` and `sim-exits` are required CI checks. `make ci` combines their Go
-checks locally; CI also validates and smoke-tests the container build. `make test`
+Both `check` and `sim-exits` are required CI checks. `check` passes only when
+the `lint`, `build` and every `test` shard job succeed. CI splits `make test` into
+shards by package, each on its own runner; [`scripts/test-shard.sh`](scripts/test-shard.sh)
+owns the split. `make ci` combines the Go checks locally; CI also validates and
+smoke-tests the container build. `make test`
 uses `-short` to skip the legacy exits, 30-day adopter exits, cancellation savings,
 serial capacity comparison, and admission evidence. Safety regressions and
 first-day adopter/adaptive harnesses still run. When touching `internal/sim` or

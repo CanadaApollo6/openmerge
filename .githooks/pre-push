@@ -1,0 +1,39 @@
+#!/bin/sh
+# Fast local gate before a push: gofmt and lint on changed Go packages, vet
+# on the whole module. Install once per clone with `make hooks`. Bypass with --no-verify.
+set -eu
+
+# Prefer tools on PATH; fall back to the versions pinned in mise.toml.
+tool() {
+    if command -v "$1" >/dev/null 2>&1; then "$@"; else mise exec -- "$@"; fi
+}
+
+base=$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD~1 2>/dev/null || true)
+[ -n "$base" ] || exit 0
+
+files=$(git diff --name-only --diff-filter=ACMR "$base" HEAD -- '*.go')
+[ -n "$files" ] || exit 0
+
+# Only files that still exist in the working tree.
+present=""
+for f in $files; do [ -f "$f" ] && present="$present $f"; done
+[ -n "$present" ] || exit 0
+
+echo "pre-push: checking Go changes since $(git rev-parse --short "$base")"
+
+# shellcheck disable=SC2086
+unformatted=$(tool gofmt -l $present)
+if [ -n "$unformatted" ]; then
+    printf 'pre-push: run gofmt on these files:\n%s\n' "$unformatted" >&2
+    exit 1
+fi
+
+pkgs=$(for f in $present; do printf './%s\n' "$(dirname "$f")"; done | sort -u)
+
+# Whole-module vet type-checks every package and test file, so a changed
+# signature that breaks a caller elsewhere fails here, not in CI.
+tool go vet ./...
+# shellcheck disable=SC2086
+tool golangci-lint run --new-from-rev="$base" $pkgs
+
+echo "pre-push: ok"
