@@ -1,6 +1,6 @@
 # 0015. CI efficiency engine
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-31
 
 ## Context
@@ -221,6 +221,13 @@ recovery fixtures and rollback/backup boundaries. No slice bypasses prior ADR ga
    facts/closures and a successful recovery rehearsal; keep it off by default.
 6. **How to manage hermeticity drift?** Version contracts, audit with shadow runs,
    revoke on disagreement and fall back to full checks immediately.
+
+### Owner decision (2026-11-02)
+
+Riel St. Amand (`CanadaApollo6`) accepted this ADR on 2026-11-02 with the
+recommended answer to each open question above. Acceptance changes no live
+service: every implementation slice keeps its declared class, and Hold slices
+still need their own approval.
 
 ## Consequences
 

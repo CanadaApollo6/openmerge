@@ -1,6 +1,6 @@
 # 0013. Reduce CI cost with pluggable CI executors
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-28
 
 ## Context
@@ -397,6 +397,16 @@ on the executor interface and experiment data; it does not change today's defaul
 attestations and independent audit anchors, explicitly accepting that
 engine/provider compromise can falsify execution. Keep (c) off until that
 acceptance and qualification; retain independent forge CI as the default.
+
+### Owner decision (2026-11-02): trust model
+
+Riel St. Amand (`CanadaApollo6`) accepted the recommended trust model on
+2026-11-02: App-published forge checks plus signed journal attestations and
+independent audit anchors, explicitly accepting that an engine or provider
+compromise can falsify execution. This resolves the open question above and
+the ADR is now Accepted. Path (c) stays off until its implementation passes
+adversarial qualification, independent forge CI remains the default, and
+slice 3 keeps its Hold class.
 
 ## Consequences
 
