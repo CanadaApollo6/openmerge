@@ -19,6 +19,7 @@ An ADR records one significant decision: the context that forced it, what we cho
 | [0013](0013-ci-cost-executors.md) | Reduce CI cost with pluggable CI executors | Accepted |
 | [0014](0014-review-cards-risk-aware-batching.md) | Review cards and risk-aware batching | Accepted |
 | [0015](0015-ci-efficiency-engine.md) | CI efficiency engine | Accepted |
+| [0016](0016-ci-doctor.md) | Report where each repository's queue CI time goes | Proposed |
 
 ## Writing a new ADR
 
