@@ -1,6 +1,6 @@
 # 0014. Review cards and risk-aware batching
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-31
 
 ## Context
@@ -240,6 +240,13 @@ waives prior drain, activation, approval or provenance requirements.
 6. **How should unknown classification be improved?** Display precise authorized
    reason codes and add deterministic analyzer support; never offer an AI or
    author override to turn unknown into two-way.
+
+### Owner decision (2026-11-02)
+
+Riel St. Amand (`CanadaApollo6`) accepted this ADR on 2026-11-02 with the
+recommended answer to each open question above. Acceptance changes no live
+service: every implementation slice keeps its declared class, and Hold slices
+still need their own approval.
 
 ## Consequences
 
