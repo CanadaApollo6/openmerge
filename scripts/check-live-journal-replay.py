@@ -13,6 +13,7 @@ import itertools
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -404,7 +405,56 @@ STATE_EXCEPTIONS = {
         "reason": "PR #53 adds the audit-only outside-push projection; the pre-Stage-A export has none. Permit only its nil/zero state; any recorded outside push fails.",
         "reference": "PR #53; ADR 0007 outside-push isolation",
     },
+    "classifications": {
+        "reason": "Stage A 4a adds the change-classification projection; only an absent-to-nil map is allowed. Any recorded classification fails.",
+        "reference": "PR #66; ADR 0007 Stage A 4a",
+    },
+    "authority": {
+        "reason": "ADR 0008 adds the policy-authority projection; only an absent-to-nil pointer is allowed. Any authority state needs the ADR 0008 activation review.",
+        "reference": "PR #97; ADR 0008 PR 1 (Hold activation)",
+    },
+    "heldRequests": {
+        "reason": "Held queue requests are new state; only an absent-to-nil map is allowed. Any held request fails legacy comparison.",
+        "reference": "PR #163 (Hold)",
+    },
+    "observations.shards[*].{pr}.PendingConditions": {
+        "reason": "Cached PR observations gain pending entry conditions; only the absent-to-empty string is allowed. Any recorded pending condition fails.",
+        "reference": "PR #163 (Hold)",
+    },
+    "dependencyWaits": {
+        "reason": "ADR 0011 adds dependency waits; only an absent-to-nil map is allowed. Any recorded wait fails.",
+        "reference": "PR #195; ADR 0011 slice 4a-1 (Hold)",
+    },
 }
+# The exact zero node each exception must have. A populated value, a different
+# type or a non-nil empty container is a difference, not an exception.
+EXCEPTION_ZERO_NODES = {
+    "landingDecisions": dict(type="map[string]queue.LandingDecisionRecorded", kind="map", nil=True, value={}),
+    "approvalFacts": dict(type="queue.approvalProjection", kind="map", nil=True, value={}),
+    "approvalWaits": dict(type="map[queue.ChangeID]queue.ApprovalWait", kind="map", nil=True, value={}),
+    "receipts": dict(type="queue.receiptProjection", kind="map", nil=True, value={}),
+    "classifications": dict(type="queue.classifications", kind="map", nil=True, value={}),
+    "authority": dict(type="*queue.authorityProjection", kind="ptr", nil=True),
+    "heldRequests": dict(type="map[int]queue.HeldRequest", kind="map", nil=True, value={}),
+    "observations.shards[*].{pr}.PendingConditions": dict(type="string", kind="string", value=""),
+    "dependencyWaits": dict(type="map[int]queue.DependencyWait", kind="map", nil=True, value={}),
+}
+_SHARD_ENTRY = re.compile(r"^observations\.shards\[\d+\]\.\{[^{}]*\}\.")
+
+
+def exception_name(path):
+    """Map a per-PR observation path onto its STATE_EXCEPTIONS key."""
+    return _SHARD_ENTRY.sub("observations.shards[*].{pr}.", path)
+
+
+def is_allowed_exception(name, node):
+    key = exception_name(name)
+    if key not in STATE_EXCEPTIONS or not isinstance(node, dict) or node.get("zero") is not True:
+        return False
+    shape = EXCEPTION_ZERO_NODES.get(key)
+    return shape is None or all(k in node and exact(node[k], v) for k, v in shape.items())
+
+
 STRUCTURAL_DERIVED = {"changeRevisions": "ChangeRevisions", "batchRevisions": "BatchRevisions"}
 
 
@@ -440,10 +490,8 @@ def structural_differences(left, right, path=""):
         if not path and key in STRUCTURAL_DERIVED and (l is None or l.get("zero") is True or l.get("value") == {}):
             continue
         if key not in left or key not in right:
-            if key not in left and name in STATE_EXCEPTIONS and r.get("zero") is True:
-                nil_map_types = {"landingDecisions": "map[string]queue.LandingDecisionRecorded", "approvalFacts": "queue.approvalProjection", "approvalWaits": "map[queue.ChangeID]queue.ApprovalWait", "receipts": "queue.receiptProjection"}
-                if name not in nil_map_types or (r.get("type") == nil_map_types[name] and r.get("kind") == "map" and r.get("nil") is True and r.get("value") == {}):
-                    continue
+            if key not in left and is_allowed_exception(name, r):
+                continue
             differences[name] = dict(baseline=l, candidate=r, new_field=True)
         else:
             differences.update(structural_differences(l, r, name))
