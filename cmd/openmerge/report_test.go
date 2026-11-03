@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/cidoctor"
+	"github.com/CanadaApollo6/openmerge/internal/forge"
+	"github.com/CanadaApollo6/openmerge/internal/forge/fake"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/queuemetrics"
 	"github.com/CanadaApollo6/openmerge/internal/store"
@@ -240,7 +242,13 @@ func TestReportCIDoctorFlagsAndFile(t *testing.T) {
 		code  int
 		want  string
 	}{
-		{nil, 2, "--actions-file is required"},
+		{nil, 2, "choose exactly one"},
+		{[]string{"--actions-live", "--actions-file", "missing"}, 2, "choose exactly one"},
+		{[]string{"--actions-live"}, 2, "requires --config-dir"},
+		{[]string{"--actions-live", "--config-dir", "missing", "--app-id", "1"}, 2, "requires --config-dir"},
+		{[]string{"--actions-live", "--config-dir", "missing", "--actions-api-budget", "0"}, 2, "budget must be positive"},
+		{[]string{"--actions-file", "missing", "--actions-api-budget", "1"}, 2, "require --actions-live"},
+		{[]string{"--actions-live", "--config-dir", "missing"}, 2, "OPENMERGE_DATABASE_URL"},
 		{[]string{"--actions-file", "missing"}, 2, "OPENMERGE_DATABASE_URL"},
 		{[]string{"--actions-file", "missing", "--full-suite-minutes", "20"}, 2, "invalid command flags"},
 		{[]string{"--actions-file", "missing", "--database-url", "postgres://u:private-password@localhost/db"}, 1, "cannot open recorded Actions file"},
@@ -263,5 +271,65 @@ func TestReportCIDoctorFlagsAndFile(t *testing.T) {
 		if _, err := readActionsFile(p); err == nil || strings.Contains(err.Error(), "private-secret") {
 			t.Fatalf("unsafe parse error %v", err)
 		}
+	}
+}
+
+func TestCIDoctorLiveAndFileReportParity(t *testing.T) {
+	key := store.QueueKey{Installation: "1", Repository: "fixture/app", BaseBranch: "main"}
+	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	w := cidoctor.Window{Since: start, Until: start.Add(time.Hour)}
+	j := store.Journal{Key: key, Seed: queue.State{BaseBranch: "main"}, Events: []store.JournalEvent{
+		{RecordedAt: start, Event: queue.TestRefBuilt{BatchID: "b1", TestedSHA: "head", At: start}},
+		{RecordedAt: start, Event: queue.ChecksObserved{BatchID: "b1", TestedSHA: "head", Runs: []queue.CheckRun{{WorkflowRunID: 1}}}},
+	}}
+	recorded := cidoctor.Actions{Version: 1, Repository: key.Repository, DefaultBranch: "main", Runs: []cidoctor.Run{{ID: 1, Attempt: 1, Event: "push", HeadSHA: "head", HeadBranch: "openmerge/queue/main/b1", WorkflowID: 2, Path: ".github/workflows/ci.yml", CreatedAt: start, JobsComplete: true, Jobs: []cidoctor.Job{{ID: 3, Attempt: 1, Name: "test", CreatedAt: start, StartedAt: start, CompletedAt: start.Add(time.Minute), Conclusion: "success", Steps: []cidoctor.Step{{Name: "Run test", Number: 1, StartedAt: start, CompletedAt: start.Add(time.Minute), Conclusion: "success"}}}}}}}
+	f := fake.New()
+	repo := forge.RepoRef{Path: key.Repository}
+	f.Init(repo, "main", "openmerge/fence/main")
+	f.SetActions(repo, recorded.Runs)
+	live, err := cidoctor.ReadActions(t.Context(), f, j, w, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(recorded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "actions.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := readActionsFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := cidoctor.Compute(j, live, w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := cidoctor.Compute(j, file, w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := json.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("JSON differs\ngot %s\nwant %s", got, want)
+	}
+	var x, y bytes.Buffer
+	if err := cidoctor.WriteText(&x, a); err != nil {
+		t.Fatal(err)
+	}
+	if err := cidoctor.WriteText(&y, b); err != nil {
+		t.Fatal(err)
+	}
+	if x.String() != y.String() {
+		t.Fatal("text differs")
 	}
 }

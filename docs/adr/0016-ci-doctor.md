@@ -140,6 +140,18 @@ recorded report ([PR #222](https://github.com/CanadaApollo6/openmerge/pull/222))
 keeps the `cold-setup` threshold unchanged rather than lowering it to match the
 expectation.
 
+### Input correction (2026-11-03)
+
+Input 2 lists `needs` as a field of the Actions jobs API. It is not one: the
+jobs API returns no dependency graph and no required-check policy, and
+`long-pole` and `masked-skip` need both. The live reader
+([PR #224](https://github.com/CanadaApollo6/openmerge/pull/224)) therefore
+makes one more kind of read: through the Contents API, at the run's head SHA,
+it reads the run's workflow file (`.github/workflows/*.yml` or `*.yaml`) and
+the OpenMerge configuration file. The App already reads configuration this way.
+The reader refuses any other path. A file it cannot read produces a
+`dependency-graph` gap. CI doctor still reads no logs and no artifacts.
+
 ## Consequences
 
 Users get specific, checkable advice on their own workflows, which saves CI

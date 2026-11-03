@@ -26,14 +26,16 @@ var ErrNotFound = errors.New("no OpenMerge configuration found")
 // ErrMultipleFound means more than one supported configuration path exists.
 var ErrMultipleFound = errors.New("multiple OpenMerge configuration files found")
 
+// Paths lists the supported configuration locations in lookup order.
+var Paths = []string{
+	".openmerge.yml", ".openmerge.yaml", ".github/openmerge.yml", ".github/openmerge.yaml",
+}
+
 // Find reads all supported paths in order, rejecting ambiguous configurations.
 // A read error is never treated as an absent file.
 func Find(read func(path string) ([]byte, bool, error)) (path string, data []byte, err error) {
 	var found []string
-	paths := []string{
-		".openmerge.yml", ".openmerge.yaml", ".github/openmerge.yml", ".github/openmerge.yaml",
-	}
-	for _, candidate := range paths {
+	for _, candidate := range Paths {
 		contents, exists, readErr := read(candidate)
 		if readErr != nil {
 			return "", nil, fmt.Errorf("read %s: %w", candidate, readErr)
@@ -45,7 +47,7 @@ func Find(read func(path string) ([]byte, bool, error)) (path string, data []byt
 	}
 	switch len(found) {
 	case 0:
-		return "", nil, fmt.Errorf("%w; searched: %s", ErrNotFound, strings.Join(paths, ", "))
+		return "", nil, fmt.Errorf("%w; searched: %s", ErrNotFound, strings.Join(Paths, ", "))
 	case 1:
 		return path, data, nil
 	default:

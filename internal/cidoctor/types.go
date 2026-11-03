@@ -1,8 +1,12 @@
 // Package cidoctor derives advisory CI diagnostics from a journal and recorded
-// Actions metadata. It performs no I/O, scheduling, or forge mutations.
+// Actions metadata. Live collection performs reads only, never scheduling or forge mutations.
 package cidoctor
 
-import "time"
+import (
+	"time"
+
+	"github.com/CanadaApollo6/openmerge/internal/forge"
+)
 
 // CIDoctorVersion identifies the report and recorded Actions JSON contracts.
 const CIDoctorVersion = 1
@@ -27,55 +31,20 @@ type Actions struct {
 	Repository    string `json:"repository"`
 	DefaultBranch string `json:"default_branch"`
 	Runs          []Run  `json:"runs"`
+	Gaps          []Gap  `json:"gaps,omitempty"`
 }
 
-// Run records one workflow attempt. JobsComplete attests that every page was
-// recorded using the attempt-specific jobs endpoint.
-type Run struct {
-	ID           uint64    `json:"id"`
-	WorkflowID   uint64    `json:"workflow_id"`
-	Path         string    `json:"path"`
-	Attempt      uint64    `json:"run_attempt"`
-	Event        string    `json:"event"`
-	HeadSHA      string    `json:"head_sha"`
-	HeadBranch   string    `json:"head_branch"`
-	CreatedAt    time.Time `json:"created_at"`
-	JobsComplete bool      `json:"jobs_complete"`
-	Jobs         []Job     `json:"jobs"`
-	Graph        *Graph    `json:"graph,omitempty"`
-}
+// Run records one workflow attempt from the read-only forge reader.
+type Run = forge.ActionsRun
 
-// Graph is recorded from the workflow at HeadSHA. Keys and edges use expanded
-// jobs-API display names (including matrix members). Required is recorded from
-// the required-check policy at that revision, not inferred from job success.
-type Graph struct {
-	HeadSHA  string              `json:"head_sha"`
-	Source   string              `json:"source"`
-	Needs    map[string][]string `json:"needs"`
-	Required []string            `json:"required"`
-}
+// Job retains one job and its step timings.
+type Job = forge.ActionsJob
 
-// Job retains Actions timing, outcome, and runner identity for one job.
-type Job struct {
-	ID          uint64    `json:"id"`
-	Name        string    `json:"name"`
-	Attempt     uint64    `json:"run_attempt"`
-	CreatedAt   time.Time `json:"created_at"`
-	StartedAt   time.Time `json:"started_at"`
-	CompletedAt time.Time `json:"completed_at"`
-	Conclusion  string    `json:"conclusion"`
-	Labels      []string  `json:"labels"`
-	Steps       []Step    `json:"steps"`
-}
+// Step retains metadata for one Actions step.
+type Step = forge.ActionsStep
 
-// Step retains metadata from one jobs-API step.
-type Step struct {
-	Name        string    `json:"name"`
-	Number      int       `json:"number"`
-	StartedAt   time.Time `json:"started_at"`
-	CompletedAt time.Time `json:"completed_at"`
-	Conclusion  string    `json:"conclusion"`
-}
+// Graph records dependencies and required-check policy at the run head SHA.
+type Graph = forge.ActionsGraph
 
 // Window selects journal pushes recorded in [Since, Until).
 type Window struct{ Since, Until time.Time }

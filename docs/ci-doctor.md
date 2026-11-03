@@ -1,28 +1,35 @@
 # CI doctor report
 
 `openmerge report ci-doctor` reports where one queue's CI time goes and suggests
-workflow changes from recorded Actions job and step timings. It implements the
-recorded-data slice of [ADR 0016](adr/0016-ci-doctor.md), deploy class **Inert**.
+workflow changes from Actions job and step timings, read live or from a recording.
+It implements the live-reader slice of [ADR 0016](adr/0016-ci-doctor.md), deploy
+class **Inert**.
 It is an ADR 0015 T0 diagnostic. No planner, server, retry, cancellation, check
 result, or landing decision reads this report.
 
 The command reads the journal with the same restricted, bounded reader as
-[report savings](savings-report.md). It performs no migrations, writes, GitHub
-requests, log reads, or artifact reads. The Actions reader is a later slice.
+[report savings](savings-report.md). It performs no migrations or writes, and
+never reads job logs or artifacts. File mode makes no GitHub requests. Live mode
+uses the existing GitHub App installation client, ETag cache, and reporting quota
+budget. The server does not run this reader.
 
 ```sh
 openmerge report ci-doctor \
   --installation 12345 --repository acme/api \
   --since 2026-10-01T00:00:00Z --until 2026-11-01T00:00:00Z \
-  --actions-file actions.json \
+  --actions-live --config-dir "$HOME/.config/openmerge/my-app" \
   [--database-url "$OPENMERGE_DATABASE_URL"] \
-  [--base main] [--lane LANE] [--timeout 2m] [--json]
+  [--actions-api-budget 500] [--base main] [--lane LANE] [--timeout 2m] [--json]
 ```
 
 `--installation`, `--repository`, `--base`, and `--lane` select the exact journal
 queue key. `--since` is inclusive and required. `--until` is exclusive, defaults
-to now, and cannot be in the future. `--actions-file` is required. The file is
-limited to 64 MiB. `--full-suite-minutes` belongs to savings and is rejected here.
+to now, and cannot be in the future. Choose exactly one of `--actions-live` and
+`--actions-file actions.json`. The file is limited to 64 MiB. Live mode accepts
+`--config-dir` containing `app-id` and `private-key.pem`, or `--app-id ID` with
+`--private-key FILE`. It uses the positive numeric `--installation` as the App
+installation ID. No personal access token is used. `--full-suite-minutes` belongs
+to savings and is rejected here. `--timeout` covers both journal and live reads.
 Exit codes are `0` for success, `2` for usage, and `1` for read or computation
 failure. Flag errors never echo arguments. Database errors redact credentials.
 
@@ -39,6 +46,51 @@ there is no landing-based carry-in. Only journal events recorded before `until`
 are replayed. Jobs must have completed before `until`. Default-branch baselines
 must have been created within the window. The input file is part of the evidence;
 keep it when saving a report so the same closed window can be reproduced.
+
+## Live reads and gaps
+
+Live mode reads queue workflow runs **by journal-recorded run ID**, then reads
+jobs and steps from the attempt-specific endpoint for every attempt. It does not
+search for queue runs by SHA or branch. A push without identified runs remains a
+`missing-actions` gap. Run metadata must match the journal's tested SHA and queue
+branch before any jobs or files are fetched. The reader also lists default-branch
+push runs created in the window and reads their first-attempt jobs for the baseline.
+It does not fetch PR runs, so live mode cannot produce `duplicate-pr-run` advice.
+That comparison remains available in recorded-file mode.
+
+The initial cap is `DefaultActionsAPIBudget = 500`. `--actions-api-budget N`
+sets a positive cap on data requests, including pagination, file reads, and
+retries. Cached workflow and policy files at the same SHA are reused within a
+report. App identity reads and installation-token creation use the existing auth
+cache and are outside this data cap. Every request uses reporting quota priority,
+which yields capacity to active queues. Rate cooldowns produce `actions-rate-limit`
+gaps. The reader retries network and HTTP 5xx failures up to three times within
+the cap and timeout; persistent failures exit 1 with a sanitized message.
+
+A missing installation `actions` grant or HTTP 403/404 from an Actions endpoint
+produces an `actions-permission` gap and exits successfully. This includes deleted
+or expired runs, which GitHub may hide with 404. HTTP 403/404 from the
+repository itself, for example after access is revoked, produces an
+`actions-access` gap and exits successfully. Cap exhaustion produces
+`actions-budget` gaps for remaining identified runs. Incomplete job pagination
+produces `actions-data` gaps and never supplies findings. Baseline pagination must be complete before comparison; GitHub's
+1000-run search limit produces a `baseline-data` gap if it truncates the inventory.
+A run ID that appears twice across pages also produces a `baseline-data` gap,
+because a repeat can stand in for an omitted run.
+Use a shorter window when that happens.
+
+The reader fetches the workflow path and supported OpenMerge configuration paths
+at the queue run's head SHA, using Contents read. It refuses any path outside
+`.github/workflows/*.yml`, `.github/workflows/*.yaml`, and the configuration
+paths, and a refused path produces a `dependency-graph` gap. These files supply dependency
+and required-check evidence only. Literal job names and static Cartesian matrices
+with default display names are supported. Dynamic expressions, matrix include or
+exclude, and reusable workflows produce dependency gaps. Missing files and
+HTTP 403/404 on workflow or policy reads also produce dependency gaps. Persistent
+network or HTTP 5xx failures still fail the command. File reads never follow
+API download URLs. No workflow or policy is executed or changed.
+
+## Recorded Actions contract
 
 The JSON input has `version: 1`, `repository`, `default_branch`, and `runs`.
 `Run`, `Job`, `Step`, and `Graph` in
@@ -67,7 +119,9 @@ from start times. Missing graph, policy, or referenced jobs produces a
 `dependency-graph` gap and no `masked-skip` advice. A complete acyclic graph
 with consistent dependency timing is also required for `long-pole`. The fixture
 recorder reads the pinned workflow and `.openmerge.yml` from local Git history and accepts only the
-known independent-job and post-#217 aggregate shapes.
+known independent-job and post-#217 aggregate shapes. Live mode resolves the
+selected queue's required checks from its pinned OpenMerge policy. Unknown or
+ambiguous policies suppress `masked-skip` advice.
 
 ## Reading findings and observations
 

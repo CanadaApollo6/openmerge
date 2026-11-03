@@ -41,6 +41,7 @@ func Compute(j store.Journal, actions Actions, w Window) (Report, error) {
 	a := analyzer{report: Report{Version: CIDoctorVersion, Installation: j.Key.Installation, Repository: j.Key.Repository, BaseBranch: j.Key.BaseBranch, Lane: j.Key.Lane, Since: w.Since, Until: w.Until,
 		Thresholds:  map[string]float64{"MinimumRuns": MinimumRuns, "ColdSetupRatio": ColdSetupRatio, "LongPoleFraction": LongPoleFraction, "SiblingIdleFraction": SiblingIdleFraction, "SerialStepFraction": SerialStepFraction, "LongJobSeconds": LongJobSeconds, "CheckoutFraction": CheckoutFraction, "CheckoutSeconds": CheckoutSeconds, "RetryFraction": RetryFraction},
 		Assessments: []Assessment{}, Findings: []Finding{}, Jobs: []JobTiming{}, Gaps: []Gap{}}, series: map[string]*series{}}
+	a.report.Gaps = append(a.report.Gaps, actions.Gaps...)
 	pushes := journalPushes(j, w)
 	counts := map[string]int{}
 	for _, r := range actions.Runs {

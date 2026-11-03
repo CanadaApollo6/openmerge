@@ -55,6 +55,7 @@ type repository struct {
 // configuration is required.
 type Forge struct {
 	mu                          sync.Mutex
+	actions                     map[forge.RepoRef]*actionsState
 	dependencySources           map[dependencyKey]forge.DependencySource
 	identities                  identityState
 	writeRestrictions           map[forge.RepoRef]writeRestrictionState
