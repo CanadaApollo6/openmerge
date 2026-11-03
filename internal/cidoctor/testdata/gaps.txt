@@ -1,0 +1,184 @@
+OpenMerge CI doctor v1 (advisory, read-only)
+Queue: fixture/app main (installation 1; lane "")
+Window: 2026-10-01T00:00:00Z -> 2026-10-12T13:46:40Z (exclusive)
+Queue workflow runs: 8; gaps: 19
+Minutes at stake are measured comparisons, never projected savings. Findings overlap; do not sum them.
+
+Thresholds:
+  CheckoutFraction = 0.1
+  CheckoutSeconds = 60
+  ColdSetupRatio = 2
+  LongJobSeconds = 600
+  LongPoleFraction = 0.8
+  MinimumRuns = 10
+  RetryFraction = 0.05
+  SerialStepFraction = 0.7
+  SiblingIdleFraction = 0.5
+
+Findings:
+  None. Inspect sample counts and gaps before interpreting this as an improvement.
+
+Observations (medians; below 10 qualifying runs produces no finding):
+  checkout-cost | 99 .github/workflows/ci.yml | qualifying 7; triggered 0; runs [3 4 5 6 7 8 9]; comparison []
+    median_checkout_seconds = 60.000
+    median_largest_checkout_seconds = 30.000
+    median_runner_seconds = 1050.000
+    trigger_fraction = 0.000
+  cold-setup | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 6; triggered 0; runs [4 5 6 7 8 9]; comparison [1001 1002 1003 1004 1005 1006 1007 1008 1009]
+    median_baseline_setup_seconds = 30.000
+    median_queue_setup_seconds = 30.000
+    median_setup_ratio = 1.000
+    trigger_fraction = 0.000
+  cold-setup | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] | qualifying 7; triggered 0; runs [3 4 5 6 7 8 9]; comparison [1001 1002 1003 1004 1005 1006 1007 1008 1009]
+    median_baseline_setup_seconds = 30.000
+    median_queue_setup_seconds = 30.000
+    median_setup_ratio = 1.000
+    trigger_fraction = 0.000
+  duplicate-pr-run | 99 .github/workflows/ci.yml | qualifying 7; triggered 0; runs [3 4 5 6 7 8 9]; comparison [2003 2004 2005 2006 2007 2008 2009]
+    median_overlap_seconds = 0.000
+    trigger_fraction = 0.000
+  long-pole | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 6; triggered 6; runs [4 5 6 7 8 9]; comparison []
+    median_job_seconds = 930.000
+    median_sibling_idle_seconds = 810.000
+    trigger_fraction = 1.000
+  long-pole | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] | qualifying 7; triggered 0; runs [3 4 5 6 7 8 9]; comparison []
+    median_job_seconds = 120.000
+    median_sibling_idle_seconds = 0.000
+    trigger_fraction = 0.000
+  long-pole | 99 .github/workflows/ci.yml :: renamed [ubuntu-latest] | qualifying 1; triggered 1; runs [3]; comparison []
+    median_job_seconds = 930.000
+    median_sibling_idle_seconds = 810.000
+    trigger_fraction = 1.000
+  masked-skip | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 6; triggered 0; runs [2 5 6 7 8 9]; comparison []
+    median_dependencies = 1.000
+    trigger_fraction = 0.000
+  retry-habit | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 6; triggered 0; runs [4 5 6 7 8 9]; comparison []
+    median_job_seconds = 930.000
+    trigger_fraction = 0.000
+  retry-habit | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] | qualifying 7; triggered 0; runs [3 4 5 6 7 8 9]; comparison []
+    median_job_seconds = 120.000
+    trigger_fraction = 0.000
+  retry-habit | 99 .github/workflows/ci.yml :: renamed [ubuntu-latest] | qualifying 1; triggered 0; runs [3]; comparison []
+    median_job_seconds = 930.000
+    trigger_fraction = 0.000
+  serial-step | 99 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run actions/checkout@pinned | qualifying 6; triggered 0; runs [4 5 6 7 8 9]; comparison []
+    median_job_seconds = 930.000
+    median_step_fraction = 0.032
+    median_step_seconds = 30.000
+    trigger_fraction = 0.000
+  serial-step | 99 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run tests | qualifying 5; triggered 5; runs [4 6 7 8 9]; comparison []
+    median_job_seconds = 930.000
+    median_step_fraction = 0.968
+    median_step_seconds = 900.000
+    trigger_fraction = 1.000
+  serial-step | 99 .github/workflows/ci.yml :: check [ubuntu-latest] :: custom opaque command | qualifying 1; triggered 1; runs [5]; comparison []
+    median_job_seconds = 930.000
+    median_step_fraction = 0.968
+    median_step_seconds = 900.000
+    trigger_fraction = 1.000
+  serial-step | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] :: Run actions/checkout@pinned | qualifying 7; triggered 0; runs [3 4 5 6 7 8 9]; comparison []
+    median_job_seconds = 120.000
+    median_step_fraction = 0.250
+    median_step_seconds = 30.000
+    trigger_fraction = 0.000
+  serial-step | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] :: Run tests | qualifying 7; triggered 0; runs [3 4 5 6 7 8 9]; comparison []
+    median_job_seconds = 120.000
+    median_step_fraction = 0.750
+    median_step_seconds = 90.000
+    trigger_fraction = 0.000
+  serial-step | 99 .github/workflows/ci.yml :: renamed [ubuntu-latest] :: Run actions/checkout@pinned | qualifying 1; triggered 0; runs [3]; comparison []
+    median_job_seconds = 930.000
+    median_step_fraction = 0.032
+    median_step_seconds = 30.000
+    trigger_fraction = 0.000
+  serial-step | 99 .github/workflows/ci.yml :: renamed [ubuntu-latest] :: Run tests | qualifying 1; triggered 1; runs [3]; comparison []
+    median_job_seconds = 930.000
+    median_step_fraction = 0.968
+    median_step_seconds = 900.000
+    trigger_fraction = 1.000
+  time-split | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 6; triggered 6; runs [4 5 6 7 8 9]; comparison []
+    median_dispatch_seconds = 2.000
+    median_run_seconds = 900.000
+    median_setup_seconds = 30.000
+    median_wait_seconds = 3.000
+    trigger_fraction = 1.000
+  time-split | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] | qualifying 7; triggered 7; runs [3 4 5 6 7 8 9]; comparison []
+    median_dispatch_seconds = 2.000
+    median_run_seconds = 90.000
+    median_setup_seconds = 30.000
+    median_wait_seconds = 3.000
+    trigger_fraction = 1.000
+  time-split | 99 .github/workflows/ci.yml :: renamed [ubuntu-latest] | qualifying 1; triggered 1; runs [3]; comparison []
+    median_dispatch_seconds = 2.000
+    median_run_seconds = 900.000
+    median_setup_seconds = 30.000
+    median_wait_seconds = 3.000
+    trigger_fraction = 1.000
+
+Job time split and heuristic step classification (seconds):
+  run 2 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 3 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 3 attempt 1 | renamed | dispatch 2.0; wait 3.0; setup 30.0; run 900.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 900.0
+  run 4 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 900.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 900.0
+  run 4 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 5 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 900.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    custom opaque command | unknown/run | 900.0
+  run 5 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 6 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 900.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 900.0
+  run 6 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 7 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 900.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 900.0
+  run 7 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 8 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 900.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 900.0
+  run 8 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 9 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 900.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 900.0
+  run 9 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+
+Gaps (no extrapolation):
+  run 0 | missing-actions | openmerge/queue/main/b10 @ sha-10
+  run 1 | run-data | missing identity, incomplete jobs pagination, or run outside closed window
+  run 2 | job-timing | check: missing or inconsistent step timestamps
+  run 3 | dependency-graph | missing job or cyclic dependency in required graph
+  run 3 | warm-baseline | fast: fewer than 10 matching default-branch runs or zero median
+  run 3 | warm-baseline | renamed: fewer than 10 matching default-branch runs or zero median
+  run 4 | dependency-graph | missing graph and required-check policy at the run head SHA
+  run 4 | warm-baseline | check: fewer than 10 matching default-branch runs or zero median
+  run 4 | warm-baseline | fast: fewer than 10 matching default-branch runs or zero median
+  run 5 | warm-baseline | check: fewer than 10 matching default-branch runs or zero median
+  run 5 | warm-baseline | fast: fewer than 10 matching default-branch runs or zero median
+  run 6 | warm-baseline | check: fewer than 10 matching default-branch runs or zero median
+  run 6 | warm-baseline | fast: fewer than 10 matching default-branch runs or zero median
+  run 7 | warm-baseline | check: fewer than 10 matching default-branch runs or zero median
+  run 7 | warm-baseline | fast: fewer than 10 matching default-branch runs or zero median
+  run 8 | warm-baseline | check: fewer than 10 matching default-branch runs or zero median
+  run 8 | warm-baseline | fast: fewer than 10 matching default-branch runs or zero median
+  run 9 | warm-baseline | check: fewer than 10 matching default-branch runs or zero median
+  run 9 | warm-baseline | fast: fewer than 10 matching default-branch runs or zero median

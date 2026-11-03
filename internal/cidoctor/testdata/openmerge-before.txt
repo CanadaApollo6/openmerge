@@ -1,0 +1,740 @@
+OpenMerge CI doctor v1 (advisory, read-only)
+Queue: CanadaApollo6/openmerge main (installation evaluation; lane "")
+Window: 2026-10-01T00:00:00Z -> 2026-11-04T00:00:00Z (exclusive)
+Queue workflow runs: 20; gaps: 60
+Minutes at stake are measured comparisons, never projected savings. Findings overlap; do not sum them.
+
+Thresholds:
+  CheckoutFraction = 0.1
+  CheckoutSeconds = 60
+  ColdSetupRatio = 2
+  LongJobSeconds = 600
+  LongPoleFraction = 0.8
+  MinimumRuns = 10
+  RetryFraction = 0.05
+  SerialStepFraction = 0.7
+  SiblingIdleFraction = 0.5
+
+Findings:
+  long-pole | 385936461 .github/workflows/ci.yml :: check [ubuntu-latest] | 20 runs | 362.57 measured minutes at stake
+    runs: [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; triggered runs: [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; baseline/comparison runs: []
+    Sum of median sibling finish-to-last-job idle seconds per observed run; last-finisher proxy, not a projected saving.
+    Suggested fix: Shard the job, give it a larger runner, or split its slowest step.
+  serial-step | 385936461 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run make test | 20 runs | 79.67 measured minutes at stake
+    runs: [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; triggered runs: [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; baseline/comparison runs: []
+    Measured step time above 70% of job duration, only in jobs longer than 10 minutes.
+    Suggested fix: Split or parallelize the step. If it is a test suite, shard it by package or by historical duration.
+  serial-step | 385936461 .github/workflows/ci.yml :: sim-exits [ubuntu-latest] :: Run make test-sim-exits | 20 runs | 10.97 measured minutes at stake
+    runs: [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; triggered runs: [41242426624 41505533710 41511837753]; baseline/comparison runs: []
+    Measured step time above 70% of job duration, only in jobs longer than 10 minutes.
+    Suggested fix: Split or parallelize the step. If it is a test suite, shard it by package or by historical duration.
+
+Observations (medians; below 10 qualifying runs produces no finding):
+  checkout-cost | 385936461 .github/workflows/ci.yml | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_checkout_seconds = 4.000
+    median_largest_checkout_seconds = 2.000
+    median_runner_seconds = 1568.000
+    trigger_fraction = 0.000
+  cold-setup | 385936461 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison [41130423236 41169036877 41173913912 41173939439 41175599596 41177536991 41179260708 41233108755 41234926419 41244481866 41508856682 41509592935 41514991385]
+    median_baseline_setup_seconds = 26.000
+    median_queue_setup_seconds = 26.000
+    median_setup_ratio = 1.000
+    trigger_fraction = 0.000
+  cold-setup | 385936461 .github/workflows/ci.yml :: sim-exits [ubuntu-latest] | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison [41130423236 41169036877 41173913912 41173939439 41175599596 41177536991 41179260708 41233108755 41234926419 41244481866 41508856682 41509592935 41514991385]
+    median_baseline_setup_seconds = 11.000
+    median_queue_setup_seconds = 11.000
+    median_setup_ratio = 1.000
+    trigger_fraction = 0.000
+  long-pole | 385936461 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 20; triggered 20; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 1399.000
+    median_sibling_idle_seconds = 1093.000
+    trigger_fraction = 1.000
+  long-pole | 385936461 .github/workflows/ci.yml :: sim-exits [ubuntu-latest] | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 114.000
+    median_sibling_idle_seconds = 0.000
+    trigger_fraction = 0.000
+  retry-habit | 385936461 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 1399.000
+    trigger_fraction = 0.000
+  retry-habit | 385936461 .github/workflows/ci.yml :: sim-exits [ubuntu-latest] | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 114.000
+    trigger_fraction = 0.000
+  serial-step | 385936461 .github/workflows/ci.yml :: check [ubuntu-latest] :: Complete job | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 1399.000
+    median_step_fraction = 0.000
+    median_step_seconds = 0.000
+    trigger_fraction = 0.000
+  serial-step | 385936461 .github/workflows/ci.yml :: check [ubuntu-latest] :: Initialize containers | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 1399.000
+    median_step_fraction = 0.009
+    median_step_seconds = 14.000
+    trigger_fraction = 0.000
+  serial-step | 385936461 .github/workflows/ci.yml :: check [ubuntu-latest] :: Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 1399.000
+    median_step_fraction = 0.000
+    median_step_seconds = 0.000
+    trigger_fraction = 0.000
+  serial-step | 385936461 .github/workflows/ci.yml :: check [ubuntu-latest] :: Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 1399.000
+    median_step_fraction = 0.000
+    median_step_seconds = 0.000
+    trigger_fraction = 0.000
+  serial-step | 385936461 .github/workflows/ci.yml :: check [ubuntu-latest] :: Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 1399.000
+    median_step_fraction = 0.000
+    median_step_seconds = 0.000
+    trigger_fraction = 0.000
+  serial-step | 385936461 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 1399.000
+    median_step_fraction = 0.001
+    median_step_seconds = 2.000
+    trigger_fraction = 0.000
+  serial-step | 385936461 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 1399.000
+    median_step_fraction = 0.006
+    median_step_seconds = 8.000
+    trigger_fraction = 0.000
+  serial-step | 385936461 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run docker build --tag openmerge:ci . | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 1399.000
+    median_step_fraction = 0.034
+    median_step_seconds = 48.000
+    trigger_fraction = 0.000
+  serial-step | 385936461 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run docker compose -f deploy/compose.yaml config --quiet | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 1399.000
+    median_step_fraction = 0.001
+    median_step_seconds = 1.000
+    trigger_fraction = 0.000
+  serial-step | 385936461 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 1399.000
+    median_step_fraction = 0.000
+    median_step_seconds = 0.000
+    trigger_fraction = 0.000
+  serial-step | 385936461 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 1399.000
+    median_step_fraction = 0.044
+    median_step_seconds = 65.000
+    trigger_fraction = 0.000
+  serial-step | 385936461 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run make build | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 1399.000
+    median_step_fraction = 0.010
+    median_step_seconds = 15.000
+    trigger_fraction = 0.000
+  serial-step | 385936461 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run make fmt | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 1399.000
+    median_step_fraction = 0.000
+    median_step_seconds = 0.000
+    trigger_fraction = 0.000
+  serial-step | 385936461 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run make test | qualifying 20; triggered 19; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 1399.000
+    median_step_fraction = 0.885
+    median_step_seconds = 1234.000
+    trigger_fraction = 0.950
+  serial-step | 385936461 .github/workflows/ci.yml :: check [ubuntu-latest] :: Set up job | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 1399.000
+    median_step_fraction = 0.001
+    median_step_seconds = 1.000
+    trigger_fraction = 0.000
+  serial-step | 385936461 .github/workflows/ci.yml :: check [ubuntu-latest] :: Stop containers | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 1399.000
+    median_step_fraction = 0.001
+    median_step_seconds = 1.000
+    trigger_fraction = 0.000
+  serial-step | 385936461 .github/workflows/ci.yml :: sim-exits [ubuntu-latest] :: Complete job | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 114.000
+    median_step_fraction = 0.000
+    median_step_seconds = 0.000
+    trigger_fraction = 0.000
+  serial-step | 385936461 .github/workflows/ci.yml :: sim-exits [ubuntu-latest] :: Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 114.000
+    median_step_fraction = 0.000
+    median_step_seconds = 0.000
+    trigger_fraction = 0.000
+  serial-step | 385936461 .github/workflows/ci.yml :: sim-exits [ubuntu-latest] :: Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 114.000
+    median_step_fraction = 0.000
+    median_step_seconds = 0.000
+    trigger_fraction = 0.000
+  serial-step | 385936461 .github/workflows/ci.yml :: sim-exits [ubuntu-latest] :: Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 114.000
+    median_step_fraction = 0.018
+    median_step_seconds = 2.000
+    trigger_fraction = 0.000
+  serial-step | 385936461 .github/workflows/ci.yml :: sim-exits [ubuntu-latest] :: Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 114.000
+    median_step_fraction = 0.073
+    median_step_seconds = 8.000
+    trigger_fraction = 0.000
+  serial-step | 385936461 .github/workflows/ci.yml :: sim-exits [ubuntu-latest] :: Run make test-sim-exits | qualifying 20; triggered 3; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 114.000
+    median_step_fraction = 0.862
+    median_step_seconds = 99.000
+    trigger_fraction = 0.150
+  serial-step | 385936461 .github/workflows/ci.yml :: sim-exits [ubuntu-latest] :: Set up job | qualifying 20; triggered 0; runs [40645255619 40652761912 40699007806 40719322422 40738350119 40991506622 41111885998 41127086045 41167244653 41172261955 41172403971 41174035886 41175744506 41177597337 41231038768 41232865109 41242426624 41505511884 41505533710 41511837753]; comparison []
+    median_job_seconds = 114.000
+    median_step_fraction = 0.008
+    median_step_seconds = 1.000
+    trigger_fraction = 0.000
+
+Job time split and heuristic step classification (seconds):
+  run 40645255619 attempt 1 | check | dispatch unavailable; wait 2.0; setup 24.0; run 881.0
+    Set up job | setup/setup | 2.0
+    Initialize containers | setup/setup | 14.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 1.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 7.0
+    Run make fmt | unknown/run | 0.0
+    Run make test | unknown/run | 783.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 44.0
+    Run make build | unknown/run | 10.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 1.0
+    Run docker build --tag openmerge:ci . | unknown/run | 39.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 40645255619 attempt 1 | sim-exits | dispatch unavailable; wait 2.0; setup 13.0; run 100.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 9.0
+    Run make test-sim-exits | unknown/run | 96.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 40652761912 attempt 1 | check | dispatch unavailable; wait 2.0; setup 28.0; run 1325.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 15.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 9.0
+    Run make fmt | unknown/run | 1.0
+    Run make test | unknown/run | 1196.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 61.0
+    Run make build | unknown/run | 14.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 2.0
+    Run docker build --tag openmerge:ci . | unknown/run | 47.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 1.0
+    Complete job | cleanup/run | 0.0
+  run 40652761912 attempt 1 | sim-exits | dispatch unavailable; wait 2.0; setup 10.0; run 62.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 7.0
+    Run make test-sim-exits | unknown/run | 59.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 40699007806 attempt 1 | check | dispatch unavailable; wait 2.0; setup 26.0; run 1351.0
+    Set up job | setup/setup | 2.0
+    Initialize containers | setup/setup | 13.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 9.0
+    Run make fmt | unknown/run | 0.0
+    Run make test | unknown/run | 1213.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 66.0
+    Run make build | unknown/run | 16.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 2.0
+    Run docker build --tag openmerge:ci . | unknown/run | 51.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 1.0
+    Stop containers | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 40699007806 attempt 1 | sim-exits | dispatch unavailable; wait 2.0; setup 10.0; run 61.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 6.0
+    Run make test-sim-exits | unknown/run | 58.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 40719322422 attempt 1 | check | dispatch unavailable; wait 1.0; setup 25.0; run 1374.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 12.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 9.0
+    Run make fmt | unknown/run | 0.0
+    Run make test | unknown/run | 1239.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 67.0
+    Run make build | unknown/run | 16.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 0.0
+    Run docker build --tag openmerge:ci . | unknown/run | 49.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 1.0
+    Complete job | cleanup/run | 0.0
+  run 40719322422 attempt 1 | sim-exits | dispatch unavailable; wait 1.0; setup 13.0; run 101.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 9.0
+    Run make test-sim-exits | unknown/run | 99.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 40738350119 attempt 1 | check | dispatch unavailable; wait 2.0; setup 31.0; run 1147.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 19.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run make fmt | unknown/run | 1.0
+    Run make test | unknown/run | 1036.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 51.0
+    Run make build | unknown/run | 12.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 0.0
+    Run docker build --tag openmerge:ci . | unknown/run | 44.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 0.0
+    Complete job | cleanup/run | 1.0
+  run 40738350119 attempt 1 | sim-exits | dispatch unavailable; wait 2.0; setup 14.0; run 105.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 3.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 9.0
+    Run make test-sim-exits | unknown/run | 101.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 1.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 40991506622 attempt 1 | check | dispatch unavailable; wait 1.0; setup 25.0; run 969.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 15.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 6.0
+    Run make fmt | unknown/run | 1.0
+    Run make test | unknown/run | 861.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 51.0
+    Run make build | unknown/run | 11.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 0.0
+    Run docker build --tag openmerge:ci . | unknown/run | 41.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 1.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 40991506622 attempt 1 | sim-exits | dispatch unavailable; wait 1.0; setup 11.0; run 80.0
+    Set up job | setup/setup | 0.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run make test-sim-exits | unknown/run | 77.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41111885998 attempt 1 | check | dispatch unavailable; wait 2.0; setup 24.0; run 1544.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 14.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 6.0
+    Run make fmt | unknown/run | 0.0
+    Run make test | unknown/run | 888.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 600.0
+    Run make build | unknown/run | 11.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 0.0
+    Run docker build --tag openmerge:ci . | unknown/run | 40.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 1.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 1.0
+    Complete job | cleanup/run | 0.0
+  run 41111885998 attempt 1 | sim-exits | dispatch unavailable; wait 2.0; setup 15.0; run 109.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 10.0
+    Run make test-sim-exits | unknown/run | 104.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 1.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41127086045 attempt 1 | check | dispatch unavailable; wait 2.0; setup 25.0; run 1454.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 13.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run make fmt | unknown/run | 1.0
+    Run make test | unknown/run | 1317.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 65.0
+    Run make build | unknown/run | 15.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 2.0
+    Run docker build --tag openmerge:ci . | unknown/run | 51.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 1.0
+    Complete job | cleanup/run | 0.0
+  run 41127086045 attempt 1 | sim-exits | dispatch unavailable; wait 2.0; setup 11.0; run 78.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 7.0
+    Run make test-sim-exits | unknown/run | 74.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41167244653 attempt 1 | check | dispatch unavailable; wait 1.0; setup 26.0; run 1488.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 14.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run make fmt | unknown/run | 1.0
+    Run make test | unknown/run | 1346.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 68.0
+    Run make build | unknown/run | 16.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 3.0
+    Run docker build --tag openmerge:ci . | unknown/run | 51.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 1.0
+    Complete job | cleanup/run | 0.0
+  run 41167244653 attempt 1 | sim-exits | dispatch unavailable; wait 1.0; setup 11.0; run 98.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 1.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run make test-sim-exits | unknown/run | 96.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41172261955 attempt 1 | check | dispatch unavailable; wait 1.0; setup 25.0; run 1464.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 13.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run make fmt | unknown/run | 1.0
+    Run make test | unknown/run | 1330.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 65.0
+    Run make build | unknown/run | 15.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 1.0
+    Run docker build --tag openmerge:ci . | unknown/run | 49.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 1.0
+    Complete job | cleanup/run | 0.0
+  run 41172261955 attempt 1 | sim-exits | dispatch unavailable; wait 2.0; setup 9.0; run 63.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 6.0
+    Run make test-sim-exits | unknown/run | 60.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41172403971 attempt 1 | check | dispatch unavailable; wait 3.0; setup 29.0; run 1151.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 16.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 3.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run make fmt | unknown/run | 0.0
+    Run make test | unknown/run | 1037.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 51.0
+    Run make build | unknown/run | 12.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 1.0
+    Run docker build --tag openmerge:ci . | unknown/run | 45.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 1.0
+    Complete job | cleanup/run | 0.0
+  run 41172403971 attempt 1 | sim-exits | dispatch unavailable; wait 3.0; setup 11.0; run 76.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 7.0
+    Run make test-sim-exits | unknown/run | 72.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 1.0
+  run 41174035886 attempt 1 | check | dispatch unavailable; wait 2.0; setup 27.0; run 1360.0
+    Set up job | setup/setup | 2.0
+    Initialize containers | setup/setup | 14.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run make fmt | unknown/run | 0.0
+    Run make test | unknown/run | 1234.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 59.0
+    Run make build | unknown/run | 14.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 1.0
+    Run docker build --tag openmerge:ci . | unknown/run | 48.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 1.0
+    Complete job | cleanup/run | 0.0
+  run 41174035886 attempt 1 | sim-exits | dispatch unavailable; wait 2.0; setup 14.0; run 102.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 4.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run make test-sim-exits | unknown/run | 100.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 1.0
+    Complete job | cleanup/run | 0.0
+  run 41175744506 attempt 1 | check | dispatch unavailable; wait 2.0; setup 24.0; run 1493.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 13.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run make fmt | unknown/run | 1.0
+    Run make test | unknown/run | 1358.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 66.0
+    Run make build | unknown/run | 16.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 0.0
+    Run docker build --tag openmerge:ci . | unknown/run | 49.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 1.0
+    Stop containers | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41175744506 attempt 1 | sim-exits | dispatch unavailable; wait 2.0; setup 11.0; run 98.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run make test-sim-exits | unknown/run | 95.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 1.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41177597337 attempt 1 | check | dispatch unavailable; wait 1.0; setup 25.0; run 1477.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 12.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 9.0
+    Run make fmt | unknown/run | 1.0
+    Run make test | unknown/run | 1341.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 64.0
+    Run make build | unknown/run | 16.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 2.0
+    Run docker build --tag openmerge:ci . | unknown/run | 50.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 1.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41177597337 attempt 1 | sim-exits | dispatch unavailable; wait 2.0; setup 11.0; run 366.0
+    Set up job | setup/setup | 2.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 1.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run make test-sim-exits | unknown/run | 363.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41231038768 attempt 1 | check | dispatch unavailable; wait 3.0; setup 26.0; run 1490.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 13.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 9.0
+    Run make fmt | unknown/run | 0.0
+    Run make test | unknown/run | 1352.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 69.0
+    Run make build | unknown/run | 15.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 1.0
+    Run docker build --tag openmerge:ci . | unknown/run | 48.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 1.0
+    Complete job | cleanup/run | 0.0
+  run 41231038768 attempt 1 | sim-exits | dispatch unavailable; wait 2.0; setup 11.0; run 531.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 7.0
+    Run make test-sim-exits | unknown/run | 528.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41232865109 attempt 1 | check | dispatch unavailable; wait 1.0; setup 25.0; run 1500.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 12.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run make fmt | unknown/run | 0.0
+    Run make test | unknown/run | 1364.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 68.0
+    Run make build | unknown/run | 15.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 3.0
+    Run docker build --tag openmerge:ci . | unknown/run | 47.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 1.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41232865109 attempt 1 | sim-exits | dispatch unavailable; wait 1.0; setup 11.0; run 579.0
+    Set up job | setup/setup | 0.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run make test-sim-exits | unknown/run | 576.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41242426624 attempt 1 | check | dispatch unavailable; wait 3.0; setup 30.0; run 1498.0
+    Set up job | setup/setup | 2.0
+    Initialize containers | setup/setup | 14.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 3.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 10.0
+    Run make fmt | unknown/run | 0.0
+    Run make test | unknown/run | 1352.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 71.0
+    Run make build | unknown/run | 16.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 1.0
+    Run docker build --tag openmerge:ci . | unknown/run | 52.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 1.0
+    Complete job | cleanup/run | 0.0
+  run 41242426624 attempt 1 | sim-exits | dispatch unavailable; wait 2.0; setup 12.0; run 772.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run make test-sim-exits | unknown/run | 768.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41505511884 attempt 1 | check | dispatch unavailable; wait 2.0; setup 30.0; run 1200.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 16.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 11.0
+    Run make fmt | unknown/run | 0.0
+    Run make test | unknown/run | 1068.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 52.0
+    Run make build | unknown/run | 13.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 0.0
+    Run docker build --tag openmerge:ci . | unknown/run | 51.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 1.0
+    Stop containers | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41505511884 attempt 1 | sim-exits | dispatch unavailable; wait 5.0; setup 12.0; run 417.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 3.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 7.0
+    Run make test-sim-exits | unknown/run | 414.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41505533710 attempt 1 | check | dispatch unavailable; wait 2.0; setup 27.0; run 1480.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 15.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run make fmt | unknown/run | 1.0
+    Run make test | unknown/run | 1343.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 67.0
+    Run make build | unknown/run | 16.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 0.0
+    Run docker build --tag openmerge:ci . | unknown/run | 49.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 1.0
+    Complete job | cleanup/run | 0.0
+  run 41505533710 attempt 1 | sim-exits | dispatch unavailable; wait 2.0; setup 15.0; run 781.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 4.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 9.0
+    Run make test-sim-exits | unknown/run | 772.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 1.0
+    Complete job | cleanup/run | 0.0
+  run 41511837753 attempt 1 | check | dispatch unavailable; wait 2.0; setup 28.0; run 1186.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 16.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 9.0
+    Run make fmt | unknown/run | 1.0
+    Run make test | unknown/run | 1066.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 52.0
+    Run make build | unknown/run | 13.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 1.0
+    Run docker build --tag openmerge:ci . | unknown/run | 46.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 1.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41511837753 attempt 1 | sim-exits | dispatch unavailable; wait 2.0; setup 12.0; run 789.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run make test-sim-exits | unknown/run | 785.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+
+Gaps (no extrapolation):
+  run 40645255619 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 40645255619 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 40645255619 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate
+  run 40652761912 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 40652761912 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 40652761912 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate
+  run 40699007806 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 40699007806 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 40699007806 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate
+  run 40719322422 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 40719322422 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 40719322422 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate
+  run 40738350119 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 40738350119 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 40738350119 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate
+  run 40991506622 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 40991506622 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 40991506622 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate
+  run 41111885998 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 41111885998 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 41111885998 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate
+  run 41127086045 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 41127086045 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 41127086045 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate
+  run 41167244653 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 41167244653 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 41167244653 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate
+  run 41172261955 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 41172261955 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 41172261955 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate
+  run 41172403971 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 41172403971 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 41172403971 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate
+  run 41174035886 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 41174035886 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 41174035886 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate
+  run 41175744506 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 41175744506 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 41175744506 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate
+  run 41177597337 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 41177597337 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 41177597337 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate
+  run 41231038768 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 41231038768 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 41231038768 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate
+  run 41232865109 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 41232865109 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 41232865109 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate
+  run 41242426624 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 41242426624 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 41242426624 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate
+  run 41505511884 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 41505511884 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 41505511884 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate
+  run 41505533710 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 41505533710 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 41505533710 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate
+  run 41511837753 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 41511837753 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 41511837753 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate

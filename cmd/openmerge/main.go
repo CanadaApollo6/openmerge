@@ -26,6 +26,7 @@ Commands:
   queue status [options]  Read queue status and PR explanations
   audit export [options]  Export recorded audit evidence
   report savings [opts]   Summarize CI runs, minutes and time saved
+  report ci-doctor [opts] Diagnose recorded queue CI timings
   admin acknowledge       Record operator awareness of an outside push
   serve [options]         Run the GitHub merge queue server
   setup <github|rulesets>  Set up the GitHub App and repository rules

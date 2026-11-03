@@ -1,0 +1,161 @@
+OpenMerge CI doctor v1 (advisory, read-only)
+Queue: fixture/app main (installation 1; lane "")
+Window: 2026-10-01T00:00:00Z -> 2026-10-12T13:46:40Z (exclusive)
+Queue workflow runs: 10; gaps: 0
+Minutes at stake are measured comparisons, never projected savings. Findings overlap; do not sum them.
+
+Thresholds:
+  CheckoutFraction = 0.1
+  CheckoutSeconds = 60
+  ColdSetupRatio = 2
+  LongJobSeconds = 600
+  LongPoleFraction = 0.8
+  MinimumRuns = 10
+  RetryFraction = 0.05
+  SerialStepFraction = 0.7
+  SiblingIdleFraction = 0.5
+
+Findings:
+  checkout-cost | 99 .github/workflows/ci.yml | 10 runs | 6.00 measured minutes at stake
+    runs: [1 2 3 4 5 6 7 8 9 10]; triggered runs: [1 2 3 4 5 6 7 8 9 10]; baseline/comparison runs: []
+    Larger of measured summed checkout excess over 10% of runner time and the largest checkout excess over 60 seconds; never added together.
+    Suggested fix: Fetch only what the job needs: fetch-depth: 1 or a blobless partial clone (filter: blob:none), and sparse checkout for jobs that read one directory.
+  time-split | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | 10 runs | 0.00 measured minutes at stake
+    runs: [1 2 3 4 5 6 7 8 9 10]; triggered runs: [1 2 3 4 5 6 7 8 9 10]; baseline/comparison runs: []
+    Context only; no excess or projected saving. Dispatch and wait are per job; parallel timings are not additive wall-clock.
+  time-split | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] | 10 runs | 0.00 measured minutes at stake
+    runs: [1 2 3 4 5 6 7 8 9 10]; triggered runs: [1 2 3 4 5 6 7 8 9 10]; baseline/comparison runs: []
+    Context only; no excess or projected saving. Dispatch and wait are per job; parallel timings are not additive wall-clock.
+
+Observations (medians; below 10 qualifying runs produces no finding):
+  checkout-cost | 99 .github/workflows/ci.yml | qualifying 10; triggered 10; runs [1 2 3 4 5 6 7 8 9 10]; comparison []
+    median_checkout_seconds = 60.000
+    median_largest_checkout_seconds = 30.000
+    median_runner_seconds = 240.000
+    trigger_fraction = 1.000
+  cold-setup | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 10; triggered 0; runs [1 2 3 4 5 6 7 8 9 10]; comparison [1001 1002 1003 1004 1005 1006 1007 1008 1009 1010]
+    median_baseline_setup_seconds = 30.000
+    median_queue_setup_seconds = 30.000
+    median_setup_ratio = 1.000
+    trigger_fraction = 0.000
+  cold-setup | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] | qualifying 10; triggered 0; runs [1 2 3 4 5 6 7 8 9 10]; comparison [1001 1002 1003 1004 1005 1006 1007 1008 1009 1010]
+    median_baseline_setup_seconds = 30.000
+    median_queue_setup_seconds = 30.000
+    median_setup_ratio = 1.000
+    trigger_fraction = 0.000
+  duplicate-pr-run | 99 .github/workflows/ci.yml | qualifying 10; triggered 0; runs [1 2 3 4 5 6 7 8 9 10]; comparison [2001 2002 2003 2004 2005 2006 2007 2008 2009 2010]
+    median_overlap_seconds = 0.000
+    trigger_fraction = 0.000
+  long-pole | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 10; triggered 10; runs [1 2 3 4 5 6 7 8 9 10]; comparison []
+    median_job_seconds = 120.000
+    median_sibling_idle_seconds = 0.000
+    trigger_fraction = 1.000
+  long-pole | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] | qualifying 10; triggered 10; runs [1 2 3 4 5 6 7 8 9 10]; comparison []
+    median_job_seconds = 120.000
+    median_sibling_idle_seconds = 0.000
+    trigger_fraction = 1.000
+  masked-skip | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 10; triggered 0; runs [1 2 3 4 5 6 7 8 9 10]; comparison []
+    median_dependencies = 1.000
+    trigger_fraction = 0.000
+  retry-habit | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 10; triggered 0; runs [1 2 3 4 5 6 7 8 9 10]; comparison []
+    median_job_seconds = 120.000
+    trigger_fraction = 0.000
+  retry-habit | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] | qualifying 10; triggered 0; runs [1 2 3 4 5 6 7 8 9 10]; comparison []
+    median_job_seconds = 120.000
+    trigger_fraction = 0.000
+  serial-step | 99 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run actions/checkout@pinned | qualifying 10; triggered 0; runs [1 2 3 4 5 6 7 8 9 10]; comparison []
+    median_job_seconds = 120.000
+    median_step_fraction = 0.250
+    median_step_seconds = 30.000
+    trigger_fraction = 0.000
+  serial-step | 99 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run tests | qualifying 10; triggered 0; runs [1 2 3 4 5 6 7 8 9 10]; comparison []
+    median_job_seconds = 120.000
+    median_step_fraction = 0.750
+    median_step_seconds = 90.000
+    trigger_fraction = 0.000
+  serial-step | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] :: Run actions/checkout@pinned | qualifying 10; triggered 0; runs [1 2 3 4 5 6 7 8 9 10]; comparison []
+    median_job_seconds = 120.000
+    median_step_fraction = 0.250
+    median_step_seconds = 30.000
+    trigger_fraction = 0.000
+  serial-step | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] :: Run tests | qualifying 10; triggered 0; runs [1 2 3 4 5 6 7 8 9 10]; comparison []
+    median_job_seconds = 120.000
+    median_step_fraction = 0.750
+    median_step_seconds = 90.000
+    trigger_fraction = 0.000
+  time-split | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 10; triggered 10; runs [1 2 3 4 5 6 7 8 9 10]; comparison []
+    median_dispatch_seconds = 2.000
+    median_run_seconds = 90.000
+    median_setup_seconds = 30.000
+    median_wait_seconds = 3.000
+    trigger_fraction = 1.000
+  time-split | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] | qualifying 10; triggered 10; runs [1 2 3 4 5 6 7 8 9 10]; comparison []
+    median_dispatch_seconds = 2.000
+    median_run_seconds = 90.000
+    median_setup_seconds = 30.000
+    median_wait_seconds = 3.000
+    trigger_fraction = 1.000
+
+Job time split and heuristic step classification (seconds):
+  run 1 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 1 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 2 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 2 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 3 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 3 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 4 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 4 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 5 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 5 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 6 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 6 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 7 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 7 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 8 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 8 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 9 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 9 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 10 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 10 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+
+Gaps (no extrapolation):

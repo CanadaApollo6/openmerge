@@ -183,6 +183,12 @@ records the ledger only behind an internal seam that production leaves off, and
 a runner image identity is unknown by default, so no hit is possible until a
 later activation slice.
 
+## Related diagnostics
+
+[CI doctor](ci-doctor.md) explains where recorded queue CI time goes, including
+setup, long jobs, retries, and duplicate PR work. It is advisory and does not
+change this report's savings baseline.
+
 ## Relationship to tools/dogfood
 
 `tools/dogfood report` measures the ADR 0009 experiment cohort, using GitHub
