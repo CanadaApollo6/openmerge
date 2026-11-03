@@ -78,9 +78,10 @@ pipe-drain limit. A failed or timed-out GC writes
 `openmerge-gc-attempt` with the attempt time and leaves the success stamp alone.
 Only GC backs off for `Config.GCInterval`, or one hour when the interval trigger
 is disabled and the size trigger is enabled. Successful GC removes the attempt
-stamp. Ref sweeps and base-ref updates continue during back-off, even when GC is
-disabled. Collection never overlaps a push or another locked operation in the
-same cache. An interrupted GC
+stamp. Future attempt timestamps count as expired, so a clock rollback or a
+restored file cannot suppress collection for years. Ref sweeps and base-ref
+updates continue during back-off, even when GC is disabled. Collection never
+overlaps a push or another locked operation in the same cache. An interrupted GC
 can leave `gc.pid` and `tmp_pack_*` files. Git accepts a stale PID whose process
 has exited and removes temporary packs during a later successful collection;
 OpenMerge does not delete Git's files itself.

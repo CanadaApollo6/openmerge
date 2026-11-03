@@ -60,7 +60,7 @@ func (s *session) maintainCache(ctx context.Context, stats *OperationStats) erro
 		backoff = time.Hour
 	}
 	if info, err := os.Stat(attempt); err == nil {
-		if time.Since(info.ModTime()) < backoff {
+		if age := time.Since(info.ModTime()); age >= 0 && age < backoff {
 			if stats != nil {
 				stats.GCOutcome = GCSkippedBackoff
 			}

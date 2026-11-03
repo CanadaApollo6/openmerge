@@ -183,3 +183,37 @@ exec `+shellQuote(gitPath)+` "$@"
 	}
 	gitCommand(t, s.dir, "", nil, "fsck", "--no-dangling")
 }
+
+func TestCacheGCBackoffIgnoresFutureAttempt(t *testing.T) {
+	for _, trigger := range []string{"interval", "size"} {
+		t.Run(trigger, func(t *testing.T) {
+			f := newFixture(t)
+			f.g.cfg.GCInterval, f.g.cfg.GCThresholdBytes = -1, -1
+			f.build(forge.Merge, f.prs[:1], "clock-skew")
+			s, unlock, err := f.g.open(t.Context(), testRepo, "clock-skew")
+			must(t, err)
+			defer unlock()
+			if trigger == "interval" {
+				f.g.cfg.GCInterval = time.Hour
+			} else {
+				f.g.cfg.GCThresholdBytes = 1
+			}
+			stamp := filepath.Join(s.dir, "openmerge-gc")
+			must(t, os.WriteFile(stamp, []byte("0\n"), 0o600))
+			old := time.Now().Add(-24 * time.Hour)
+			must(t, os.Chtimes(stamp, old, old))
+			attempt := filepath.Join(s.dir, "openmerge-gc-attempt")
+			must(t, os.WriteFile(attempt, nil, 0o600))
+			future := time.Now().AddDate(5, 0, 0)
+			must(t, os.Chtimes(attempt, future, future))
+			var stats OperationStats
+			must(t, s.maintainCache(t.Context(), &stats))
+			if !stats.GCRan || stats.GCOutcome != GCOK {
+				t.Fatalf("future attempt suppressed due GC: %+v", stats)
+			}
+			if _, err := os.Stat(attempt); !os.IsNotExist(err) {
+				t.Fatalf("successful GC retained future attempt: %v", err)
+			}
+		})
+	}
+}
