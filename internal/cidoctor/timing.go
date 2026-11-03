@@ -16,7 +16,7 @@ func classify(name string) string {
 	if strings.Contains(n, "actions/checkout@") || n == "checkout" || n == "checkout code" {
 		return "checkout"
 	}
-	if n == "set up job" || n == "initialize containers" || strings.Contains(n, "actions/setup-") || strings.Contains(n, "actions/cache/restore@") || n == "restore cache" || n == "install dependencies" || n == "npm ci" || n == "run npm ci" || n == "run go mod download" {
+	if n == "set up job" || n == "initialize containers" || strings.Contains(n, "actions/setup-") || strings.Contains(n, "actions/cache/restore@") || strings.Contains(n, "actions/cache@") || n == "restore cache" || n == "install dependencies" || n == "npm ci" || n == "run npm ci" || n == "run go mod download" {
 		return "setup"
 	}
 	return "unknown"

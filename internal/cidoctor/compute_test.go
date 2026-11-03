@@ -253,7 +253,7 @@ func TestDuplicateAndAmbiguousAttemptsFailSilent(t *testing.T) {
 }
 
 func TestClassifier(t *testing.T) {
-	for name, want := range map[string]string{"Run actions/checkout@sha": "checkout", "Run actions/setup-go@sha": "setup", "Run actions/cache/restore@sha": "setup", "Install dependencies": "setup", "Run npm ci": "setup", "Initialize containers": "setup", "Run make test": "unknown", "Post Run actions/setup-go@sha": "cleanup", "Complete job": "cleanup", "Restore cache": "setup"} {
+	for name, want := range map[string]string{"Run actions/checkout@sha": "checkout", "Run actions/setup-go@sha": "setup", "Run actions/cache/restore@sha": "setup", "Run actions/cache@sha": "setup", "Post Run actions/cache@sha": "cleanup", "Install dependencies": "setup", "Run npm ci": "setup", "Initialize containers": "setup", "Run make test": "unknown", "Post Run actions/setup-go@sha": "cleanup", "Complete job": "cleanup", "Restore cache": "setup"} {
 		if got := classify(name); got != want {
 			t.Fatalf("%s got %s want %s", name, got, want)
 		}
