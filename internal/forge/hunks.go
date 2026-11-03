@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/CanadaApollo6/openmerge/internal/procgroup"
 )
 
 // DiffHunkAlgorithmFlags is pinned by the semantics golden and used verbatim.
@@ -203,7 +205,7 @@ func unifiedHunks(ctx context.Context, old, next string) ([]DiffHunk, error) {
 	args := []string{"-c", "core.attributesFile=/dev/null", "diff", "--no-index", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames"}
 	args = append(args, strings.Fields(DiffHunkAlgorithmFlags)...)
 	args = append(args, "--", "old", "new")
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := procgroup.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "LC_ALL=C", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_ATTR_NOSYSTEM=1", "GIT_CEILING_DIRECTORIES=" + filepath.Dir(dir)}
 	// Each input byte can add a prefix, plus newline markers and headers.

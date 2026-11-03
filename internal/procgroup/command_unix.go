@@ -1,6 +1,6 @@
 //go:build unix && !linux
 
-package gitops
+package procgroup
 
 import (
 	"context"
@@ -10,9 +10,10 @@ import (
 	"syscall"
 )
 
-type managedCommand = exec.Cmd
+// Cmd uses the platform fallback lifecycle.
+type Cmd = exec.Cmd
 
-func newGitCommand(ctx context.Context, name string, args ...string) *managedCommand {
+func newCommand(ctx context.Context, name string, args ...string) *Cmd {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {

@@ -1,4 +1,4 @@
-package gitops
+package procgroup
 
 import (
 	"bytes"
@@ -9,9 +9,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// managedCommand owns group cleanup before Cmd.Wait can reap the group leader.
-// Keep the embedded Cmd private to this package; callers must use these methods.
-type managedCommand struct {
+// Cmd owns group cleanup before exec.Cmd.Wait can reap the group leader.
+// Use its supervised lifecycle methods rather than those on the embedded Cmd.
+type Cmd struct {
 	*exec.Cmd
 	ctx       context.Context
 	groupDone chan struct{}
@@ -19,16 +19,17 @@ type managedCommand struct {
 	killGroup func(int) error
 }
 
-func newGitCommand(ctx context.Context, name string, args ...string) *managedCommand {
+func newCommand(ctx context.Context, name string, args ...string) *Cmd {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.SysProcAttr = &unix.SysProcAttr{Setpgid: true}
 	// The supervisor owns cancellation. os/exec may still enforce WaitDelay,
 	// but must never send a numeric group signal after reaping the leader.
 	cmd.Cancel = nil
-	return &managedCommand{Cmd: cmd, ctx: ctx, killGroup: killProcessGroup}
+	return &Cmd{Cmd: cmd, ctx: ctx, killGroup: killProcessGroup}
 }
 
-func (c *managedCommand) Start() error {
+// Start launches the command and its non-reaping group supervisor.
+func (c *Cmd) Start() error {
 	if err := c.Cmd.Start(); err != nil {
 		return err
 	}
@@ -37,7 +38,7 @@ func (c *managedCommand) Start() error {
 	return nil
 }
 
-func (c *managedCommand) supervise() {
+func (c *Cmd) supervise() {
 	defer close(c.groupDone)
 	pid := c.Process.Pid
 	exited := make(chan error, 1)
@@ -82,7 +83,8 @@ func killProcessGroup(pid int) error {
 	}
 }
 
-func (c *managedCommand) Wait() error {
+// Wait cleans up the process group before reaping the leader and draining pipes.
+func (c *Cmd) Wait() error {
 	if c.groupDone != nil {
 		<-c.groupDone
 	}
@@ -93,16 +95,17 @@ func (c *managedCommand) Wait() error {
 	return err
 }
 
-func (c *managedCommand) Run() error {
+// Run starts the command and waits for supervised cleanup.
+func (c *Cmd) Run() error {
 	if err := c.Start(); err != nil {
 		return err
 	}
 	return c.Wait()
 }
 
-// Output and CombinedOutput must use the supervised Run rather than the
-// embedded Cmd's convenience methods, which call its own Start and Wait.
-func (c *managedCommand) Output() ([]byte, error) {
+// Output returns stdout after supervised cleanup. It must use the supervised
+// Run rather than the embedded Cmd's method, which calls its own Start and Wait.
+func (c *Cmd) Output() ([]byte, error) {
 	if c.Stdout != nil {
 		return nil, errors.New("exec: Stdout already set")
 	}
@@ -120,7 +123,8 @@ func (c *managedCommand) Output() ([]byte, error) {
 	return out.Bytes(), err
 }
 
-func (c *managedCommand) CombinedOutput() ([]byte, error) {
+// CombinedOutput returns merged stdout and stderr after supervised cleanup.
+func (c *Cmd) CombinedOutput() ([]byte, error) {
 	if c.Stdout != nil || c.Stderr != nil {
 		return nil, errors.New("exec: output already set")
 	}

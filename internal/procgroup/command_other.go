@@ -1,15 +1,16 @@
 //go:build !unix
 
-package gitops
+package procgroup
 
 import (
 	"context"
 	"os/exec"
 )
 
-type managedCommand = exec.Cmd
+// Cmd uses the platform fallback lifecycle.
+type Cmd = exec.Cmd
 
 // Other platforms retain CommandContext's direct-process cancellation.
-func newGitCommand(ctx context.Context, name string, args ...string) *managedCommand {
+func newCommand(ctx context.Context, name string, args ...string) *Cmd {
 	return exec.CommandContext(ctx, name, args...)
 }

@@ -11,7 +11,8 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
-	"time"
+
+	"github.com/CanadaApollo6/openmerge/internal/procgroup"
 )
 
 // Auth supplies HTTP credentials to Git's askpass helper through the child
@@ -74,7 +75,7 @@ func (s *session) run(ctx context.Context, input string, args ...string) (stdout
 	return out.String(), diagnostic.String(), err
 }
 
-func (s *session) newCommand(ctx context.Context, args ...string) *managedCommand {
+func (s *session) newCommand(ctx context.Context, args ...string) *procgroup.Cmd {
 	argv := []string{"-c", "core.hooksPath=" + os.DevNull, "-c", "credential.helper=", "-c", "commit.gpgSign=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false"}
 	if s.diffRead {
 		argv = append(argv, "-c", "core.commitGraph=false")
@@ -83,8 +84,7 @@ func (s *session) newCommand(ctx context.Context, args ...string) *managedComman
 		argv = append(argv, "--git-dir="+s.dir)
 	}
 	argv = append(argv, args...)
-	cmd := newGitCommand(ctx, s.r.git, argv...)
-	cmd.WaitDelay = time.Second
+	cmd := procgroup.CommandContext(ctx, s.r.git, argv...)
 	cmd.Env = append(gitEnv(), "GIT_ASKPASS="+s.r.askpass,
 		"OPENMERGE_GIT_USERNAME="+s.auth.Username, "OPENMERGE_GIT_PASSWORD="+s.auth.Password)
 	if s.diffRead {

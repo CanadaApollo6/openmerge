@@ -109,7 +109,7 @@ func assertChildDead(t *testing.T, pid int) {
 	defer cancel()
 	for {
 		state, err := processState(pid)
-		if os.IsNotExist(err) || err == nil && state == "Z" {
+		if os.IsNotExist(err) || errors.Is(err, syscall.ESRCH) || err == nil && state == "Z" {
 			return
 		}
 		must(t, err)

@@ -1,4 +1,4 @@
-package gitops
+package procgroup
 
 import (
 	"bufio"
@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -25,7 +26,7 @@ func TestCommandGroupKillBeforeReap(t *testing.T) {
 			if canceled {
 				script = "printf ready; read line"
 			}
-			cmd := newGitCommand(ctx, "/bin/sh", "-c", script)
+			cmd := CommandContext(ctx, "/bin/sh", "-c", script)
 			input, err := cmd.StdinPipe()
 			must(t, err)
 			defer func() { _ = input.Close() }()
@@ -85,7 +86,7 @@ func TestCommandGroupKillBeforeReap(t *testing.T) {
 func TestCommandStartWaitCancellationKillsDescendant(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	cmd := newGitCommand(ctx, "/bin/sh", "-c", "sleep 30 &\nprintf '%s\\n' \"$!\"; read line")
+	cmd := CommandContext(ctx, "/bin/sh", "-c", "sleep 30 &\nprintf '%s\\n' \"$!\"; read line")
 	cmd.WaitDelay = time.Second
 	input, err := cmd.StdinPipe()
 	must(t, err)
@@ -107,7 +108,7 @@ func TestCommandStartWaitCancellationKillsDescendant(t *testing.T) {
 }
 
 func TestCommandRunIOAndStartFailure(t *testing.T) {
-	cmd := newGitCommand(t.Context(), "/bin/sh", "-c", "cat; printf diagnostic >&2")
+	cmd := CommandContext(t.Context(), "/bin/sh", "-c", "cat; printf diagnostic >&2")
 	cmd.Stdin = strings.NewReader("input")
 	var out, diagnostic bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &diagnostic
@@ -115,7 +116,7 @@ func TestCommandRunIOAndStartFailure(t *testing.T) {
 	if out.String() != "input" || diagnostic.String() != "diagnostic" {
 		t.Fatalf("stdout=%q stderr=%q", &out, &diagnostic)
 	}
-	cmd = newGitCommand(t.Context(), "/does-not-exist")
+	cmd = CommandContext(t.Context(), "/does-not-exist")
 	if err := cmd.Run(); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing command: %v", err)
 	}
@@ -124,7 +125,7 @@ func TestCommandRunIOAndStartFailure(t *testing.T) {
 func TestCommandOutputSupervisesGroup(t *testing.T) {
 	for _, combined := range []bool{false, true} {
 		t.Run(strconv.FormatBool(combined), func(t *testing.T) {
-			cmd := newGitCommand(t.Context(), "/bin/sh", "-c", "printf output; printf diagnostic >&2; exit 1")
+			cmd := CommandContext(t.Context(), "/bin/sh", "-c", "printf output; printf diagnostic >&2; exit 1")
 			calls := 0
 			cmd.killGroup = func(pid int) error { calls++; return killProcessGroup(pid) }
 			var out []byte
@@ -150,7 +151,7 @@ func TestCommandOutputSupervisesGroup(t *testing.T) {
 func TestReviewCancelCannotRunAfterReap(t *testing.T) {
 	for range 100 {
 		ctx, cancel := context.WithCancel(t.Context())
-		cmd := newGitCommand(ctx, "/bin/true")
+		cmd := CommandContext(ctx, "/bin/true")
 		calls, afterReap := 0, false
 		cmd.killGroup = func(pid int) error {
 			calls++
@@ -169,4 +170,43 @@ func TestReviewCancelCannotRunAfterReap(t *testing.T) {
 		}
 	}
 	t.Log("100/100 group kills preceded reaping, including late cancellation")
+}
+
+func processState(pid int) (string, error) {
+	stat, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return "", err
+	}
+	_, fields, ok := strings.Cut(string(stat), ") ")
+	if !ok {
+		return "", errors.New("invalid process stat")
+	}
+	return strings.Fields(fields)[0], nil
+}
+
+func assertChildDead(t *testing.T, pid int) {
+	t.Helper()
+	// A killed orphan can remain a zombie until init reaps it. Poll the actual
+	// process state; elapsed time alone never establishes descendant death.
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	for {
+		state, err := processState(pid)
+		if os.IsNotExist(err) || errors.Is(err, unix.ESRCH) || err == nil && state == "Z" {
+			return
+		}
+		must(t, err)
+		select {
+		case <-ctx.Done():
+			t.Fatalf("descendant %d remains alive after command return: %s", pid, state)
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
+
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
 }
