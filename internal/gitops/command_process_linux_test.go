@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -32,7 +31,7 @@ func inheritedPipeChild(t *testing.T) (script, pidFile string) {
 
 func TestCommandWaitDelayBoundsInheritedPipes(t *testing.T) {
 	f := newFixture(t)
-	script, _ := inheritedPipeChild(t)
+	script, pidFile := inheritedPipeChild(t)
 	wrapper := filepath.Join(t.TempDir(), "git")
 	writeExecutable(t, wrapper, script+"exit 0\n")
 	f.g.git = wrapper
@@ -41,9 +40,10 @@ func TestCommandWaitDelayBoundsInheritedPipes(t *testing.T) {
 	_, _, err := s.run(t.Context(), "", "--version")
 	elapsed := time.Since(started)
 	t.Logf("inherited pipes returned after %s: %v", elapsed, err)
-	if !errors.Is(err, exec.ErrWaitDelay) || elapsed > 2*time.Second {
+	if err != nil || elapsed > 2*time.Second {
 		t.Fatalf("unbounded pipe drain: elapsed=%s, err=%v", elapsed, err)
 	}
+	assertChildDead(t, readChildPID(t, pidFile))
 }
 
 func TestMaintenanceDeadlineKillsDescendants(t *testing.T) {
@@ -77,19 +77,46 @@ func TestMaintenanceDeadlineKillsDescendants(t *testing.T) {
 	must(t, err)
 	pid, err := strconv.Atoi(string(data))
 	must(t, err)
-	// A killed child can remain a zombie until the container's init reaps it.
-	ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
+	assertChildDead(t, pid)
+}
+
+func readChildPID(t *testing.T, path string) int {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	must(t, err)
+	pid, err := strconv.Atoi(string(data))
+	must(t, err)
+	return pid
+}
+
+func processState(pid int) (string, error) {
+	stat, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return "", err
+	}
+	_, fields, ok := strings.Cut(string(stat), ") ")
+	if !ok {
+		return "", errors.New("invalid process stat")
+	}
+	return strings.Fields(fields)[0], nil
+}
+
+func assertChildDead(t *testing.T, pid int) {
+	t.Helper()
+	// A killed orphan can remain a zombie until init reaps it. Poll the actual
+	// process state; elapsed time alone never establishes descendant death.
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	for {
-		stat, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
-		if os.IsNotExist(err) || err == nil && strings.HasPrefix(strings.SplitN(string(stat), ") ", 2)[1], "Z ") {
-			break
+		state, err := processState(pid)
+		if os.IsNotExist(err) || err == nil && state == "Z" {
+			return
 		}
 		must(t, err)
 		select {
 		case <-ctx.Done():
-			t.Fatalf("descendant %d remains alive after cache unlock: %s", pid, stat)
-		case <-time.After(5 * time.Millisecond):
+			t.Fatalf("descendant %d remains alive after command return: %s", pid, state)
+		case <-time.After(time.Millisecond):
 		}
 	}
 }

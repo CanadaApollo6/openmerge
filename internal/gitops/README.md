@@ -71,10 +71,28 @@ trigger. These are soft triggers, not hard disk limits. A single fetch can excee
 the threshold, and an idle cache waits until its next operation for collection.
 
 Maintenance has a separate 30-second deadline, plus up to one second to drain
-command pipes. Every Git command runs in its own process group on Unix;
-cancellation kills the group, including Git's helpers, before releasing the
-cache lock. Other platforms retain direct-process cancellation with the same
-pipe-drain limit. A failed or timed-out GC writes
+command pipes. Every Git command runs in its own process group on Unix. On
+Linux, a supervisor observes leader exit with `waitid(WEXITED|WNOWAIT)`, kills
+remaining group members on normal exit or cancellation, and only then permits
+`Cmd.Wait` to reap the leader. The unreaped leader pins the PID and PGID until
+cleanup finishes. This covers both `Run` and the streaming provenance reader's
+`Start`/`Wait`, including its `prlimit` wrapper. `WaitDelay` remains a pipe backstop.
+
+Git helpers must not outlive a command against a locked cache. Every invocation
+sets `gc.auto=0` and `maintenance.auto=false`; hooks and credential helpers are
+disabled. The only explicit collection is foreground `git gc --prune=now --quiet`.
+There is no explicit `git maintenance`, background GC, or fetch option enabling
+auto-GC. Keep detached maintenance disabled: a daemon that calls `setsid()`
+escapes this process group. This is lifecycle cleanup for trusted Git and helpers,
+not containment of arbitrary processes. Abrupt termination of OpenMerge itself
+still needs a supervising cgroup to clean up descendants.
+
+Darwin and BSD retain Cancel-only group cleanup because x/sys does not expose
+`Waitid` with `WNOWAIT` there. A descendant can survive an early leader exit, and
+cancellation can signal a reused PGID after the leader is reaped. Production runs
+on Linux; the lifecycle guarantee above does not extend to those fallbacks.
+Non-Unix platforms retain direct-process cancellation with the same pipe-drain
+limit. A failed or timed-out GC writes
 `openmerge-gc-attempt` with the attempt time and leaves the success stamp alone.
 Only GC backs off for `Config.GCInterval`, or one hour when the interval trigger
 is disabled and the size trigger is enabled. Successful GC removes the attempt

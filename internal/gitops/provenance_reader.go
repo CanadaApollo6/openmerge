@@ -35,7 +35,7 @@ type provenanceReader struct {
 	limits     provenance.InventoryLimits
 	prlimit    string
 	indexBytes int
-	batch      *exec.Cmd
+	batch      *managedCommand
 	input      io.WriteCloser
 	output     *bufio.Reader
 	diagnostic *limitedDiffBuffer
@@ -80,7 +80,7 @@ func newProvenanceReader(ctx context.Context, gitDir string, limits provenance.I
 	return r, nil
 }
 
-func (r *provenanceReader) command(ctx context.Context, args ...string) *exec.Cmd {
+func (r *provenanceReader) command(ctx context.Context, args ...string) *managedCommand {
 	// Every object read and traversal needs this cap: advisory metadata can
 	// under-count duplicate packed representations, and walks parse bodies too.
 	cmd := r.s.newCommand(ctx, args...)
