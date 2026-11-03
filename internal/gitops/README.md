@@ -70,30 +70,43 @@ PR and build objects. Zero selects the defaults; a negative value disables that
 trigger. These are soft triggers, not hard disk limits. A single fetch can exceed
 the threshold, and an idle cache waits until its next operation for collection.
 
-Maintenance has a separate 30-second deadline. A failed or timed-out GC writes
+Maintenance has a separate 30-second deadline, plus up to one second to drain
+command pipes. Every Git command runs in its own process group on Unix;
+cancellation kills the group, including Git's helpers, before releasing the
+cache lock. Other platforms retain direct-process cancellation with the same
+pipe-drain limit. A failed or timed-out GC writes
 `openmerge-gc-attempt` with the attempt time and leaves the success stamp alone.
 Only GC backs off for `Config.GCInterval`, or one hour when the interval trigger
 is disabled and the size trigger is enabled. Successful GC removes the attempt
 stamp. Ref sweeps and base-ref updates continue during back-off, even when GC is
 disabled. Collection never overlaps a push or another locked operation in the
-same cache. An interrupted GC can leave `gc.pid` and `tmp_pack_*` files. Git
-accepts a stale PID whose process has exited and removes temporary packs during
-a later successful collection; OpenMerge does not delete Git's files itself.
+same cache. An interrupted GC
+can leave `gc.pid` and `tmp_pack_*` files. Git accepts a stale PID whose process
+has exited and removes temporary packs during a later successful collection;
+OpenMerge does not delete Git's files itself.
 
-`Config.Observe` optionally receives `OperationStats` once per successful cache
-lock acquisition, including operations that return errors. Busy TryLock and
-canceled waits do not acquire the lock and produce no sample. Names identify the
-public method, such as `build-test-ref`, `land`, `revision-diff`, or `local-config`.
+`Config.Observe` optionally receives best-effort `OperationStats` samples for
+successful cache lock acquisitions, including operations that return errors.
+Busy TryLock and canceled waits do not acquire the lock and produce no sample.
+Names identify the public method, such as `build-test-ref`, `land`,
+`revision-diff`, or `local-config`.
 Acquisition lease releases use `release-commits`. Samples include the forge
 repository identity, lock wait, hold excluding maintenance, maintenance duration,
 whether GC ran, GC duration and outcome, and object bytes after GC when measured.
 An empty GC outcome means collection was not due or maintenance stopped before
 GC. Other outcomes are `ok`, `failed`, `timed-out`, and `skipped-backoff`.
 
-Observer calls run asynchronously after unlocking, may overlap or arrive out of
-order, and recover panics. Observers must return promptly to bound their resource
-use. Nil disables timing and callback dispatch. Local immutable reads and lease
-releases retain their existing no-maintenance policy. Lock granularity is unchanged.
+Observer calls run asynchronously after unlocking and recover panics. One worker
+per Repo serializes callbacks, with a buffer of 256 samples. Enqueue never waits
+for a callback or space in the buffer. Overflow drops samples; the next delivered
+sample reports their count in `Dropped`. Delivery order can differ from lock
+acquisition order. The worker starts lazily and exits as soon as the queue is
+empty. A callback that never returns retains at most one worker per Repo; tests
+that block callbacks must unblock them during cleanup. Nil disables timing and
+callback dispatch. The serving logger includes `dropped` and raises samples
+reporting drops to WARN so overload is visible at normal log levels.
+Local immutable reads and lease releases retain their existing no-maintenance
+policy. Lock granularity is unchanged.
 
 `PullRequest` reads current PR metadata when generating test commits, rejecting a
 number/head mismatch or invalid author/title before pushing. `serve` supplies

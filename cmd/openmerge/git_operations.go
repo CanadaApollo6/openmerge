@@ -23,7 +23,7 @@ func observeGitOperations(logger *slog.Logger) func(gitops.OperationStats) {
 		if s.Wait >= gitWaitLogThreshold || s.Hold >= gitHoldLogThreshold || s.Maintenance >= gitMaintenanceLogThreshold || s.GCRan {
 			level = slog.LevelInfo
 		}
-		if s.GCOutcome == gitops.GCFailed || s.GCOutcome == gitops.GCTimedOut {
+		if s.GCOutcome == gitops.GCFailed || s.GCOutcome == gitops.GCTimedOut || s.Dropped > 0 {
 			level = slog.LevelWarn
 		}
 		attrs := []any{
@@ -31,6 +31,7 @@ func observeGitOperations(logger *slog.Logger) func(gitops.OperationStats) {
 			"wait_ms", s.Wait.Seconds() * 1000, "hold_ms", s.Hold.Seconds() * 1000,
 			"maintenance_ms", s.Maintenance.Seconds() * 1000,
 			"gc_ran", s.GCRan, "gc_ms", s.GC.Seconds() * 1000, "gc_outcome", s.GCOutcome,
+			"dropped", s.Dropped,
 		}
 		if s.CacheBytesMeasured {
 			attrs = append(attrs, "cache_bytes", s.CacheBytes)

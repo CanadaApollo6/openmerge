@@ -3,6 +3,7 @@ package gitops
 import (
 	"context"
 	"errors"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -10,6 +11,95 @@ import (
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
+
+func TestOperationObserverBounded(t *testing.T) {
+	f := newFixture(t)
+	f.g.cfg.GCInterval, f.g.cfg.GCThresholdBytes = -1, -1
+	f.build(forge.Merge, f.prs[:1], "bounded-observer")
+	const operations = 600
+	release, entered := make(chan struct{}), make(chan struct{})
+	samples := make(chan OperationStats, operations+1)
+	var once sync.Once
+	var unblock sync.Once
+	t.Cleanup(func() { unblock.Do(func() { close(release) }) })
+	f.g.cfg.Observe = func(s OperationStats) {
+		once.Do(func() { close(entered) })
+		<-release
+		samples <- s
+	}
+	baseline := runtime.NumGoroutine()
+	_, err := f.g.ReadCommitMessage(t.Context(), testRepo, f.base)
+	must(t, err)
+	<-entered
+	done := make(chan error, 1)
+	go func() {
+		for range operations {
+			if _, err := f.g.ReadCommitMessage(t.Context(), testRepo, f.base); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	select {
+	case err := <-done:
+		must(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("blocked observer stalled operations")
+	}
+	growth := runtime.NumGoroutine() - baseline
+	t.Logf("%d operations completed with blocked observer, goroutine growth=%d", operations, growth)
+	if growth > 16 {
+		t.Fatalf("observer goroutines grow with operations: %d", growth)
+	}
+	unblock.Do(func() { close(release) })
+	first := nextOperation(t, samples, "read-commit-message")
+	next := nextOperation(t, samples, "read-commit-message")
+	if first.Dropped != 0 || next.Dropped == 0 {
+		t.Fatalf("drops were not reported on the next delivery: first=%+v, next=%+v", first, next)
+	}
+	delivered, dropped := 2, next.Dropped
+	for uint64(delivered)+dropped < operations+1 {
+		s := nextOperation(t, samples, "read-commit-message")
+		delivered++
+		dropped += s.Dropped
+	}
+	if uint64(delivered)+dropped != operations+1 {
+		t.Fatalf("samples lost or drops counted twice: delivered=%d, dropped=%d", delivered, dropped)
+	}
+	t.Logf("delivered=%d, dropped=%d", delivered, dropped)
+	_, err = f.g.ReadCommitMessage(t.Context(), testRepo, f.base)
+	must(t, err)
+	if s := nextOperation(t, samples, "read-commit-message"); s.Dropped != 0 {
+		t.Fatalf("drop count was not reset: %+v", s)
+	}
+}
+
+func TestOperationObserverIdleWorkersExit(t *testing.T) {
+	f := newFixture(t)
+	f.g.cfg.GCInterval, f.g.cfg.GCThresholdBytes = -1, -1
+	f.build(forge.Merge, f.prs[:1], "idle-observer")
+	samples := make(chan OperationStats, 1)
+	cfg := f.g.cfg
+	cfg.Observe = func(s OperationStats) { samples <- s }
+	baseline := runtime.NumGoroutine()
+	for range 32 {
+		r, err := New(t.Context(), cfg)
+		must(t, err)
+		for range 2 {
+			_, err = r.ReadCommitMessage(t.Context(), testRepo, f.base)
+			must(t, err)
+			nextOperation(t, samples, "read-commit-message")
+		}
+	}
+	deadline := time.Now().Add(time.Second)
+	for runtime.NumGoroutine()-baseline > 4 {
+		if time.Now().After(deadline) {
+			t.Fatalf("idle Repos retained delivery goroutines: growth=%d", runtime.NumGoroutine()-baseline)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
 
 func nextOperation(t *testing.T, samples <-chan OperationStats, name string) OperationStats {
 	t.Helper()
@@ -151,6 +241,7 @@ func TestOperationObserverDoesNotBlockOrPanic(t *testing.T) {
 	mu := lock.(*sync.Mutex)
 	outsideLock := make(chan bool, 2)
 	entered, release, finished := make(chan struct{}, 4), make(chan struct{}), make(chan struct{}, 4)
+	var unblock sync.Once
 	f.g.cfg.Observe = func(OperationStats) {
 		free := mu.TryLock()
 		if free {
@@ -163,15 +254,9 @@ func TestOperationObserverDoesNotBlockOrPanic(t *testing.T) {
 		panic("observer failure")
 	}
 	t.Cleanup(func() {
-		close(release)
-		for range 2 {
-			select {
-			case <-finished:
-			case <-time.After(time.Second):
-			}
-		}
+		unblock.Do(func() { close(release) })
 	})
-	for range 2 {
+	for i := range 2 {
 		done := make(chan error, 1)
 		go func() { _, err := f.g.ReadCommitMessage(t.Context(), testRepo, f.base); done <- err }()
 		select {
@@ -180,10 +265,24 @@ func TestOperationObserverDoesNotBlockOrPanic(t *testing.T) {
 		case <-time.After(3 * time.Second):
 			t.Fatal("observer blocked an operation or held its lock")
 		}
-		<-entered
-		if !<-outsideLock {
-			t.Fatal("observer ran while the cache lock was held")
+		if i == 0 {
+			<-entered
+			if !<-outsideLock {
+				t.Fatal("observer ran while the cache lock was held")
+			}
 		}
+	}
+	unblock.Do(func() { close(release) })
+	for range 2 {
+		select {
+		case <-finished:
+		case <-time.After(time.Second):
+			t.Fatal("observer panic stopped delivery")
+		}
+	}
+	<-entered
+	if !<-outsideLock {
+		t.Fatal("observer ran while the cache lock was held")
 	}
 }
 

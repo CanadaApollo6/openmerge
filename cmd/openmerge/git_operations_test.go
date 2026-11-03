@@ -25,6 +25,7 @@ func TestGitOperationLogs(t *testing.T) {
 		{"failed", gitops.OperationStats{GCRan: true, GCOutcome: gitops.GCFailed}, "WARN"},
 		{"timed out", gitops.OperationStats{GCRan: true, GCOutcome: gitops.GCTimedOut}, "WARN"},
 		{"backoff", gitops.OperationStats{GCOutcome: gitops.GCSkippedBackoff}, "DEBUG"},
+		{"dropped", gitops.OperationStats{Dropped: 37}, "WARN"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
@@ -40,6 +41,7 @@ func TestGitOperationLogs(t *testing.T) {
 				"wait_ms": tc.stats.Wait.Seconds() * 1000, "hold_ms": tc.stats.Hold.Seconds() * 1000,
 				"maintenance_ms": tc.stats.Maintenance.Seconds() * 1000,
 				"gc_ran":         tc.stats.GCRan, "gc_ms": tc.stats.GC.Seconds() * 1000, "gc_outcome": string(tc.stats.GCOutcome),
+				"dropped": float64(tc.stats.Dropped),
 			} {
 				if record[key] != want {
 					t.Fatalf("%s = %v, want %v", key, record[key], want)

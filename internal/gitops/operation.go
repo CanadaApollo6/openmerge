@@ -35,6 +35,55 @@ type OperationStats struct {
 	GCOutcome          GCOutcome
 	CacheBytes         int64
 	CacheBytesMeasured bool
+	// Dropped counts samples discarded by this Repo since the prior delivery.
+	Dropped uint64
+}
+
+type operationObserver struct {
+	mu      sync.Mutex
+	queue   chan OperationStats
+	running bool
+	dropped uint64
+}
+
+func (r *Repo) observeOperation(stats OperationStats) {
+	o := &r.observer
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.queue == nil {
+		o.queue = make(chan OperationStats, 256)
+	}
+	select {
+	case o.queue <- stats:
+	default:
+		o.dropped++
+	}
+	if !o.running {
+		o.running = true
+		go r.deliverOperations()
+	}
+}
+
+func (r *Repo) deliverOperations() {
+	o := &r.observer
+	for {
+		o.mu.Lock()
+		var stats OperationStats
+		select {
+		case stats = <-o.queue:
+			stats.Dropped, o.dropped = o.dropped, 0
+		default:
+			// Serialize idle exit with enqueue so a sample cannot be stranded.
+			o.running = false
+			o.mu.Unlock()
+			return
+		}
+		o.mu.Unlock()
+		func() {
+			defer func() { _ = recover() }()
+			r.cfg.Observe(stats)
+		}()
+	}
 }
 
 type cacheLockMode int
@@ -86,11 +135,7 @@ func (g *cacheGuard) release(s *session) {
 	defer func() {
 		g.mu.Unlock()
 		if g.stats != nil {
-			observe, stats := g.r.cfg.Observe, *g.stats
-			go func() {
-				defer func() { _ = recover() }()
-				observe(stats)
-			}()
+			g.r.observeOperation(*g.stats)
 		}
 	}()
 	if g.stats != nil {

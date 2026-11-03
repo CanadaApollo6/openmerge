@@ -24,7 +24,8 @@ import (
 // must remain valid for that push.
 type Remote func(context.Context, forge.RepoRef) (url string, auth Auth, err error)
 
-// MaintenanceTimeout bounds cache maintenance after an operation's context ends.
+// MaintenanceTimeout bounds cache maintenance after an operation's context ends,
+// with up to one additional second to drain command pipes.
 const MaintenanceTimeout = 30 * time.Second
 
 // Identity names an author or committer of a git commit.
@@ -47,19 +48,23 @@ type Config struct {
 	// an operation. Zero selects one hour / 512 MiB; negative disables a trigger.
 	GCInterval       time.Duration
 	GCThresholdBytes int64
-	// Observe receives one sample per successful cache lock acquisition, after
-	// release. Calls are asynchronous, may overlap, and panics are recovered.
-	// A nil observer disables timing.
+	// Observe receives best-effort samples after successful cache lock release.
+	// One asynchronous worker per Repo serializes callbacks and recovers panics.
+	// At most 256 samples wait behind a callback; overflow is dropped and counted
+	// in the next delivered sample's Dropped field. The worker exits when idle.
+	// A blocked callback retains one worker until it returns. A nil observer
+	// disables timing and delivery.
 	Observe func(OperationStats)
 }
 
-// Repo is a CLI-backed Git implementation. Construct it with New.
+// Repo is a CLI-backed Git implementation. Construct it with New; do not copy it.
 type Repo struct {
 	cfg                Config
 	git                string
 	askpass            string
 	explicitBase       bool
 	maintenanceTimeout time.Duration // test override; zero uses MaintenanceTimeout
+	observer           operationObserver
 }
 
 var (
