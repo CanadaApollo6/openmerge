@@ -29,7 +29,7 @@ func (r *Repo) AcquireCommits(ctx context.Context, repo forge.RepoRef, shas []st
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	s, unlock, err := r.openSession(ctx, repo, true)
+	s, unlock, err := r.openSession(ctx, repo, "acquire-commits", true)
 	if err != nil {
 		return nil, err
 	}
@@ -69,10 +69,8 @@ func (r *Repo) AcquireCommits(ctx context.Context, repo forge.RepoRef, shas []st
 	}
 	return func() {
 		// All lease state and refs share the readers/maintenance cache lock.
-		lock, _ := cacheLocks.LoadOrStore(s.dir, &sync.Mutex{})
-		mu := lock.(*sync.Mutex)
-		mu.Lock()
-		defer mu.Unlock()
+		guard, _ := r.acquireCache(context.Background(), s.dir, repo, "release-commits", cacheBlocking)
+		defer guard.release(nil)
 		// Repeated releases retry deletion; maintenance also retries non-live refs.
 		cleanup()
 	}, nil

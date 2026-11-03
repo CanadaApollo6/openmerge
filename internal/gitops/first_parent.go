@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
@@ -29,10 +28,8 @@ func (r *Repo) FirstParentCommits(ctx context.Context, repo forge.RepoRef, base,
 		}
 	}
 	dir := filepath.Join(r.cfg.WorkDir, fmt.Sprintf("%x.git", sha256.Sum256([]byte(repo.Path))))
-	lock, _ := cacheLocks.LoadOrStore(dir, &sync.Mutex{})
-	mu := lock.(*sync.Mutex)
-	mu.Lock()
-	defer mu.Unlock()
+	guard, _ := r.acquireCache(ctx, dir, repo, "first-parent-commits", cacheBlocking)
+	defer guard.release(nil)
 	s := &session{r: r, dir: dir, diffRead: true}
 	for _, sha := range []string{base, head} {
 		if _, _, err := s.run(ctx, "", "cat-file", "-e", sha+"^{commit}"); err != nil {

@@ -583,6 +583,30 @@ events use PR zero, and unavailable batch/SHA fields are empty. DEBUG adds
 reconciliation cycles and quota backoff deadlines. Unchanged polls and repeated
 check results do not emit duplicate INFO transitions.
 
+Git cache operations emit `git cache operation` records after releasing the cache
+lock. `repository` is the same forge `owner/name` used by queue logs, and
+`operation` identifies the public method, for example `build-test-ref`, `land`, or
+`revision-diff`. `wait_ms`, `hold_ms`, `maintenance_ms`, and `gc_ms` are durations
+in milliseconds. Hold time excludes maintenance. `gc_ran` indicates an attempt;
+`gc_outcome` is `ok`, `failed`, `timed-out`, `skipped-backoff`, or empty when GC was
+not due or maintenance stopped before GC. `cache_bytes` is present only when
+object bytes were measured after a successful GC.
+
+Ordinary operations log at DEBUG. Records rise to INFO when lock wait is at
+least 1 second, hold is at least 10 seconds, maintenance is at least 5 seconds,
+or GC ran. Failed or timed-out GC logs at WARN. These records are asynchronous
+and can arrive out of order. Busy local reads and canceled waits that never
+acquire the lock produce no record. Cache paths and Git command diagnostics are
+not included.
+
+Cache maintenance has a 30-second deadline. After failed or timed-out GC,
+`openmerge-gc-attempt` records the failure time. Only GC backs off for the GC
+interval (default one hour), with a one-hour fallback when only the size trigger
+is enabled. Ref cleanup and base-history retention still run on every maintenance
+pass. A successful GC clears back-off and updates `openmerge-gc` with its time
+and object bytes. Git handles stale `gc.pid` files from dead processes and removes
+interrupted temporary packs during a successful retry.
+
 Logs are best effort, not the durable event journal. A process crash can leave a
 committed transition unlogged. On restart, OpenMerge resumes from Postgres,
 refreshes observations, and resolves any uncertain landing through its fence.

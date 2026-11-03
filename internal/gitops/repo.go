@@ -24,7 +24,8 @@ import (
 // must remain valid for that push.
 type Remote func(context.Context, forge.RepoRef) (url string, auth Auth, err error)
 
-// MaintenanceTimeout bounds cache maintenance after an operation's context ends.
+// MaintenanceTimeout bounds cache maintenance after an operation's context ends,
+// with up to one additional second to drain command pipes.
 const MaintenanceTimeout = 30 * time.Second
 
 // Identity names an author or committer of a git commit.
@@ -47,14 +48,23 @@ type Config struct {
 	// an operation. Zero selects one hour / 512 MiB; negative disables a trigger.
 	GCInterval       time.Duration
 	GCThresholdBytes int64
+	// Observe receives best-effort samples after successful cache lock release.
+	// One asynchronous worker per Repo serializes callbacks and recovers panics.
+	// At most 256 samples wait behind a callback; overflow is dropped and counted
+	// in the next delivered sample's Dropped field. The worker exits when idle.
+	// A blocked callback retains one worker until it returns. A nil observer
+	// disables timing and delivery.
+	Observe func(OperationStats)
 }
 
-// Repo is a CLI-backed Git implementation. Construct it with New.
+// Repo is a CLI-backed Git implementation. Construct it with New; do not copy it.
 type Repo struct {
-	cfg          Config
-	git          string
-	askpass      string
-	explicitBase bool
+	cfg                Config
+	git                string
+	askpass            string
+	explicitBase       bool
+	maintenanceTimeout time.Duration // test override; zero uses MaintenanceTimeout
+	observer           operationObserver
 }
 
 var (
@@ -146,19 +156,18 @@ func (r *Repo) identityEnv() []string {
 		"GIT_AUTHOR_DATE=" + date, "GIT_COMMITTER_DATE=" + date}
 }
 
-func (r *Repo) open(ctx context.Context, repo forge.RepoRef) (*session, func(), error) {
-	return r.openSession(ctx, repo, false)
+func (r *Repo) open(ctx context.Context, repo forge.RepoRef, operation string) (*session, func(), error) {
+	return r.openSession(ctx, repo, operation, false)
 }
 
-func (r *Repo) openSession(ctx context.Context, repo forge.RepoRef, diffRead bool) (*session, func(), error) {
+func (r *Repo) openSession(ctx context.Context, repo forge.RepoRef, operation string, diffRead bool) (*session, func(), error) {
 	key := fmt.Sprintf("%x.git", sha256.Sum256([]byte(repo.Path)))
 	dir := filepath.Join(r.cfg.WorkDir, key)
-	lock, _ := cacheLocks.LoadOrStore(dir, &sync.Mutex{})
-	mu := lock.(*sync.Mutex)
-	if err := lockCache(ctx, mu); err != nil {
+	guard, err := r.acquireCache(ctx, dir, repo, operation, cachePoll)
+	if err != nil {
 		return nil, nil, err
 	}
-	fail := func(err error) (*session, func(), error) { mu.Unlock(); return nil, nil, err }
+	fail := func(err error) (*session, func(), error) { guard.release(nil); return nil, nil, err }
 	if err := ctx.Err(); err != nil {
 		return fail(err)
 	}
@@ -177,13 +186,7 @@ func (r *Repo) openSession(ctx context.Context, repo forge.RepoRef, diffRead boo
 	if err := s.startAcquisitions(ctx); err != nil {
 		return fail(err)
 	}
-	return s, func() {
-		defer mu.Unlock()
-		// All commands, including push, have completed before maintenance runs.
-		maintenanceCtx, cancel := context.WithTimeout(context.Background(), MaintenanceTimeout)
-		defer cancel()
-		_ = s.maintainCache(maintenanceCtx)
-	}, nil
+	return s, func() { guard.release(s) }, nil
 }
 
 func (s *session) resolveRemote(ctx context.Context, repo forge.RepoRef) error {
@@ -254,7 +257,7 @@ func (s *session) read(ctx context.Context, refs ...string) (map[string]string, 
 
 // ReadRef queries the remote rather than trusting the local cache.
 func (r *Repo) ReadRef(ctx context.Context, repo forge.RepoRef, ref string) (string, error) {
-	s, unlock, err := r.open(ctx, repo)
+	s, unlock, err := r.open(ctx, repo, "read-ref")
 	if err != nil {
 		return "", err
 	}
@@ -275,7 +278,7 @@ func (r *Repo) ReadRef(ctx context.Context, repo forge.RepoRef, ref string) (str
 
 // HasMergeCommits inspects the complete newly introduced commit graph.
 func (r *Repo) HasMergeCommits(ctx context.Context, repo forge.RepoRef, base, head string) (bool, error) {
-	s, unlock, err := r.open(ctx, repo)
+	s, unlock, err := r.open(ctx, repo, "has-merge-commits")
 	if err != nil {
 		return false, err
 	}
@@ -289,7 +292,7 @@ func (r *Repo) HasMergeCommits(ctx context.Context, repo forge.RepoRef, base, he
 
 // IsAncestor checks graph reachability after obtaining any missing commits.
 func (r *Repo) IsAncestor(ctx context.Context, repo forge.RepoRef, ancestor, descendant string) (bool, error) {
-	s, unlock, err := r.open(ctx, repo)
+	s, unlock, err := r.open(ctx, repo, "is-ancestor")
 	if err != nil {
 		return false, err
 	}

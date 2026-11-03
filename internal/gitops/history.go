@@ -14,7 +14,7 @@ func (r *Repo) CommitsBetween(ctx context.Context, repo forge.RepoRef, base, hea
 	if err := forge.ValidateHistoryLimit(limit, forge.MaxCommitHistoryCommits); err != nil {
 		return nil, false, err
 	}
-	s, unlock, err := r.open(ctx, repo)
+	s, unlock, err := r.open(ctx, repo, "commits-between")
 	if err != nil {
 		return nil, false, err
 	}

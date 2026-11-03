@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"path/filepath"
-	"sync"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
@@ -21,10 +20,8 @@ func (r *Repo) ReadCommitMessage(ctx context.Context, repo forge.RepoRef, sha st
 	// This read must remain independent of remote resolution and acquisition.
 	// diffRead disables replacements, grafts, lazy fetching and all transports.
 	dir := filepath.Join(r.cfg.WorkDir, fmt.Sprintf("%x.git", sha256.Sum256([]byte(repo.Path))))
-	lock, _ := cacheLocks.LoadOrStore(dir, &sync.Mutex{})
-	mu := lock.(*sync.Mutex)
-	mu.Lock()
-	defer mu.Unlock()
+	guard, _ := r.acquireCache(ctx, dir, repo, "read-commit-message", cacheBlocking)
+	defer guard.release(nil)
 	s := &session{r: r, dir: dir, diffRead: true}
 	return s.command(ctx, "", "show", "-s", "--format=%B", sha+"^{commit}")
 }

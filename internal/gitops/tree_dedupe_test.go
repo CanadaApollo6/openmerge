@@ -160,7 +160,8 @@ func TestTreeDedupeShadowNeverBlocksLanding(t *testing.T) {
 		"    i=0; while [ ! -e '" + release + "' ] && [ $i -lt 1000 ]; do sleep 0.01; i=$((i+1)); done\n    break\n  fi\ndone\n" +
 		"exec '" + f.g.git + "' \"$@\"\n"
 	must(t, os.WriteFile(wrapper, []byte(script), 0o700))
-	shadow := *f.g
+	shadow, err := New(ctx, f.g.cfg)
+	must(t, err)
 	shadow.git = wrapper
 	done := make(chan error, 1)
 	go func() {
@@ -179,7 +180,7 @@ func TestTreeDedupeShadowNeverBlocksLanding(t *testing.T) {
 	// Landing arrives while the shadow is parked mid-read and must not wait.
 	landingCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	_, unlock, err := f.g.open(landingCtx, testRepo)
+	_, unlock, err := f.g.open(landingCtx, testRepo, "test")
 	if err != nil {
 		t.Fatalf("landing waited on the in-flight shadow read: %v", err)
 	}

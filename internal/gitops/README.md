@@ -63,18 +63,69 @@ After an operation completes, under the same cache lock, maintenance runs
 `git gc --prune=now --quiet` when either the cache has grown by
 `Config.GCThresholdBytes` since its last collection (default 512 MiB of loose and
 packed objects) or `Config.GCInterval` has elapsed (default one hour). The
-`openmerge-gc` stamp records the time and the cache size after the last
-successful collection. `refs/openmerge-cache/base` points at the newest base
-commit a build used or a landing pushed, so collection keeps the base history
-and removes only stale PR and build objects. Without that ref, every collection
-emptied the cache and the next operation fetched the whole history again; a
-cache whose history exceeded the threshold collected after every operation. Zero selects the defaults; a negative value disables that
-trigger. Collection also removes PR cache refs left by older versions or
-interrupted operations. It never runs with a push or another operation in flight
-in that cache. Collection is best effort, with a 30-second deadline; failures are
-retried on later operations. These are soft triggers, not hard disk limits: a
-single fetch can exceed the threshold, and an idle cache waits until its next
-operation for collection.
+`openmerge-gc` stamp records the time and object bytes after the last successful
+collection. `refs/openmerge-cache/base` points at the newest base commit a build
+used or a landing pushed, so collection keeps the base history and removes stale
+PR and build objects. Zero selects the defaults; a negative value disables that
+trigger. These are soft triggers, not hard disk limits. A single fetch can exceed
+the threshold, and an idle cache waits until its next operation for collection.
+
+Maintenance has a separate 30-second deadline, plus up to one second to drain
+command pipes. Every Git command runs in its own process group on Unix. On
+Linux, a supervisor observes leader exit with `waitid(WEXITED|WNOWAIT)`, kills
+remaining group members on normal exit or cancellation, and only then permits
+`Cmd.Wait` to reap the leader. The unreaped leader pins the PID and PGID until
+cleanup finishes. This covers both `Run` and the streaming provenance reader's
+`Start`/`Wait`, including its `prlimit` wrapper. `WaitDelay` remains a pipe backstop.
+
+Git helpers must not outlive a command against a locked cache. Every invocation
+sets `gc.auto=0` and `maintenance.auto=false`; hooks and credential helpers are
+disabled. The only explicit collection is foreground `git gc --prune=now --quiet`.
+There is no explicit `git maintenance`, background GC, or fetch option enabling
+auto-GC. Keep detached maintenance disabled: a daemon that calls `setsid()`
+escapes this process group. This is lifecycle cleanup for trusted Git and helpers,
+not containment of arbitrary processes. Abrupt termination of OpenMerge itself
+still needs a supervising cgroup to clean up descendants.
+
+Darwin and BSD retain Cancel-only group cleanup because x/sys does not expose
+`Waitid` with `WNOWAIT` there. A descendant can survive an early leader exit, and
+cancellation can signal a reused PGID after the leader is reaped. Production runs
+on Linux; the lifecycle guarantee above does not extend to those fallbacks.
+Non-Unix platforms retain direct-process cancellation with the same pipe-drain
+limit. A failed or timed-out GC writes
+`openmerge-gc-attempt` with the attempt time and leaves the success stamp alone.
+Only GC backs off for `Config.GCInterval`, or one hour when the interval trigger
+is disabled and the size trigger is enabled. Successful GC removes the attempt
+stamp. Future attempt timestamps count as expired, so a clock rollback or a
+restored file cannot suppress collection for years. Ref sweeps and base-ref
+updates continue during back-off, even when GC is disabled. Collection never
+overlaps a push or another locked operation in the same cache. An interrupted GC
+can leave `gc.pid` and `tmp_pack_*` files. Git accepts a stale PID whose process
+has exited and removes temporary packs during a later successful collection;
+OpenMerge does not delete Git's files itself.
+
+`Config.Observe` optionally receives best-effort `OperationStats` samples for
+successful cache lock acquisitions, including operations that return errors.
+Busy TryLock and canceled waits do not acquire the lock and produce no sample.
+Names identify the public method, such as `build-test-ref`, `land`,
+`revision-diff`, or `local-config`.
+Acquisition lease releases use `release-commits`. Samples include the forge
+repository identity, lock wait, hold excluding maintenance, maintenance duration,
+whether GC ran, GC duration and outcome, and object bytes after GC when measured.
+An empty GC outcome means collection was not due or maintenance stopped before
+GC. Other outcomes are `ok`, `failed`, `timed-out`, and `skipped-backoff`.
+
+Observer calls run asynchronously after unlocking and recover panics. One worker
+per Repo serializes callbacks, with a buffer of 256 samples. Enqueue never waits
+for a callback or space in the buffer. Overflow drops samples; the next delivered
+sample reports their count in `Dropped`. Delivery order can differ from lock
+acquisition order. The worker starts lazily and exits as soon as the queue is
+empty. A callback that never returns retains at most one worker per Repo; tests
+that block callbacks must unblock them during cleanup. Nil disables timing and
+callback dispatch. The serving logger includes `dropped` and raises samples
+reporting drops to WARN so overload is visible at normal log levels.
+Local immutable reads and lease releases retain their existing no-maintenance
+policy. Lock granularity is unchanged.
 
 `PullRequest` reads current PR metadata when generating test commits, rejecting a
 number/head mismatch or invalid author/title before pushing. `serve` supplies

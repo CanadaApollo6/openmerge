@@ -10,7 +10,7 @@ import (
 
 // VerifyFastForward validates the immutable marker and pinned landing history.
 func (r *Repo) VerifyFastForward(ctx context.Context, repo forge.RepoRef, base, tested, head string) error {
-	s, unlock, err := r.open(ctx, repo)
+	s, unlock, err := r.open(ctx, repo, "verify-fast-forward")
 	if err != nil {
 		return err
 	}
