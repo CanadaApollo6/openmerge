@@ -136,6 +136,7 @@ func (r *Repo) Land(ctx context.Context, repo forge.RepoRef, req forge.LandReque
 	if err != nil {
 		return "", err
 	}
+	s.retain = landed
 	return next, nil
 }
 
