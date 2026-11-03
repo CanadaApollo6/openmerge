@@ -125,6 +125,21 @@ Riel St. Amand (`CanadaApollo6`) accepted this ADR on 2026-11-03. Acceptance
 changes no live service: each slice keeps the deploy class in the rollout
 table, and the Hold slice still needs its own approval.
 
+### Evaluation correction (2026-11-03)
+
+Two statements above were wrong, and the decision does not depend on either.
+Before PR #217 the workflow had no Go build cache at all (`actions/setup-go`
+ran with `cache: false`, and no job used `actions/cache`). Queue and main runs
+were therefore equally cold: recorded `check` setup was a median of 26 seconds
+on both. The Context's claim that queue branches could not read caches saved by
+pull requests described a problem that did not exist yet: #217 added the first
+Go cache and saved it from main so that it would not arise. The evaluation's
+expectation that pre-#217 runs produce `cold-setup` is therefore withdrawn.
+Pre-#217 runs must still produce `long-pole` and `serial-step`. The first
+recorded report ([PR #222](https://github.com/CanadaApollo6/openmerge/pull/222))
+keeps the `cold-setup` threshold unchanged rather than lowering it to match the
+expectation.
+
 ## Consequences
 
 Users get specific, checkable advice on their own workflows, which saves CI
