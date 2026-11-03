@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/forge/fake"
@@ -236,4 +237,98 @@ func TestLiveActionsRejectsMismatchedJournalIdentity(t *testing.T) {
 	if r.QueueRuns != 0 || len(r.Jobs) != 0 || !slices.ContainsFunc(r.Gaps, func(g Gap) bool { return g.RunID == 1 && g.Code == "run-identity" }) {
 		t.Fatalf("mismatched evidence used %+v", r)
 	}
+}
+
+type statusError int
+
+func (e statusError) Error() string       { return fmt.Sprintf("HTTP %d", int(e)) }
+func (e statusError) HTTPStatusCode() int { return int(e) }
+
+func TestLiveActionsRepositoryAccessIsGap(t *testing.T) {
+	for _, status := range []statusError{403, 404} {
+		j, _, f := liveFixture(t, 1, "long-pole")
+		f.FailNext("DefaultBranch", status)
+		a, err := ReadActions(t.Context(), f, j, window, 100)
+		if err != nil {
+			t.Fatalf("HTTP %d: %v", status, err)
+		}
+		if len(a.Runs) != 0 || !slices.ContainsFunc(a.Gaps, func(g Gap) bool { return g.Code == "actions-access" }) {
+			t.Fatalf("HTTP %d: %+v", status, a)
+		}
+	}
+}
+
+type duplicateBaselineReader struct{ forge.ActionsReader }
+
+// The last entry of page 1 repeats on page 2 in place of an omitted run, so the
+// entry count still matches Total.
+func (r duplicateBaselineReader) DefaultBranchActions(ctx context.Context, repo forge.RepoRef, branch string, since, until time.Time, page int) (forge.ActionsRunsPage, error) {
+	runs, err := r.ActionsReader.DefaultBranchActions(ctx, repo, branch, since, until, page)
+	if err == nil && page == 2 && len(runs.Runs) > 0 {
+		prev, _ := r.ActionsReader.DefaultBranchActions(ctx, repo, branch, since, until, 1)
+		runs.Runs[0] = prev.Runs[len(prev.Runs)-1]
+	}
+	return runs, err
+}
+
+func TestLiveActionsDuplicateBaselineIsGap(t *testing.T) {
+	j, a, f := liveFixture(t, 1, "long-pole")
+	runs := []Run{a.Runs[0]}
+	for i := 0; i < 101; i++ {
+		warm := a.Runs[1]
+		warm.ID = uint64(1000 + i)
+		runs = append(runs, warm)
+	}
+	f.SetActions(forge.RepoRef{Path: j.Key.Repository}, runs)
+	live, err := ReadActions(t.Context(), duplicateBaselineReader{f}, j, window, 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.ContainsFunc(live.Runs, func(r Run) bool { return r.HeadBranch == "main" }) || !slices.ContainsFunc(live.Gaps, func(g Gap) bool { return g.Code == "baseline-data" }) {
+		t.Fatalf("duplicate baseline inventory used: %d runs, gaps %+v", len(live.Runs), live.Gaps)
+	}
+}
+
+func TestLiveActionsReadsOnlyGraphEvidence(t *testing.T) {
+	for path, want := range map[string]bool{
+		".github/workflows/ci.yml":         true,
+		".github/workflows/ci.yaml":        true,
+		".openmerge.yml":                   true,
+		".github/openmerge.yaml":           true,
+		".github/workflows/nested/ci.yml":  false,
+		".github/workflows/../secrets.yml": false,
+		".github/workflows/.yml.txt":       false,
+		".env":                             false,
+		"dynamic/pages/pages-build":        false,
+	} {
+		if reportReadable(path) != want {
+			t.Errorf("reportReadable(%q) = %v", path, !want)
+		}
+	}
+	j, a, f := liveFixture(t, 1, "long-pole")
+	a.Runs[0].Path = "config/secrets.yml"
+	f.SetActions(forge.RepoRef{Path: j.Key.Repository}, a.Runs)
+	reader := &pathRecorder{ActionsReader: f}
+	live, err := ReadActions(t.Context(), reader, j, window, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(live.Runs) == 0 || live.Runs[0].Graph != nil {
+		t.Fatalf("out-of-scope workflow path produced a graph: %+v", live.Runs)
+	}
+	for _, path := range reader.paths {
+		if !reportReadable(path) {
+			t.Fatalf("read %q outside graph evidence", path)
+		}
+	}
+}
+
+type pathRecorder struct {
+	forge.ActionsReader
+	paths []string
+}
+
+func (r *pathRecorder) ReadFile(ctx context.Context, repo forge.RepoRef, ref, path string) ([]byte, error) {
+	r.paths = append(r.paths, path)
+	return r.ActionsReader.ReadFile(ctx, repo, ref, path)
 }

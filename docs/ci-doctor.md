@@ -69,14 +69,20 @@ the cap and timeout; persistent failures exit 1 with a sanitized message.
 
 A missing installation `actions` grant or HTTP 403/404 from an Actions endpoint
 produces an `actions-permission` gap and exits successfully. This includes deleted
-or expired runs, which GitHub may hide with 404. Cap exhaustion produces
+or expired runs, which GitHub may hide with 404. HTTP 403/404 from the
+repository itself, for example after access is revoked, produces an
+`actions-access` gap and exits successfully. Cap exhaustion produces
 `actions-budget` gaps for remaining identified runs. Incomplete job pagination
 produces `actions-data` gaps and never supplies findings. Baseline pagination must be complete before comparison; GitHub's
 1000-run search limit produces a `baseline-data` gap if it truncates the inventory.
+A run ID that appears twice across pages also produces a `baseline-data` gap,
+because a repeat can stand in for an omitted run.
 Use a shorter window when that happens.
 
 The reader fetches the workflow path and supported OpenMerge configuration paths
-at the queue run's head SHA, using Contents read. These files supply dependency
+at the queue run's head SHA, using Contents read. It refuses any path outside
+`.github/workflows/*.yml`, `.github/workflows/*.yaml`, and the configuration
+paths, and a refused path produces a `dependency-graph` gap. These files supply dependency
 and required-check evidence only. Literal job names and static Cartesian matrices
 with default display names are supported. Dynamic expressions, matrix include or
 exclude, and reusable workflows produce dependency gaps. Missing files and

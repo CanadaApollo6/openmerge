@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/config"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
@@ -18,7 +20,18 @@ const DefaultActionsAPIBudget = 500
 var (
 	errActionsBudget     = errors.New("Actions report API call budget exhausted")
 	errActionsIncomplete = errors.New("incomplete Actions pagination")
+	errReadScope         = errors.New("CI doctor reads only workflow files and OpenMerge configuration")
 )
+
+// reportReadable limits Contents reads to the dependency-graph evidence the jobs
+// API omits: the run's workflow file and the OpenMerge policy at the run's SHA.
+func reportReadable(path string) bool {
+	if slices.Contains(config.Paths, path) {
+		return true
+	}
+	name, ok := strings.CutPrefix(path, ".github/workflows/")
+	return ok && name != "" && !strings.ContainsAny(name, "/\\") && (strings.HasSuffix(name, ".yml") || strings.HasSuffix(name, ".yaml"))
+}
 
 // liveRead charges every attempted data request. Retry only reads, at most three
 // times, preserving cancellation and the installation transport's quota floors.
@@ -74,6 +87,8 @@ func ReadActions(ctx context.Context, reader forge.ActionsReader, j store.Journa
 			code = "actions-permission"
 		case errors.As(err, &rate):
 			code = "actions-rate-limit"
+		case readDenied(err):
+			code = "actions-access"
 		}
 		if code == "" {
 			return false
@@ -105,6 +120,9 @@ func ReadActions(ctx context.Context, reader forge.ActionsReader, j store.Journa
 		key := sha + ":" + path
 		if data, ok := files[key]; ok {
 			return data, nil
+		}
+		if !reportReadable(path) {
+			return nil, fmt.Errorf("%w: %q", errReadScope, path)
 		}
 		data, err := liveRead(ctx, &budget, func() ([]byte, error) { return reader.ReadFile(ctx, repo, sha, path) })
 		if err == nil {
@@ -230,6 +248,14 @@ func ReadActions(ctx context.Context, reader forge.ActionsReader, j store.Journa
 		}
 		return 0
 	})
+	// A repeated entry across pages can stand in for an omitted run while the
+	// count still matches Total, so the inventory is only complete with unique IDs.
+	for i := 1; i < len(baseline); i++ {
+		if baseline[i].ID == baseline[i-1].ID {
+			result.Gaps = append(result.Gaps, Gap{Code: "baseline-data", Detail: "duplicate default-branch run in pagination"})
+			return result, nil
+		}
+	}
 	for _, r := range baseline {
 		if r.HeadBranch != branch || r.Event != "push" || r.CreatedAt.Before(w.Since) || !r.CreatedAt.Before(w.Until) {
 			continue
@@ -248,6 +274,9 @@ func ReadActions(ctx context.Context, reader forge.ActionsReader, j store.Journa
 }
 
 func readDenied(err error) bool {
+	if errors.Is(err, errReadScope) {
+		return true
+	}
 	var status interface{ HTTPStatusCode() int }
 	return errors.As(err, &status) && (status.HTTPStatusCode() == 403 || status.HTTPStatusCode() == 404)
 }
