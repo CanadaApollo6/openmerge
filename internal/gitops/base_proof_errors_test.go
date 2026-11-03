@@ -34,7 +34,7 @@ func TestBuildBaseProofPreservesFailureClasses(t *testing.T) {
 			live := f.heads[1]
 			f.push("main", live, false)
 			opts := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: "refs/heads/proof", BuildBaseSHA: f.base}}, []authority.Rule{})
-			s, unlock, err := f.g.open(t.Context(), testRepo)
+			s, unlock, err := f.g.open(t.Context(), testRepo, "test")
 			must(t, err)
 			defer unlock()
 			must(t, s.commits(t.Context(), f.base, live))
@@ -91,7 +91,7 @@ func TestBuildBaseProofPreservesFailureClasses(t *testing.T) {
 func TestAuthorityCompletionDedicatedCacheAvoidsSessionLock(t *testing.T) {
 	f := newFixture(t)
 	completion := f.client(t, 0)
-	session, unlock, err := f.g.open(t.Context(), testRepo)
+	session, unlock, err := f.g.open(t.Context(), testRepo, "test")
 	must(t, err)
 	defer unlock()
 	// The guard runs while this mutex is held. Reusing this cache would

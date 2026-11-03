@@ -284,7 +284,7 @@ func (s *session) preparedPush(ctx context.Context, operation forge.PushOperatio
 
 // ReadPreparedRef distinguishes absence from a failed authority lease read.
 func (r *Repo) ReadPreparedRef(ctx context.Context, repo forge.RepoRef, ref string) (string, error) {
-	s, unlock, err := r.open(ctx, repo)
+	s, unlock, err := r.open(ctx, repo, "read-prepared-ref")
 	if err != nil {
 		return "", err
 	}

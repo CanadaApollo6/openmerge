@@ -84,13 +84,13 @@ func (f *installationTargets) bundle(ctx context.Context, id string) (result *in
 		return nil, err
 	}
 	committer := serveCommitter(ctx, f.options, f.logger, driver)
-	git, err := gitops.New(ctx, gitops.Config{WorkDir: filepath.Join(f.options.cache, id), Remote: driver.Remote, HeadRef: github.HeadRef, PullRequest: driver.PullRequestMetadata, CommitAuthors: driver.CommitAuthors, Committer: committer})
+	git, err := gitops.New(ctx, gitops.Config{WorkDir: filepath.Join(f.options.cache, id), Remote: driver.Remote, HeadRef: github.HeadRef, PullRequest: driver.PullRequestMetadata, CommitAuthors: driver.CommitAuthors, Committer: committer, Observe: observeGitOperations(f.logger)})
 	if err != nil {
 		return nil, err
 	}
 	bundle := &installationBundle{driver: driver, git: git}
 	if f.options.authorityPlan != "" {
-		bundle.authorityGit, err = gitops.New(ctx, gitops.Config{WorkDir: filepath.Join(f.options.cache, "authority-completion", id), Remote: driver.Remote, HeadRef: github.HeadRef})
+		bundle.authorityGit, err = gitops.New(ctx, gitops.Config{WorkDir: filepath.Join(f.options.cache, "authority-completion", id), Remote: driver.Remote, HeadRef: github.HeadRef, Observe: observeGitOperations(f.logger)})
 		if err != nil {
 			return nil, err
 		}
@@ -119,6 +119,7 @@ func (f *installationTargets) outsidePushHistory(ctx context.Context, key store.
 	return gitops.New(ctx, gitops.Config{
 		WorkDir: filepath.Join(f.options.cache, key.Installation),
 		Remote:  f.app.HistoryRemote(number), HeadRef: github.HeadRef,
+		Observe: observeGitOperations(f.logger),
 	})
 }
 

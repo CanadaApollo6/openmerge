@@ -13,7 +13,7 @@ func (r *Repo) DeleteBranch(ctx context.Context, repo forge.RepoRef, branch, exp
 	if err := forge.ValidateDeleteBranch(branch, expectedSHA); err != nil {
 		return err
 	}
-	s, unlock, err := r.open(ctx, repo)
+	s, unlock, err := r.open(ctx, repo, "delete-branch")
 	if err != nil {
 		return err
 	}

@@ -48,7 +48,7 @@ func TestPRCacheRefsAreTemporary(t *testing.T) {
 			} else if err == nil {
 				t.Fatal("invalid operation succeeded")
 			}
-			s, unlock, err := f.g.open(ctx, testRepo)
+			s, unlock, err := f.g.open(ctx, testRepo, "test")
 			must(t, err)
 			defer unlock()
 			refs, err := s.command(ctx, "", "for-each-ref", "--format=%(refname)", "refs/openmerge-cache/pr/")
@@ -89,7 +89,7 @@ func TestCacheGCPrunesUnreachableObjects(t *testing.T) {
 		t.Run(trigger, func(t *testing.T) {
 			f := newFixture(t)
 			ctx := context.Background()
-			s, unlock, err := f.g.open(ctx, testRepo)
+			s, unlock, err := f.g.open(ctx, testRepo, "test")
 			must(t, err)
 			tree, err := s.command(ctx, "", "mktree")
 			must(t, err)
@@ -158,7 +158,7 @@ func TestCacheGCKeepsBaseHistory(t *testing.T) {
 			} else {
 				f.build(forge.Merge, f.prs[:1], "keep-build")
 			}
-			s, unlock, err := f.g.open(ctx, testRepo)
+			s, unlock, err := f.g.open(ctx, testRepo, "test")
 			must(t, err)
 			defer unlock()
 			if _, err := s.command(ctx, "", "cat-file", "-e", retained+"^{commit}"); err != nil {
@@ -188,7 +188,7 @@ func TestCacheGCSizeTriggerMeasuresGrowth(t *testing.T) {
 	writeExecutable(t, wrapper, "for a in \"$@\"; do\nif [ \"$a\" = gc ]; then\nprintf gc >> "+shellQuote(record)+"\nfi\ndone\nexec "+shellQuote(gitPath)+" \"$@\"\n")
 	f.g.git = wrapper
 
-	s, unlock, err := f.g.open(ctx, testRepo)
+	s, unlock, err := f.g.open(ctx, testRepo, "test")
 	must(t, err)
 	stamp := filepath.Join(s.dir, "openmerge-gc")
 	data, err := os.ReadFile(stamp)
@@ -215,7 +215,7 @@ func TestCacheGCSizeTriggerMeasuresGrowth(t *testing.T) {
 			}
 			must(t, os.WriteFile(stamp, []byte(strconv.FormatInt(tc.baseline, 10)+"\n"), 0o600))
 			f.g.cfg.GCThresholdBytes = size / 2
-			_, unlock, err := f.g.open(ctx, testRepo)
+			_, unlock, err := f.g.open(ctx, testRepo, "test")
 			must(t, err)
 			unlock()
 			_, err = os.Stat(record)

@@ -127,13 +127,13 @@ func TestAcquireCommitsCrashRestartSweep(t *testing.T) {
 	}
 	r, err := New(t.Context(), cfg)
 	must(t, err)
-	s, unlock, err := r.open(t.Context(), testRepo)
+	s, unlock, err := r.open(t.Context(), testRepo, "test")
 	must(t, err)
 	if refs := gitCommand(t, dir, "", nil, "for-each-ref", "--format=%(refname)", acquiredRefPrefix); refs != "" {
 		unlock()
 		t.Fatalf("startup retained prior-process lease: %s", refs)
 	}
-	must(t, s.maintainCache(t.Context()))
+	must(t, s.maintainCache(t.Context(), nil))
 	unlock()
 	release, err := r.AcquireCommits(t.Context(), testRepo, []string{f.base})
 	must(t, err)
@@ -162,7 +162,7 @@ func TestAcquireCommitsFailedCleanupRetried(t *testing.T) {
 			if retry == "release" {
 				release()
 			} else {
-				_, unlock, err := f.g.open(t.Context(), testRepo)
+				_, unlock, err := f.g.open(t.Context(), testRepo, "test")
 				must(t, err)
 				unlock() // Deferred maintenance retries even with GC disabled.
 			}

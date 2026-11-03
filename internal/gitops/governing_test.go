@@ -65,7 +65,7 @@ func TestGoverningFilesMissingBlobAndHistory(t *testing.T) {
 	req := forge.GoverningFilesRequest{CommitSHA: sha, PathsComplete: true}
 	got, err := f.g.GoverningFiles(t.Context(), testRepo, req)
 	must(t, err)
-	s, unlock, err := f.g.open(t.Context(), testRepo)
+	s, unlock, err := f.g.open(t.Context(), testRepo, "test")
 	must(t, err)
 	dir := s.dir
 	unlock()
@@ -98,7 +98,7 @@ func TestGoverningLiteralPathsAndHistoryRechecks(t *testing.T) {
 	if got.Coverage.Completeness != forge.DiffComplete || present != 2 {
 		t.Fatalf("literal paths: %+v", got)
 	}
-	s, unlock, err := f.g.open(t.Context(), testRepo)
+	s, unlock, err := f.g.open(t.Context(), testRepo, "test")
 	must(t, err)
 	dir := s.dir
 	unlock()

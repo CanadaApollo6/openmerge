@@ -235,7 +235,7 @@ func TestRevisionDiffRejectsTagAndBrokenBlob(t *testing.T) {
 	req := forge.RevisionDiffRequest{BaseSHA: f.base, HeadSHA: f.prs[0].HeadSHA}
 	good, err := f.g.RevisionDiff(t.Context(), testRepo, req)
 	must(t, err)
-	s, unlock, err := f.g.open(t.Context(), testRepo)
+	s, unlock, err := f.g.open(t.Context(), testRepo, "test")
 	must(t, err)
 	id := good.Files[0].NewObjectID
 	// Copy the source's loose objects exactly; hide any fetched packs so the
@@ -287,7 +287,7 @@ func TestRevisionDiffShallowHistory(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			r := f.client(t, 0)
 			r.cfg.GCInterval, r.cfg.GCThresholdBytes = -1, -1
-			session, unlock, err := r.open(t.Context(), testRepo)
+			session, unlock, err := r.open(t.Context(), testRepo, "test")
 			must(t, err)
 			dir := session.dir
 			if mode == "existing-objects" {
@@ -393,7 +393,7 @@ func TestRevisionDiffIgnoresHostRenameAndSubmoduleSettings(t *testing.T) {
 			t.Fatalf("%+v", file)
 		}
 	}
-	session, unlock, err := f.g.open(t.Context(), testRepo)
+	session, unlock, err := f.g.open(t.Context(), testRepo, "test")
 	must(t, err)
 	_, err = session.command(t.Context(), "", "config", "diff.renameLimit", "1")
 	must(t, err)

@@ -122,7 +122,7 @@ func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.B
 	if err := forge.ValidateBuildRequest(req); err != nil {
 		return "", err
 	}
-	s, unlock, err := r.open(ctx, repo)
+	s, unlock, err := r.open(ctx, repo, "build-test-ref")
 	if err != nil {
 		return "", err
 	}

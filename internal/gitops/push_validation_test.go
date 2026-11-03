@@ -197,7 +197,7 @@ func TestAuthorityAcceptedObjectIsTheInspectedOID(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
 	top := f.build(forge.Squash, f.prs[:1], "accepted")
-	s, unlock, err := f.g.open(ctx, testRepo)
+	s, unlock, err := f.g.open(ctx, testRepo, "test")
 	must(t, err)
 	p, err := s.preparedPush(ctx, forge.PushBuild, []forge.PushRef{{Ref: "refs/heads/accepted", NewSHA: top, CreationBaseSHA: f.base}})
 	must(t, err)
@@ -322,7 +322,7 @@ func TestPreparedModeOnlyChangeRecordsPathWithoutPostImage(t *testing.T) {
 	if before != after {
 		t.Fatal("mode-only fixture changed the blob")
 	}
-	s, unlock, err := f.g.open(t.Context(), testRepo)
+	s, unlock, err := f.g.open(t.Context(), testRepo, "test")
 	must(t, err)
 	defer unlock()
 	p, err := s.preparedPush(t.Context(), forge.PushBuild, []forge.PushRef{{Ref: "refs/heads/mode-only", NewSHA: tip, CreationBaseSHA: f.base}})
@@ -349,7 +349,7 @@ func TestPreparedChangedPathsAndCreationBoundary(t *testing.T) {
 	deleted := f.diffCommit(old, "delete restricted source", map[string]diffEntry{"secret.pem": {}})
 	right := f.diffCommit(old, "other merge parent", map[string]diffEntry{"secret.pem": {mode: "100644", content: "other secret"}})
 	merged := f.diffCommit(unrelated, "merge keeps first parent tree", nil, right)
-	s, unlock, err := f.g.open(ctx, testRepo)
+	s, unlock, err := f.g.open(ctx, testRepo, "test")
 	must(t, err)
 	defer unlock()
 	for _, tc := range []struct {
@@ -390,7 +390,7 @@ func TestPreparedChangedPathsAndCreationBoundary(t *testing.T) {
 func TestDeletionInventoryDoesNotHydrateOldObject(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
-	s, unlock, err := f.g.open(ctx, testRepo)
+	s, unlock, err := f.g.open(ctx, testRepo, "test")
 	must(t, err)
 	defer unlock()
 	// This valid OID is deliberately absent from both cache and remote. Fetching
@@ -535,7 +535,7 @@ func TestPreparedPathBudgetsArePerCommitRealGit(t *testing.T) {
 	f.push("wide-base", base, false)
 	f.push("two-bounded", good, false)
 	f.push("one-overflow", bad, false)
-	s, unlock, err := f.g.open(t.Context(), testRepo)
+	s, unlock, err := f.g.open(t.Context(), testRepo, "test")
 	must(t, err)
 	defer unlock()
 	p, err := s.preparedPush(t.Context(), forge.PushBuild, []forge.PushRef{{Ref: "refs/heads/paths", NewSHA: good, CreationBaseSHA: base}})

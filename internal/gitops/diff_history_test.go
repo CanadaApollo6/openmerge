@@ -42,7 +42,7 @@ func newDiffHistoryFixtureFrom(t *testing.T, f *fixture, parent string) diffHist
 	req := forge.RevisionDiffRequest{BaseSHA: b, HeadSHA: h}
 	got, err := f.g.RevisionDiff(t.Context(), testRepo, req)
 	assertDiffHistoryComplete(t, got, err, s)
-	sess, unlock, err := f.g.open(t.Context(), testRepo)
+	sess, unlock, err := f.g.open(t.Context(), testRepo, "test")
 	must(t, err)
 	dir := sess.dir
 	unlock()
@@ -169,7 +169,7 @@ func TestRevisionDiffMissingPromisorAncestry(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/commit-graph=%t", name, withGraph), func(t *testing.T) {
 				r := f.client(t, 0)
 				r.cfg.GCInterval, r.cfg.GCThresholdBytes = -1, -1
-				sess, unlock, err := r.open(t.Context(), testRepo)
+				sess, unlock, err := r.open(t.Context(), testRepo, "test")
 				must(t, err)
 				dir := sess.dir
 				unlock()
@@ -226,7 +226,7 @@ func TestRevisionDiffShallowSinceAndDeepen(t *testing.T) {
 	}
 	f.push("dated", prev, false)
 	r := f.client(t, 0)
-	sess, unlock, err := r.open(t.Context(), testRepo)
+	sess, unlock, err := r.open(t.Context(), testRepo, "test")
 	must(t, err)
 	dir := sess.dir
 	unlock()
@@ -287,7 +287,7 @@ func TestRevisionDiffAncestryBudget(t *testing.T) {
 	history := newDiffHistoryFixtureFrom(t, f, head)
 	// Removing a commit well below the merge base cannot hide a better base.
 	// A roots walk fails here; bounded verification still proves the empty diff.
-	sess, unlock, err := f.g.open(t.Context(), testRepo)
+	sess, unlock, err := f.g.open(t.Context(), testRepo, "test")
 	must(t, err)
 	dir := sess.dir
 	unlock()

@@ -26,7 +26,7 @@ func TestSetupWriteRestrictionsRejectGeneratedAtomicPush(t *testing.T) {
 			if !ok {
 				t.Fatal("fence outside generated setup coverage")
 			}
-			s, unlock, err := f.g.open(t.Context(), testRepo)
+			s, unlock, err := f.g.open(t.Context(), testRepo, "test")
 			must(t, err)
 			defer unlock()
 			next, err := s.fence(t.Context(), initial, "land/setup", tested)

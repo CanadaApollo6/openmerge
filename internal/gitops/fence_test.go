@@ -33,7 +33,7 @@ func TestPushLeasesAgainstRealGit(t *testing.T) {
 				must(t, err)
 			}
 			beforeBase, beforeFence := f.read("main"), f.read(testFence)
-			s, unlock, err := f.g.open(ctx, testRepo)
+			s, unlock, err := f.g.open(ctx, testRepo, "test")
 			must(t, err)
 			defer unlock()
 			next, err := s.fence(ctx, initial, "land/lease", tested)
@@ -64,7 +64,7 @@ func TestGitSkipsLeaseForUpToDateRef(t *testing.T) {
 	tested := f.build(forge.Merge, f.prs[:1], "noop")
 	f.fetch(tested)
 	f.push("main", tested, false)
-	s, unlock, err := f.g.open(ctx, testRepo)
+	s, unlock, err := f.g.open(ctx, testRepo, "test")
 	must(t, err)
 	defer unlock()
 	next, err := s.fence(ctx, initial, "land/noop", tested)
@@ -153,7 +153,7 @@ func TestFenceCommitsDifferForIdenticalCopies(t *testing.T) {
 	initial, err := f.g.EnsureFence(ctx, testRepo, testFence, forge.PushOptions{})
 	must(t, err)
 	tested := f.build(forge.Merge, f.prs[:1], "copies")
-	s, unlock, err := f.g.open(ctx, testRepo)
+	s, unlock, err := f.g.open(ctx, testRepo, "test")
 	must(t, err)
 	defer unlock()
 	for _, testedSHA := range []string{"", tested} {

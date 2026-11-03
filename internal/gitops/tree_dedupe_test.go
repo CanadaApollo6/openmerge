@@ -179,7 +179,7 @@ func TestTreeDedupeShadowNeverBlocksLanding(t *testing.T) {
 	// Landing arrives while the shadow is parked mid-read and must not wait.
 	landingCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	_, unlock, err := f.g.open(landingCtx, testRepo)
+	_, unlock, err := f.g.open(landingCtx, testRepo, "test")
 	if err != nil {
 		t.Fatalf("landing waited on the in-flight shadow read: %v", err)
 	}

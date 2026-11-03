@@ -74,7 +74,7 @@ func (r *Repo) Land(ctx context.Context, repo forge.RepoRef, req forge.LandReque
 	if err := forge.ValidateLandRequest(req); err != nil {
 		return "", err
 	}
-	s, unlock, err := r.open(ctx, repo)
+	s, unlock, err := r.open(ctx, repo, "land")
 	if err != nil {
 		return "", err
 	}
@@ -145,7 +145,7 @@ func (r *Repo) AdvanceFence(ctx context.Context, repo forge.RepoRef, ref, expect
 	if err := forge.ValidateCommitIDs(expected); err != nil {
 		return "", err
 	}
-	s, unlock, err := r.open(ctx, repo)
+	s, unlock, err := r.open(ctx, repo, "advance-fence")
 	if err != nil {
 		return "", err
 	}
@@ -176,7 +176,7 @@ func (r *Repo) AdvanceFence(ctx context.Context, repo forge.RepoRef, ref, expect
 // EnsureFence creates a root token with a create-only lease. A concurrent
 // winner is read back; an existing ref is returned without modifying it.
 func (r *Repo) EnsureFence(ctx context.Context, repo forge.RepoRef, ref string, opts forge.PushOptions) (string, error) {
-	s, unlock, err := r.open(ctx, repo)
+	s, unlock, err := r.open(ctx, repo, "ensure-fence")
 	if err != nil {
 		return "", err
 	}
@@ -228,7 +228,7 @@ func (r *Repo) EnsureFence(ctx context.Context, repo forge.RepoRef, ref string, 
 // Malformed and bootstrap messages return empty identity fields; missing refs
 // are errors.
 func (r *Repo) ReadFence(ctx context.Context, repo forge.RepoRef, ref string) (string, string, string, error) {
-	s, unlock, err := r.open(ctx, repo)
+	s, unlock, err := r.open(ctx, repo, "read-fence")
 	if err != nil {
 		return "", "", "", err
 	}

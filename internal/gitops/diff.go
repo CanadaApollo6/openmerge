@@ -88,7 +88,7 @@ func (r *Repo) revisionDiff(ctx context.Context, repo forge.RepoRef, req forge.R
 	if !forge.ValidDiffObjectID(req.BaseSHA) || !forge.ValidDiffObjectID(req.HeadSHA) {
 		return fail(forge.DiffInvalidObjectID, errors.New("revision diff requires full commit object IDs"))
 	}
-	s, unlock, err := r.openSession(ctx, repo, true)
+	s, unlock, err := r.openSession(ctx, repo, "revision-diff", true)
 	if err != nil {
 		return fail(forge.DiffReadFailure, err)
 	}

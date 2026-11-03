@@ -22,7 +22,7 @@ func TestReviewDuplicateLandAfterRollback(t *testing.T) {
 	tested := f.build(forge.Merge, f.prs[:1], "duplicate")
 	req := forge.LandRequest{Base: "main", ExpectedBaseSHA: f.base, TestedSHA: tested, Fence: testFence, ExpectedFence: initial, NextFenceID: "land/same-attempt", PRs: f.prs[:1]}
 	// Precompute the winner's exact fence object without changing remote refs.
-	s, unlock, err := f.g.open(ctx, testRepo)
+	s, unlock, err := f.g.open(ctx, testRepo, "test")
 	must(t, err)
 	next, err := s.fence(ctx, initial, req.NextFenceID, tested)
 	must(t, err)
@@ -97,7 +97,7 @@ func TestReviewHostileRefsAndHooks(t *testing.T) {
 		}
 	}
 	f.g.cfg.HeadRef = before
-	s, unlock, err := f.g.open(ctx, testRepo)
+	s, unlock, err := f.g.open(ctx, testRepo, "test")
 	must(t, err)
 	cache := s.dir
 	unlock()

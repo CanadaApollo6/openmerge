@@ -27,7 +27,7 @@ func (r *Repo) GoverningFiles(ctx context.Context, repo forge.RepoRef, req forge
 	if !forge.ValidDiffObjectID(req.CommitSHA) {
 		return fail(forge.DiffInvalidObjectID, errors.New("governing read requires full commit object ID"))
 	}
-	s, unlock, err := r.openSession(ctx, repo, true)
+	s, unlock, err := r.openSession(ctx, repo, "governing-files", true)
 	if err != nil {
 		return fail(forge.DiffReadFailure, err)
 	}

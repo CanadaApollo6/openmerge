@@ -134,7 +134,7 @@ func TestR2NonceAndCraftedMessages(t *testing.T) {
 	ctx := context.Background()
 	initial, err := f.g.EnsureFence(ctx, testRepo, testFence, forge.PushOptions{})
 	must(t, err)
-	s, unlock, err := f.g.open(ctx, testRepo)
+	s, unlock, err := f.g.open(ctx, testRepo, "test")
 	must(t, err)
 	seen := map[string]bool{}
 	for i := 0; i < 24; i++ {
