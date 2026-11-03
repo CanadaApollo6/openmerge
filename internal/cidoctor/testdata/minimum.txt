@@ -4,6 +4,9 @@ Window: 2026-10-01T00:00:00Z -> 2026-10-12T13:46:40Z (exclusive)
 Queue workflow runs: 9; gaps: 18
 Minutes at stake are measured comparisons, never projected savings. Findings overlap; do not sum them.
 
+Findings:
+  None. Inspect sample counts and gaps before interpreting this as an improvement.
+
 Thresholds:
   CheckoutFraction = 0.1
   CheckoutSeconds = 60
@@ -15,65 +18,16 @@ Thresholds:
   SerialStepFraction = 0.7
   SiblingIdleFraction = 0.5
 
-Findings:
-  None. Inspect sample counts and gaps before interpreting this as an improvement.
-
 Observations (medians; below 10 qualifying runs produces no finding):
-  checkout-cost | 99 .github/workflows/ci.yml | qualifying 9; triggered 0; runs [1 2 3 4 5 6 7 8 9]; comparison []
-    median_checkout_seconds = 60.000
-    median_largest_checkout_seconds = 30.000
-    median_runner_seconds = 1050.000
-    trigger_fraction = 0.000
-  cold-setup | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 9; triggered 0; runs [1 2 3 4 5 6 7 8 9]; comparison [1001 1002 1003 1004 1005 1006 1007 1008 1009]
-    median_baseline_setup_seconds = 30.000
-    median_queue_setup_seconds = 30.000
-    median_setup_ratio = 1.000
-    trigger_fraction = 0.000
-  cold-setup | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] | qualifying 9; triggered 0; runs [1 2 3 4 5 6 7 8 9]; comparison [1001 1002 1003 1004 1005 1006 1007 1008 1009]
-    median_baseline_setup_seconds = 30.000
-    median_queue_setup_seconds = 30.000
-    median_setup_ratio = 1.000
-    trigger_fraction = 0.000
-  duplicate-pr-run | 99 .github/workflows/ci.yml | qualifying 9; triggered 0; runs [1 2 3 4 5 6 7 8 9]; comparison [2001 2002 2003 2004 2005 2006 2007 2008 2009]
-    median_overlap_seconds = 0.000
-    trigger_fraction = 0.000
   long-pole | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 9; triggered 9; runs [1 2 3 4 5 6 7 8 9]; comparison []
     median_job_seconds = 930.000
     median_sibling_idle_seconds = 810.000
     trigger_fraction = 1.000
-  long-pole | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] | qualifying 9; triggered 0; runs [1 2 3 4 5 6 7 8 9]; comparison []
-    median_job_seconds = 120.000
-    median_sibling_idle_seconds = 0.000
-    trigger_fraction = 0.000
-  masked-skip | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 9; triggered 0; runs [1 2 3 4 5 6 7 8 9]; comparison []
-    median_dependencies = 1.000
-    trigger_fraction = 0.000
-  retry-habit | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 9; triggered 0; runs [1 2 3 4 5 6 7 8 9]; comparison []
-    median_job_seconds = 930.000
-    trigger_fraction = 0.000
-  retry-habit | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] | qualifying 9; triggered 0; runs [1 2 3 4 5 6 7 8 9]; comparison []
-    median_job_seconds = 120.000
-    trigger_fraction = 0.000
-  serial-step | 99 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run actions/checkout@pinned | qualifying 9; triggered 0; runs [1 2 3 4 5 6 7 8 9]; comparison []
-    median_job_seconds = 930.000
-    median_step_fraction = 0.032
-    median_step_seconds = 30.000
-    trigger_fraction = 0.000
   serial-step | 99 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run tests | qualifying 9; triggered 9; runs [1 2 3 4 5 6 7 8 9]; comparison []
     median_job_seconds = 930.000
     median_step_fraction = 0.968
     median_step_seconds = 900.000
     trigger_fraction = 1.000
-  serial-step | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] :: Run actions/checkout@pinned | qualifying 9; triggered 0; runs [1 2 3 4 5 6 7 8 9]; comparison []
-    median_job_seconds = 120.000
-    median_step_fraction = 0.250
-    median_step_seconds = 30.000
-    trigger_fraction = 0.000
-  serial-step | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] :: Run tests | qualifying 9; triggered 0; runs [1 2 3 4 5 6 7 8 9]; comparison []
-    median_job_seconds = 120.000
-    median_step_fraction = 0.750
-    median_step_seconds = 90.000
-    trigger_fraction = 0.000
   time-split | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 9; triggered 9; runs [1 2 3 4 5 6 7 8 9]; comparison []
     median_dispatch_seconds = 2.000
     median_run_seconds = 900.000
@@ -86,6 +40,18 @@ Observations (medians; below 10 qualifying runs produces no finding):
     median_setup_seconds = 30.000
     median_wait_seconds = 3.000
     trigger_fraction = 1.000
+  checkout-cost | 1 non-triggering comparisons; qualifying 9..9 per comparison; triggered 0
+    closest | 99 .github/workflows/ci.yml | qualifying 9; triggered 0; threshold proximity 0.571
+  cold-setup | 2 non-triggering comparisons; qualifying 9..9 per comparison; triggered 0
+    closest | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 9; triggered 0; threshold proximity 0.500
+    closest | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] | qualifying 9; triggered 0; threshold proximity 0.500
+  duplicate-pr-run | 1 non-triggering comparisons; qualifying 9..9 per comparison; triggered 0
+  long-pole | 1 non-triggering comparisons; qualifying 9..9 per comparison; triggered 0
+  retry-habit | 2 non-triggering comparisons; qualifying 9..9 per comparison; triggered 0
+  serial-step | 3 non-triggering comparisons; qualifying 9..9 per comparison; triggered 0
+    closest | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] :: Run actions/checkout@pinned | qualifying 9; triggered 0; threshold proximity 0.200
+    closest | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] :: Run tests | qualifying 9; triggered 0; threshold proximity 0.200
+    closest | 99 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run actions/checkout@pinned | qualifying 9; triggered 0; threshold proximity 0.046
 
 Job time split and heuristic step classification (seconds):
   run 1 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 900.0

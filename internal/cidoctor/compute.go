@@ -83,7 +83,20 @@ func Compute(j store.Journal, actions Actions, w Window) (Report, error) {
 			}{r.ID, t.SetupSeconds})
 		}
 	}
-	matched := map[*push]bool{}
+	recordedRuns := map[*push]map[uint64]bool{}
+	recordedRetries := map[*push]map[retryIdentity]bool{}
+	validRetries := map[*push]map[retryIdentity]bool{}
+	for _, p := range pushes {
+		recordedRuns[p] = map[uint64]bool{}
+		recordedRetries[p] = map[retryIdentity]bool{}
+		validRetries[p] = map[retryIdentity]bool{}
+	}
+	type retryObservation struct {
+		subject string
+		sample  retrySample
+		value   observation
+	}
+	var retries []retryObservation
 	runIDs := map[uint64]bool{}
 	for _, r := range actions.Runs {
 		var candidates []*push
@@ -95,16 +108,21 @@ func Compute(j store.Journal, actions Actions, w Window) (Report, error) {
 		if len(candidates) == 0 {
 			continue
 		}
-		for _, p := range candidates {
-			matched[p] = true
-		}
-		if len(candidates) != 1 || counts[attemptKey(r.ID, r.Attempt, "")] != 1 {
+		if len(candidates) != 1 {
 			a.gap(r.ID, "ambiguous-run", "multiple journal pushes or recorded attempts share this identity")
 			continue
 		}
 		p := candidates[0]
 		if len(p.checks) > 0 && !p.checks[r.ID] {
 			a.gap(r.ID, "run-identity", "workflow run is not among the journal's identified checks")
+			continue
+		}
+		recordedRuns[p][r.ID] = true
+		for _, job := range r.Jobs {
+			recordedRetries[p][retryIdentity{r.ID, r.Attempt, job.Name}] = true
+		}
+		if counts[attemptKey(r.ID, r.Attempt, "")] != 1 {
+			a.gap(r.ID, "ambiguous-run", "multiple journal pushes or recorded attempts share this identity")
 			continue
 		}
 		if r.Event != "push" {
@@ -161,21 +179,42 @@ func Compute(j store.Journal, actions Actions, w Window) (Report, error) {
 				hit := duration > LongJobSeconds && step.Seconds > SerialStepFraction*duration
 				a.add("serial-step", k+" :: "+step.Name, observation{id: r.ID, hit: hit, excess: choose(hit, max(0, step.Seconds-SerialStepFraction*duration)/60, 0), values: map[string]float64{"job_seconds": duration, "step_seconds": step.Seconds, "step_fraction": step.Seconds / max(duration, 1)}})
 			}
-			requestedAt, confirmed := p.retries[attemptKey(r.ID, r.Attempt, job.Name)]
+			identity := retryIdentity{r.ID, r.Attempt, job.Name}
+			requestedAt, confirmed := p.retries[identity]
 			retry := confirmed && !job.StartedAt.Before(requestedAt)
+			validRetries[p][identity] = retry
 			if r.Attempt > 1 && !retry {
 				a.gap(r.ID, "retry-evidence", job.Name+": no confirmed journal retry preceding execution")
 			}
-			a.add("retry-habit", k, observation{id: r.ID, hit: retry, excess: choose(retry, duration/60, 0), values: map[string]float64{"job_seconds": duration}})
+			retries = append(retries, retryObservation{k, retrySample{r.ID, job.Name}, observation{id: r.ID, hit: retry, excess: choose(retry, duration/60, 0), values: map[string]float64{"job_seconds": duration}}})
 		}
 		// Run-wide comparisons require the complete job set and the first attempt.
 		if r.Attempt == 1 {
 			a.runComparisons(r, timings, actions, counts)
 		}
 	}
+	incompleteRetries := map[retrySample]bool{}
 	for _, p := range pushes {
-		if !matched[p] {
+		if len(p.checks) == 0 && len(recordedRuns[p]) == 0 {
 			a.gap(0, "missing-actions", p.ref+" @ "+p.sha)
+		}
+		for id := range p.checks {
+			if !recordedRuns[p][id] {
+				a.gap(id, "missing-actions", p.ref+" @ "+p.sha+": identified workflow run missing")
+			}
+		}
+		for identity := range p.retries {
+			if !recordedRetries[p][identity] {
+				a.gap(identity.id, "missing-actions", fmt.Sprintf("%s @ %s: accepted rerun attempt %d job %s missing", p.ref, p.sha, identity.attempt, identity.job))
+			}
+			if !validRetries[p][identity] {
+				incompleteRetries[retrySample{identity.id, identity.job}] = true
+			}
+		}
+	}
+	for _, retry := range retries {
+		if !incompleteRetries[retry.sample] {
+			a.add("retry-habit", retry.subject, retry.value)
 		}
 	}
 	a.report.QueueRuns = len(runIDs)
@@ -281,7 +320,7 @@ func advice(code string) (string, string) {
 	case "cold-setup":
 		return "Save caches from the default branch only, so queue branches can restore them, and key the caches on the lockfiles.", "Sum of positive queue setup excess over the matching default-branch median; step names are heuristic, not proof of a cold cache."
 	case "long-pole":
-		return "Shard the job, give it a larger runner, or split its slowest step.", "Sum of median sibling finish-to-last-job idle seconds per observed run; last-finisher proxy, not a projected saving."
+		return "Shard the job, give it a larger runner, or split its slowest step.", "Sum of median finish-to-bottleneck idle seconds for parallel jobs at the same dependency level on each observed run; the bottleneck dominates the recorded critical path, not a projected saving."
 	case "serial-step":
 		return "Split or parallelize the step. If it is a test suite, shard it by package or by historical duration.", "Measured step time above 70% of job duration, only in jobs longer than 10 minutes."
 	case "checkout-cost":

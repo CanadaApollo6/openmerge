@@ -12,7 +12,17 @@ type push struct {
 	sha, ref string
 	at       time.Time
 	checks   map[uint64]bool
-	retries  map[string]time.Time
+	retries  map[retryIdentity]time.Time
+}
+
+type retryIdentity struct {
+	id, attempt uint64
+	job         string
+}
+
+type retrySample struct {
+	id  uint64
+	job string
 }
 
 func attemptKey(id, attempt uint64, name string) string {
@@ -71,7 +81,7 @@ func journalPushes(j store.Journal, w Window) []*push {
 		if p := byBatch[id]; p != nil && p.sha == sha {
 			continue
 		}
-		p := &push{sha: sha, ref: "openmerge/queue/" + j.Key.BaseBranch + "/" + id, at: at, checks: map[uint64]bool{}, retries: map[string]time.Time{}}
+		p := &push{sha: sha, ref: "openmerge/queue/" + j.Key.BaseBranch + "/" + id, at: at, checks: map[uint64]bool{}, retries: map[retryIdentity]time.Time{}}
 		byBatch[id] = p
 		// Unknown event time is retained for non-dispatch diagnostics. Selection
 		// uses recording time, while dispatch always requires the real push time.
@@ -88,7 +98,7 @@ func recordRetry(p *push, req queue.CheckRerunRequested, sha string, id, attempt
 	}
 	for _, c := range req.Runs {
 		if c.WorkflowRunID == id && c.Attempt == attempt {
-			p.retries[attemptKey(id, attempt+1, c.Name)] = req.At
+			p.retries[retryIdentity{id, attempt + 1, c.Name}] = req.At
 		}
 	}
 }

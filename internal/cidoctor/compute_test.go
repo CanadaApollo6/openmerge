@@ -58,7 +58,7 @@ func fixture(t *testing.T, n int, rule string) (store.Journal, Actions) {
 			}}
 		}
 		r := Run{ID: uint64(i), WorkflowID: 99, Path: ".github/workflows/ci.yml", Attempt: 1, Event: "push", HeadSHA: sha, HeadBranch: "openmerge/queue/main/" + id, CreatedAt: at(sec + 1), JobsComplete: true, Jobs: []Job{mkJob(uint64(i*10), "check", 30, 90), mkJob(uint64(i*10+1), "fast", 30, 90)}}
-		r.Graph = &Graph{HeadSHA: sha, Source: r.Path + "@" + sha, Needs: map[string][]string{"check": {"fast"}, "fast": {}}, Required: []string{"check"}}
+		r.Graph = &Graph{HeadSHA: sha, Source: r.Path + "@" + sha, Needs: map[string][]string{"check": {}, "fast": {}}, Required: []string{"check"}}
 		switch rule {
 		case "cold-setup":
 			r.Jobs[0] = mkJob(uint64(i*10), "check", 300, 90)
@@ -67,6 +67,7 @@ func fixture(t *testing.T, n int, rule string) (store.Journal, Actions) {
 		case "checkout-cost":
 			r.Jobs[0] = mkJob(uint64(i*10), "check", 120, 90)
 		case "masked-skip":
+			r.Graph.Needs["check"] = []string{"fast"}
 			r.Jobs[1].Conclusion = "skipped"
 			r.Jobs[1].Steps = nil
 			r.Jobs[1].StartedAt = time.Time{}

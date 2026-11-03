@@ -4,17 +4,6 @@ Window: 2026-10-01T00:00:00Z -> 2026-10-12T13:46:40Z (exclusive)
 Queue workflow runs: 10; gaps: 10
 Minutes at stake are measured comparisons, never projected savings. Findings overlap; do not sum them.
 
-Thresholds:
-  CheckoutFraction = 0.1
-  CheckoutSeconds = 60
-  ColdSetupRatio = 2
-  LongJobSeconds = 600
-  LongPoleFraction = 0.8
-  MinimumRuns = 10
-  RetryFraction = 0.05
-  SerialStepFraction = 0.7
-  SiblingIdleFraction = 0.5
-
 Findings:
   masked-skip | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | 10 runs | 0.00 measured minutes at stake
     runs: [1 2 3 4 5 6 7 8 9 10]; triggered runs: [1 2 3 4 5 6 7 8 9 10]; baseline/comparison runs: []
@@ -30,6 +19,17 @@ Findings:
     run 8 attempt 1: check=success needs [fast=skipped]
     run 9 attempt 1: check=success needs [fast=skipped]
     Suggested fix: Make the aggregate job fail unless every needs.*.result is success.
+
+Thresholds:
+  CheckoutFraction = 0.1
+  CheckoutSeconds = 60
+  ColdSetupRatio = 2
+  LongJobSeconds = 600
+  LongPoleFraction = 0.8
+  MinimumRuns = 10
+  RetryFraction = 0.05
+  SerialStepFraction = 0.7
+  SiblingIdleFraction = 0.5
 
 Observations (medians; below 10 qualifying runs produces no finding):
   masked-skip | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 10; triggered 10; runs [1 2 3 4 5 6 7 8 9 10]; comparison []

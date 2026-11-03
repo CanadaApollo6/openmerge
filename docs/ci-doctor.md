@@ -64,8 +64,9 @@ The jobs API does **not** include `needs` or required-check policy. The optional
 names to expanded dependency names, and `required` lists required check names.
 Matrix dependencies include every matrix member. No dependency graph is inferred
 from start times. Missing graph, policy, or referenced jobs produces a
-`dependency-graph` gap and no `masked-skip` advice. The fixture recorder reads the
-pinned workflow and `.openmerge.yml` from local Git history and accepts only the
+`dependency-graph` gap and no `masked-skip` advice. A complete acyclic graph
+with consistent dependency timing is also required for `long-pole`. The fixture
+recorder reads the pinned workflow and `.openmerge.yml` from local Git history and accepts only the
 known independent-job and post-#217 aggregate shapes.
 
 ## Reading findings and observations
@@ -75,7 +76,11 @@ Every report prints the thresholds used. The JSON contract is
 workflow run IDs, triggering run IDs, comparison run IDs, and measured medians.
 `findings` adds stable codes, measured minutes at stake, the comparison definition,
 and suggested fix text. `jobs` shows the underlying time splits and step
-classifications. Text and JSON use the same result.
+classifications. Text leads with findings and retains detailed observations for
+any triggered comparison, including those below the sample minimum. Comparisons
+with no triggers are summarized per rule with qualifying sample ranges and up
+to three items closest to the thresholds. JSON retains every comparison.
+Threshold proximity ranks normalized predicates, not risk or projected savings.
 
 Each finding needs **10 distinct qualifying workflow run IDs** per subject.
 Attempts do not increase that sample. A baseline also needs ten distinct
@@ -87,7 +92,7 @@ workflow ID/path, job display name, and runner labels. Renamed jobs cannot borro
 | --- | --- | --- |
 | `time-split` | Ten runs with known push time and complete job timing | Zero; context only |
 | `cold-setup` | Queue median setup >2× matching default-branch median | Sum of positive setup excess over that baseline |
-| `long-pole` | Last-finishing job in ≥80% of runs; median sibling idle >50% of its median duration | Sum of median sibling finish-to-job-finish idle time on last-finishing runs |
+| `long-pole` | Dominant job on the recorded critical path in ≥80% of runs; median sibling idle >50% of its median duration | Sum of median sibling finish-to-bottleneck idle time on qualifying critical-path runs |
 | `serial-step` | Step >70% of a job longer than 600 seconds | Step seconds above 70% of that job duration in triggering runs |
 | `checkout-cost` | All jobs have checkout and their sum >10% of runner time, or one checkout >60 seconds | Larger of summed checkout excess over 10% and largest checkout excess over 60 seconds |
 | `masked-skip` | Required aggregate succeeds with a skipped/cancelled recorded dependency | Zero; no time saving follows from this correctness hazard |
@@ -98,8 +103,11 @@ Named exported constants are `MinimumRuns`, `ColdSetupRatio`, `LongPoleFraction`
 `SiblingIdleFraction`, `SerialStepFraction`, `LongJobSeconds`, `CheckoutFraction`,
 `CheckoutSeconds`, and `RetryFraction`. Except the minimum and ≥80% frequency,
 threshold comparisons are strict. Medians use the existing nearest-rank helper.
-The last-finisher rule is an observed proxy for the long pole, not a claim to
-reconstruct the full workflow critical path.
+The critical path is the longest dependency path weighted by each job's execution
+duration, excluding wait. The bottleneck has the largest own duration on that
+path, including ties. Idle comparisons use parallel siblings at the same
+dependency level, so a trivial downstream aggregate is not blamed for its tests.
+Missing, cyclic, or inconsistent graphs produce a gap rather than a guessed path.
 
 Dispatch is push-to-job-created. Wait is job-created-to-started; for dependent
 jobs it can include dependency wait. Setup is job-started-to-first-non-setup-step;
@@ -129,7 +137,12 @@ baselines, missing dependency graphs, and missing PR comparison data.
 
 Incomplete job timing suppresses timing advice for that workflow attempt. The
 report can still diagnose a masked skip from complete identity, conclusion, and
-dependency metadata. Skipped jobs do not need invented execution timestamps.
+dependency metadata. Relevant conclusions must have completed before `until`,
+independently of step timing. Skipped jobs may omit execution timestamps.
+Every journal-identified workflow run and accepted rerun job attempt is reconciled
+against the recording. Each missing identity produces a gap. If any accepted
+rerun for a check is missing or unusable, that workflow run is excluded from the
+check's retry rate, including its original attempt.
 Unknown step names remain visible classifications rather than fabricated setup.
 No value is extrapolated over missing runs. A missing recorded PR run does not
 establish that no PR run existed.
@@ -167,10 +180,12 @@ The full outputs are
 [before](../internal/cidoctor/testdata/openmerge-before.txt) and
 [after](../internal/cidoctor/testdata/openmerge-after.txt). Before the change,
 `check` triggers `long-pole` and `Run make test` triggers `serial-step`.
-**The ADR's expected pre-#217 `cold-setup` finding is not supported by this
-recording.** The median setup for `check` is 26 seconds on both queue and main,
-a 1.0× ratio. `make test` is an unknown run step, not setup, so its compilation
-cost cannot honestly be reclassified as setup to force that result.
+**The ADR's pre-#217 `cold-setup` expectation was wrong.** The pre-#217 workflow
+had no Go build cache at all. Both `setup-go` steps set `cache: false`, and there
+was no `actions/cache` step, so queue and main were equally cold. PR #217 added
+the main-seeded Go build cache. The median setup for `check` is 26 seconds on
+both queue and main, a 1.0× ratio. `make test` is an unknown run step, not setup,
+so its compilation cost cannot be reclassified as setup to force that result.
 
 The three post-#217 queue workflow run IDs are `41549291483`, `41688299610`,
 and `41691904891`. There are **fewer than ten** post-change queue runs, and only

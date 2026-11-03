@@ -4,6 +4,9 @@ Window: 2026-10-01T00:00:00Z -> 2026-10-01T01:00:00Z (exclusive)
 Queue workflow runs: 2; gaps: 4
 Minutes at stake are measured comparisons, never projected savings. Findings overlap; do not sum them.
 
+Findings:
+  None. Inspect sample counts and gaps before interpreting this as an improvement.
+
 Thresholds:
   CheckoutFraction = 0.1
   CheckoutSeconds = 60
@@ -15,34 +18,19 @@ Thresholds:
   SerialStepFraction = 0.7
   SiblingIdleFraction = 0.5
 
-Findings:
-  None. Inspect sample counts and gaps before interpreting this as an improvement.
-
 Observations (medians; below 10 qualifying runs produces no finding):
-  checkout-cost | 100 .github/workflows/ci.yml | qualifying 2; triggered 0; runs [901 902]; comparison []
-    median_checkout_seconds = 3.000
-    median_largest_checkout_seconds = 3.000
-    median_runner_seconds = 58.000
-    trigger_fraction = 0.000
-  retry-habit | 100 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 2; triggered 0; runs [901 902]; comparison []
-    median_job_seconds = 58.000
-    trigger_fraction = 0.000
-  serial-step | 100 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run actions/checkout@pinned | qualifying 2; triggered 0; runs [901 902]; comparison []
-    median_job_seconds = 58.000
-    median_step_fraction = 0.052
-    median_step_seconds = 3.000
-    trigger_fraction = 0.000
-  serial-step | 100 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run make test | qualifying 2; triggered 0; runs [901 902]; comparison []
-    median_job_seconds = 58.000
-    median_step_fraction = 0.948
-    median_step_seconds = 55.000
-    trigger_fraction = 0.000
   time-split | 100 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 2; triggered 2; runs [901 902]; comparison []
     median_dispatch_seconds = 1.000
     median_run_seconds = 55.000
     median_setup_seconds = 3.000
     median_wait_seconds = 1.000
     trigger_fraction = 1.000
+  checkout-cost | 1 non-triggering comparisons; qualifying 2..2 per comparison; triggered 0
+    closest | 100 .github/workflows/ci.yml | qualifying 2; triggered 0; threshold proximity 0.517
+  retry-habit | 1 non-triggering comparisons; qualifying 2..2 per comparison; triggered 0
+  serial-step | 2 non-triggering comparisons; qualifying 2..2 per comparison; triggered 0
+    closest | 100 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run make test | qualifying 2; triggered 0; threshold proximity 0.097
+    closest | 100 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run actions/checkout@pinned | qualifying 2; triggered 0; threshold proximity 0.074
 
 Job time split and heuristic step classification (seconds):
   run 901 attempt 1 | check | dispatch 1.0; wait 1.0; setup 3.0; run 55.0
