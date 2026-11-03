@@ -67,10 +67,11 @@ at stake, and a fix written for the workflow author.
 
 | Code | What it detects | Evidence | Suggested fix |
 |---|---|---|---|
-| `time-split` | How queue CI time divides into runner wait, setup, and run | Job `created_at` to `started_at` is wait. Steps before the first step that is not setup (checkout, `setup-*`, cache restore, dependency install) are setup. The remaining steps are run. | None. This is context for the other findings. |
+| `time-split` | How queue CI time divides into runner wait, setup, and run | The time from OpenMerge pushing the queue test ref to the job's `created_at` is dispatch delay. Job `created_at` to `started_at` is wait. Steps before the first step that is not setup (checkout, `setup-*`, cache restore, dependency install) are setup. The remaining steps are run. | None. This is context for the other findings. |
 | `cold-setup` | Queue jobs whose setup is much slower than the same job on the default branch | Median setup on queue runs is more than 2× the default-branch median for the same job name, over at least 10 runs | Save caches from the default branch only, so queue branches can restore them, and key the caches on the lockfiles |
 | `long-pole` | A job that sets the run's duration while the other jobs sit idle | The job is on the critical path in at least 80% of runs, and the median idle time of its sibling jobs is more than half of its own run time | Shard the job, give it a larger runner, or split its slowest step |
 | `serial-step` | One step that is most of a long job | One step is more than 70% of a job that takes more than 10 minutes | Split or parallelize the step. If it is a test suite, shard it by package or by historical duration. |
+| `checkout-cost` | Every job in a run fetches the same commit, and the fetch is a large part of setup | Summed checkout-step time per run is more than 10% of the run's runner time, or one checkout takes more than 60s | Fetch only what the job needs: `fetch-depth: 1` or a blobless partial clone (`filter: blob:none`), and sparse checkout for jobs that read one directory |
 | `masked-skip` | A required aggregate check that passes while a job it depends on was skipped or cancelled | The check run's conclusion is success, and a job it `needs` in the same workflow run concluded `skipped` or `cancelled` | Make the aggregate job fail unless every `needs.*.result` is `success` |
 | `retry-habit` | A check that is rerun often instead of fixed | Same-tree reruns, from the journal's retry records, exceed 5% of a check's runs over the period, with the minutes they cost | Fix or quarantine the flaky test. Use ADR 0015's targeted reruns, not whole-workflow retries. |
 | `duplicate-pr-run` | Pull request CI that is still running when the same composition is in the queue | Pull request and queue runs overlap in time for the same head SHA | Cancel superseded pull request runs with a `concurrency` group, and never cancel queue runs |
@@ -150,6 +151,11 @@ from check run timestamps, until a driver supplies job data.
   `long-pole` data) belongs to ADR 0015's fail-fast ordering, under its
   evidence contract. CI doctor stays read-only so that it cannot affect
   correctness.
+- **Serving queue test refs from OpenMerge's own Git cache** (as OpenAI's
+  Pando does for its monorepo, reusing stored packfiles across the many
+  jobs that fetch one commit) would cut fetch cost at the source. It loses
+  for now because CI runners fetch from the forge, which OpenMerge does not
+  run. `checkout-cost` gets most of the saving with a workflow change.
 - **Using a third-party CI analytics product** works for one repository but
   cannot connect a job to the queue composition it tested. OpenMerge already
   holds that link.
