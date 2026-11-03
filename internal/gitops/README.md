@@ -60,9 +60,15 @@ cache-lock waiting and Git acquisition commands; deferred best-effort maintenanc
 has its separate 30-second deadline.
 
 After an operation completes, under the same cache lock, maintenance runs
-`git gc --prune=now --quiet` when either `Config.GCThresholdBytes` is reached
-(default 512 MiB of loose and packed objects) or `Config.GCInterval` has elapsed
-(default one hour). Zero selects the defaults; a negative value disables that
+`git gc --prune=now --quiet` when either the cache has grown by
+`Config.GCThresholdBytes` since its last collection (default 512 MiB of loose and
+packed objects) or `Config.GCInterval` has elapsed (default one hour). The
+`openmerge-gc` stamp records the time and the cache size after the last
+successful collection. `refs/openmerge-cache/base` points at the newest base
+commit a build used or a landing pushed, so collection keeps the base history
+and removes only stale PR and build objects. Without that ref, every collection
+emptied the cache and the next operation fetched the whole history again; a
+cache whose history exceeded the threshold collected after every operation. Zero selects the defaults; a negative value disables that
 trigger. Collection also removes PR cache refs left by older versions or
 interrupted operations. It never runs with a push or another operation in flight
 in that cache. Collection is best effort, with a 30-second deadline; failures are

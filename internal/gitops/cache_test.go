@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -133,5 +134,94 @@ func TestGCWaitsForPushToComplete(t *testing.T) {
 	must(t, err)
 	if strings.TrimSpace(string(data)) != "push-start\npush-end\ngc" {
 		t.Fatalf("collection overlapped the push: %q", data)
+	}
+}
+
+func TestCacheGCKeepsBaseHistory(t *testing.T) {
+	for _, operation := range []string{"build", "land"} {
+		t.Run(operation, func(t *testing.T) {
+			f := newFixture(t)
+			ctx := context.Background()
+			// Fetch an unrelated PR head while collection is off; it must not survive.
+			f.g.cfg.GCInterval, f.g.cfg.GCThresholdBytes = -1, -1
+			f.build(forge.Merge, f.prs[1:2], "keep-other")
+			f.g.cfg.GCThresholdBytes = 1
+			retained := f.base
+			if operation == "land" {
+				initial, err := f.g.EnsureFence(ctx, testRepo, testFence, forge.PushOptions{})
+				must(t, err)
+				tested := f.build(forge.Merge, f.prs[:1], "keep-land")
+				_, err = f.g.Land(ctx, testRepo, forge.LandRequest{Base: "main", ExpectedBaseSHA: f.base, TestedSHA: tested,
+					Fence: testFence, ExpectedFence: initial, NextFenceID: "land/keep", PRs: f.prs[:1]}, forge.PushOptions{})
+				must(t, err)
+				retained = tested
+			} else {
+				f.build(forge.Merge, f.prs[:1], "keep-build")
+			}
+			s, unlock, err := f.g.open(ctx, testRepo)
+			must(t, err)
+			defer unlock()
+			if _, err := s.command(ctx, "", "cat-file", "-e", retained+"^{commit}"); err != nil {
+				t.Fatalf("collection dropped the retained base %s: %v", retained, err)
+			}
+			if _, err := s.command(ctx, "", "cat-file", "-e", f.heads[2]+"^{commit}"); err == nil {
+				t.Fatal("collection kept an unrelated PR head")
+			}
+			got, err := s.command(ctx, "", "rev-parse", baseRef)
+			must(t, err)
+			if got != retained {
+				t.Fatalf("%s = %s, want %s", baseRef, got, retained)
+			}
+		})
+	}
+}
+
+func TestCacheGCSizeTriggerMeasuresGrowth(t *testing.T) {
+	f := newFixture(t)
+	f.g.cfg.GCInterval, f.g.cfg.GCThresholdBytes = -1, 1
+	f.build(forge.Merge, f.prs[:1], "growth")
+	ctx := context.Background()
+	gitPath, err := exec.LookPath("git")
+	must(t, err)
+	record := filepath.Join(t.TempDir(), "gc")
+	wrapper := filepath.Join(t.TempDir(), "git")
+	writeExecutable(t, wrapper, "for a in \"$@\"; do\nif [ \"$a\" = gc ]; then\nprintf gc >> "+shellQuote(record)+"\nfi\ndone\nexec "+shellQuote(gitPath)+" \"$@\"\n")
+	f.g.git = wrapper
+
+	s, unlock, err := f.g.open(ctx, testRepo)
+	must(t, err)
+	stamp := filepath.Join(s.dir, "openmerge-gc")
+	data, err := os.ReadFile(stamp)
+	must(t, err)
+	size, err := s.cacheSize(ctx)
+	must(t, err)
+	f.g.cfg.GCThresholdBytes = -1
+	unlock()
+	if size < 4 || strings.TrimSpace(string(data)) != strconv.FormatInt(size, 10) {
+		t.Fatalf("stamp %q does not record the post-collection size %d", data, size)
+	}
+	for _, tc := range []struct {
+		name     string
+		baseline int64
+		collect  bool
+	}{
+		// Over the threshold in total, but barely grown since the last collection.
+		{"retained history", size - 1, false},
+		{"growth", 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.Remove(record); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			must(t, os.WriteFile(stamp, []byte(strconv.FormatInt(tc.baseline, 10)+"\n"), 0o600))
+			f.g.cfg.GCThresholdBytes = size / 2
+			_, unlock, err := f.g.open(ctx, testRepo)
+			must(t, err)
+			unlock()
+			_, err = os.Stat(record)
+			if collected := err == nil; collected != tc.collect {
+				t.Fatalf("collected = %v, want %v (size %d, baseline %d, threshold %d)", collected, tc.collect, size, tc.baseline, size/2)
+			}
+		})
 	}
 }

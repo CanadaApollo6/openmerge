@@ -153,6 +153,7 @@ func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.B
 	if err := s.commits(ctx, req.BaseSHA); err != nil {
 		return "", err
 	}
+	s.retain = req.BaseSHA
 	top := req.BaseSHA
 	for i, pr := range req.PRs {
 		if req.Method == forge.FastForward {

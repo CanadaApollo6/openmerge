@@ -37,6 +37,9 @@ type session struct {
 	author      Identity
 	authorDate  string
 	diffRead    bool
+	// retain is the newest base commit this session used. Maintenance keeps
+	// its history so collection drops only stale PR objects.
+	retain string
 }
 
 func (s *session) scrub(message string) string {
