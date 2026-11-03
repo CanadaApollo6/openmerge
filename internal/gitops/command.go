@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Auth supplies HTTP credentials to Git's askpass helper through the child
@@ -83,6 +84,8 @@ func (s *session) newCommand(ctx context.Context, args ...string) *exec.Cmd {
 	}
 	argv = append(argv, args...)
 	cmd := exec.CommandContext(ctx, s.r.git, argv...)
+	configureProcessGroup(cmd)
+	cmd.WaitDelay = time.Second
 	cmd.Env = append(gitEnv(), "GIT_ASKPASS="+s.r.askpass,
 		"OPENMERGE_GIT_USERNAME="+s.auth.Username, "OPENMERGE_GIT_PASSWORD="+s.auth.Password)
 	if s.diffRead {
