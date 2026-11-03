@@ -1,6 +1,6 @@
 # 0016. Report where each repository's queue CI time goes
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-02
 
 ## Context
@@ -118,6 +118,12 @@ runs from before PR #217 must find `cold-setup`, `long-pole`, and
 `serial-step`, and the report on runs after it must find none of them.
 Every finding on design-partner repositories must cite the workflow run IDs
 behind it, so the partner can check it.
+
+### Owner decision (2026-11-03)
+
+Riel St. Amand (`CanadaApollo6`) accepted this ADR on 2026-11-03. Acceptance
+changes no live service: each slice keeps the deploy class in the rollout
+table, and the Hold slice still needs its own approval.
 
 ## Consequences
 
