@@ -1,0 +1,200 @@
+{
+  "version": 1,
+  "installation": "1",
+  "repository": "fixture/app",
+  "base_branch": "main",
+  "lane": "",
+  "since": "2026-10-01T00:00:00Z",
+  "until": "2026-10-01T01:00:00Z",
+  "thresholds": {
+    "CheckoutFraction": 0.1,
+    "CheckoutSeconds": 60,
+    "ColdSetupRatio": 2,
+    "LongJobSeconds": 600,
+    "LongPoleFraction": 0.8,
+    "MinimumRuns": 10,
+    "RetryFraction": 0.05,
+    "SerialStepFraction": 0.7,
+    "SiblingIdleFraction": 0.5
+  },
+  "queue_runs": 2,
+  "assessments": [
+    {
+      "details": [],
+      "code": "checkout-cost",
+      "subject": "100 .github/workflows/ci.yml",
+      "triggered_run_ids": [],
+      "qualifying_runs": 2,
+      "triggered_runs": 0,
+      "workflow_run_ids": [
+        901,
+        902
+      ],
+      "baseline_run_ids": [],
+      "metrics": {
+        "median_checkout_seconds": 3,
+        "median_largest_checkout_seconds": 3,
+        "median_runner_seconds": 58,
+        "trigger_fraction": 0
+      }
+    },
+    {
+      "details": [],
+      "code": "retry-habit",
+      "subject": "100 .github/workflows/ci.yml :: check [ubuntu-latest]",
+      "triggered_run_ids": [],
+      "qualifying_runs": 2,
+      "triggered_runs": 0,
+      "workflow_run_ids": [
+        901,
+        902
+      ],
+      "baseline_run_ids": [],
+      "metrics": {
+        "median_job_seconds": 58,
+        "trigger_fraction": 0
+      }
+    },
+    {
+      "details": [],
+      "code": "serial-step",
+      "subject": "100 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run actions/checkout@pinned",
+      "triggered_run_ids": [],
+      "qualifying_runs": 2,
+      "triggered_runs": 0,
+      "workflow_run_ids": [
+        901,
+        902
+      ],
+      "baseline_run_ids": [],
+      "metrics": {
+        "median_job_seconds": 58,
+        "median_step_fraction": 0.05172413793103448,
+        "median_step_seconds": 3,
+        "trigger_fraction": 0
+      }
+    },
+    {
+      "details": [],
+      "code": "serial-step",
+      "subject": "100 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run make test",
+      "triggered_run_ids": [],
+      "qualifying_runs": 2,
+      "triggered_runs": 0,
+      "workflow_run_ids": [
+        901,
+        902
+      ],
+      "baseline_run_ids": [],
+      "metrics": {
+        "median_job_seconds": 58,
+        "median_step_fraction": 0.9482758620689655,
+        "median_step_seconds": 55,
+        "trigger_fraction": 0
+      }
+    },
+    {
+      "details": [],
+      "code": "time-split",
+      "subject": "100 .github/workflows/ci.yml :: check [ubuntu-latest]",
+      "triggered_run_ids": [
+        901,
+        902
+      ],
+      "qualifying_runs": 2,
+      "triggered_runs": 2,
+      "workflow_run_ids": [
+        901,
+        902
+      ],
+      "baseline_run_ids": [],
+      "metrics": {
+        "median_dispatch_seconds": 1,
+        "median_run_seconds": 55,
+        "median_setup_seconds": 3,
+        "median_wait_seconds": 1,
+        "trigger_fraction": 1
+      }
+    }
+  ],
+  "findings": [],
+  "jobs": [
+    {
+      "created_at": "2026-10-01T00:00:21Z",
+      "started_at": "2026-10-01T00:00:22Z",
+      "completed_at": "2026-10-01T00:01:20Z",
+      "conclusion": "success",
+      "workflow_run_id": 901,
+      "run_attempt": 1,
+      "job": "check",
+      "dispatch_seconds": 1,
+      "wait_seconds": 1,
+      "setup_seconds": 3,
+      "run_seconds": 55,
+      "steps": [
+        {
+          "name": "Run actions/checkout@pinned",
+          "class": "checkout",
+          "phase": "setup",
+          "seconds": 3
+        },
+        {
+          "name": "Run make test",
+          "class": "unknown",
+          "phase": "run",
+          "seconds": 55
+        }
+      ]
+    },
+    {
+      "created_at": "2026-10-01T00:01:41Z",
+      "started_at": "2026-10-01T00:01:42Z",
+      "completed_at": "2026-10-01T00:02:40Z",
+      "conclusion": "success",
+      "workflow_run_id": 902,
+      "run_attempt": 1,
+      "job": "check",
+      "dispatch_seconds": 1,
+      "wait_seconds": 1,
+      "setup_seconds": 3,
+      "run_seconds": 55,
+      "steps": [
+        {
+          "name": "Run actions/checkout@pinned",
+          "class": "checkout",
+          "phase": "setup",
+          "seconds": 3
+        },
+        {
+          "name": "Run make test",
+          "class": "unknown",
+          "phase": "run",
+          "seconds": 55
+        }
+      ]
+    }
+  ],
+  "gaps": [
+    {
+      "workflow_run_id": 901,
+      "code": "pr-data",
+      "detail": "no recorded same-SHA pull request comparison; absence is not evidence of no duplicate"
+    },
+    {
+      "workflow_run_id": 901,
+      "code": "warm-baseline",
+      "detail": "check: fewer than 10 matching default-branch runs or zero median"
+    },
+    {
+      "workflow_run_id": 902,
+      "code": "pr-data",
+      "detail": "no recorded same-SHA pull request comparison; absence is not evidence of no duplicate"
+    },
+    {
+      "workflow_run_id": 902,
+      "code": "warm-baseline",
+      "detail": "check: fewer than 10 matching default-branch runs or zero median"
+    }
+  ],
+  "gap_count": 4
+}

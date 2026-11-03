@@ -1,0 +1,81 @@
+OpenMerge CI doctor v1 (advisory, read-only)
+Queue: fixture/app main (installation 1; lane "")
+Window: 2026-10-01T00:00:00Z -> 2026-10-12T13:46:40Z (exclusive)
+Queue workflow runs: 10; gaps: 10
+Minutes at stake are measured comparisons, never projected savings. Findings overlap; do not sum them.
+
+Findings:
+  masked-skip | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | 10 runs | 0.00 measured minutes at stake
+    runs: [1 2 3 4 5 6 7 8 9 10]; triggered runs: [1 2 3 4 5 6 7 8 9 10]; baseline/comparison runs: []
+    Zero minutes; a passing aggregate with skipped or cancelled dependencies does not establish a time saving.
+    run 1 attempt 1: check=success needs [fast=skipped]
+    run 10 attempt 1: check=success needs [fast=skipped]
+    run 2 attempt 1: check=success needs [fast=skipped]
+    run 3 attempt 1: check=success needs [fast=skipped]
+    run 4 attempt 1: check=success needs [fast=skipped]
+    run 5 attempt 1: check=success needs [fast=skipped]
+    run 6 attempt 1: check=success needs [fast=skipped]
+    run 7 attempt 1: check=success needs [fast=skipped]
+    run 8 attempt 1: check=success needs [fast=skipped]
+    run 9 attempt 1: check=success needs [fast=skipped]
+    Suggested fix: Make the aggregate job fail unless every needs.*.result is success.
+
+Thresholds:
+  CheckoutFraction = 0.1
+  CheckoutSeconds = 60
+  ColdSetupRatio = 2
+  LongJobSeconds = 600
+  LongPoleFraction = 0.8
+  MinimumRuns = 10
+  RetryFraction = 0.05
+  SerialStepFraction = 0.7
+  SiblingIdleFraction = 0.5
+
+Observations (medians; below 10 qualifying runs produces no finding):
+  masked-skip | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 10; triggered 10; runs [1 2 3 4 5 6 7 8 9 10]; comparison []
+    median_dependencies = 1.000
+    trigger_fraction = 1.000
+
+Job time split and heuristic step classification (seconds):
+  run 1 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 2 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 3 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 4 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 5 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 6 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 7 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 8 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 9 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 10 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+
+Gaps (no extrapolation):
+  run 1 | job-timing | fast: missing, unfinished, skipped, or inconsistent job timing
+  run 2 | job-timing | fast: missing, unfinished, skipped, or inconsistent job timing
+  run 3 | job-timing | fast: missing, unfinished, skipped, or inconsistent job timing
+  run 4 | job-timing | fast: missing, unfinished, skipped, or inconsistent job timing
+  run 5 | job-timing | fast: missing, unfinished, skipped, or inconsistent job timing
+  run 6 | job-timing | fast: missing, unfinished, skipped, or inconsistent job timing
+  run 7 | job-timing | fast: missing, unfinished, skipped, or inconsistent job timing
+  run 8 | job-timing | fast: missing, unfinished, skipped, or inconsistent job timing
+  run 9 | job-timing | fast: missing, unfinished, skipped, or inconsistent job timing
+  run 10 | job-timing | fast: missing, unfinished, skipped, or inconsistent job timing

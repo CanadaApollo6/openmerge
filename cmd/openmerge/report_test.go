@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/cidoctor"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/queuemetrics"
 	"github.com/CanadaApollo6/openmerge/internal/store"
@@ -156,6 +159,53 @@ func TestReportSavingsCLI(t *testing.T) {
 		t.Fatalf("report %+v", got)
 	}
 
+	actionsPath := filepath.Join(t.TempDir(), "actions.json")
+	recorded := cidoctor.Actions{Version: 1, Repository: key.Repository, DefaultBranch: "main"}
+	for i, start := range []int{20, 100} {
+		batch := fmt.Sprintf("b%d", i+1)
+		sha := "tested-" + batch
+		runID := uint64(901 + i)
+		recorded.Runs = append(recorded.Runs, cidoctor.Run{ID: runID, WorkflowID: 100, Path: ".github/workflows/ci.yml", Attempt: 1, Event: "push", HeadSHA: sha, HeadBranch: "openmerge/queue/main/" + batch, CreatedAt: at(start + 1), JobsComplete: true,
+			Graph: &cidoctor.Graph{HeadSHA: sha, Source: "fixture workflow and policy", Needs: map[string][]string{"check": {}}, Required: []string{"check"}},
+			Jobs: []cidoctor.Job{{ID: runID * 10, Name: "check", Attempt: 1, CreatedAt: at(start + 1), StartedAt: at(start + 2), CompletedAt: at(start + 60), Conclusion: "success", Labels: []string{"ubuntu-latest"}, Steps: []cidoctor.Step{
+				{Name: "Run actions/checkout@pinned", Number: 1, StartedAt: at(start + 2), CompletedAt: at(start + 5), Conclusion: "success"},
+				{Name: "Run make test", Number: 2, StartedAt: at(start + 5), CompletedAt: at(start + 60), Conclusion: "success"},
+			}}},
+		})
+	}
+	recordedJSON, err := json.Marshal(recorded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(actionsPath, recordedJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	doctor := slices.Clone(base)
+	doctor[1] = "ci-doctor"
+	doctor = append(doctor, "--actions-file", actionsPath)
+	for _, asJSON := range []bool{false, true} {
+		var output, errors bytes.Buffer
+		args := slices.Clone(doctor)
+		name := "report-ci-doctor.txt"
+		if asJSON {
+			args = append(args, "--json")
+			name = "report-ci-doctor.json"
+		}
+		if code := run(args, &output, &errors); code != 0 {
+			t.Fatalf("CI doctor CLI %d %s", code, errors.String())
+		}
+		reportGolden(t, name, output.Bytes())
+		if asJSON {
+			var r cidoctor.Report
+			if err := json.Unmarshal(output.Bytes(), &r); err != nil {
+				t.Fatal(err)
+			}
+			if r.Version != 1 || r.GapCount != 4 || r.QueueRuns != 2 || len(r.Jobs) != 2 {
+				t.Fatalf("unexpected doctor report %+v", r)
+			}
+		}
+	}
+
 	// Unknown queues fail closed without echoing the connection string.
 	out.Reset()
 	stderr.Reset()
@@ -179,5 +229,39 @@ func reportGolden(t *testing.T, name string, got []byte) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("%s changed\ngot:\n%s\nwant:\n%s", name, got, want)
+	}
+}
+
+func TestReportCIDoctorFlagsAndFile(t *testing.T) {
+	t.Setenv("OPENMERGE_DATABASE_URL", "")
+	valid := []string{"report", "ci-doctor", "--installation", "1", "--repository", "fixture/app", "--since", "2026-10-01T00:00:00Z", "--until", "2026-10-02T00:00:00Z"}
+	for _, tc := range []struct {
+		extra []string
+		code  int
+		want  string
+	}{
+		{nil, 2, "--actions-file is required"},
+		{[]string{"--actions-file", "missing"}, 2, "OPENMERGE_DATABASE_URL"},
+		{[]string{"--actions-file", "missing", "--full-suite-minutes", "20"}, 2, "invalid command flags"},
+		{[]string{"--actions-file", "missing", "--database-url", "postgres://u:private-password@localhost/db"}, 1, "cannot open recorded Actions file"},
+	} {
+		var out, stderr bytes.Buffer
+		code := run(append(valid[:len(valid):len(valid)], tc.extra...), &out, &stderr)
+		if code != tc.code || !strings.Contains(stderr.String(), tc.want) || out.Len() != 0 || strings.Contains(stderr.String(), "private-password") {
+			t.Fatalf("code %d stdout %s stderr %s", code, out.String(), stderr.String())
+		}
+	}
+	var out, stderr bytes.Buffer
+	if code := run([]string{"report", "ci-doctor", "--help"}, &out, &stderr); code != 0 || !strings.Contains(out.String(), "--actions-file") {
+		t.Fatalf("help %d %s", code, stderr.String())
+	}
+	for _, input := range []string{"not json", `{"version":1} {}`, `{"runs":[{"created_at":"private-secret"}]}`} {
+		p := filepath.Join(t.TempDir(), "actions.json")
+		if err := os.WriteFile(p, []byte(input), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readActionsFile(p); err == nil || strings.Contains(err.Error(), "private-secret") {
+			t.Fatalf("unsafe parse error %v", err)
+		}
 	}
 }

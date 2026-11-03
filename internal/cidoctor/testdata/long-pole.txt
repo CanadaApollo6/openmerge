@@ -1,0 +1,131 @@
+OpenMerge CI doctor v1 (advisory, read-only)
+Queue: fixture/app main (installation 1; lane "")
+Window: 2026-10-01T00:00:00Z -> 2026-10-12T13:46:40Z (exclusive)
+Queue workflow runs: 10; gaps: 0
+Minutes at stake are measured comparisons, never projected savings. Findings overlap; do not sum them.
+
+Findings:
+  long-pole | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | 10 runs | 135.00 measured minutes at stake
+    runs: [1 2 3 4 5 6 7 8 9 10]; triggered runs: [1 2 3 4 5 6 7 8 9 10]; baseline/comparison runs: []
+    Sum of median finish-to-bottleneck idle seconds for parallel jobs at the same dependency level on each observed run; the bottleneck dominates the recorded critical path, not a projected saving.
+    Suggested fix: Shard the job, give it a larger runner, or split its slowest step.
+  serial-step | 99 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run tests | 10 runs | 41.50 measured minutes at stake
+    runs: [1 2 3 4 5 6 7 8 9 10]; triggered runs: [1 2 3 4 5 6 7 8 9 10]; baseline/comparison runs: []
+    Measured step time above 70% of job duration, only in jobs longer than 10 minutes.
+    Suggested fix: Split or parallelize the step. If it is a test suite, shard it by package or by historical duration.
+  time-split | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | 10 runs | 0.00 measured minutes at stake
+    runs: [1 2 3 4 5 6 7 8 9 10]; triggered runs: [1 2 3 4 5 6 7 8 9 10]; baseline/comparison runs: []
+    Context only; no excess or projected saving. Dispatch and wait are per job; parallel timings are not additive wall-clock.
+  time-split | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] | 10 runs | 0.00 measured minutes at stake
+    runs: [1 2 3 4 5 6 7 8 9 10]; triggered runs: [1 2 3 4 5 6 7 8 9 10]; baseline/comparison runs: []
+    Context only; no excess or projected saving. Dispatch and wait are per job; parallel timings are not additive wall-clock.
+
+Thresholds:
+  CheckoutFraction = 0.1
+  CheckoutSeconds = 60
+  ColdSetupRatio = 2
+  LongJobSeconds = 600
+  LongPoleFraction = 0.8
+  MinimumRuns = 10
+  RetryFraction = 0.05
+  SerialStepFraction = 0.7
+  SiblingIdleFraction = 0.5
+
+Observations (medians; below 10 qualifying runs produces no finding):
+  long-pole | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 10; triggered 10; runs [1 2 3 4 5 6 7 8 9 10]; comparison []
+    median_job_seconds = 930.000
+    median_sibling_idle_seconds = 810.000
+    trigger_fraction = 1.000
+  serial-step | 99 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run tests | qualifying 10; triggered 10; runs [1 2 3 4 5 6 7 8 9 10]; comparison []
+    median_job_seconds = 930.000
+    median_step_fraction = 0.968
+    median_step_seconds = 900.000
+    trigger_fraction = 1.000
+  time-split | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 10; triggered 10; runs [1 2 3 4 5 6 7 8 9 10]; comparison []
+    median_dispatch_seconds = 2.000
+    median_run_seconds = 900.000
+    median_setup_seconds = 30.000
+    median_wait_seconds = 3.000
+    trigger_fraction = 1.000
+  time-split | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] | qualifying 10; triggered 10; runs [1 2 3 4 5 6 7 8 9 10]; comparison []
+    median_dispatch_seconds = 2.000
+    median_run_seconds = 90.000
+    median_setup_seconds = 30.000
+    median_wait_seconds = 3.000
+    trigger_fraction = 1.000
+  checkout-cost | 1 non-triggering comparisons; qualifying 10..10 per comparison; triggered 0
+    closest | 99 .github/workflows/ci.yml | qualifying 10; triggered 0; threshold proximity 0.571
+  cold-setup | 2 non-triggering comparisons; qualifying 10..10 per comparison; triggered 0
+    closest | 99 .github/workflows/ci.yml :: check [ubuntu-latest] | qualifying 10; triggered 0; threshold proximity 0.500
+    closest | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] | qualifying 10; triggered 0; threshold proximity 0.500
+  duplicate-pr-run | 1 non-triggering comparisons; qualifying 10..10 per comparison; triggered 0
+  long-pole | 1 non-triggering comparisons; qualifying 10..10 per comparison; triggered 0
+  retry-habit | 2 non-triggering comparisons; qualifying 10..10 per comparison; triggered 0
+  serial-step | 3 non-triggering comparisons; qualifying 10..10 per comparison; triggered 0
+    closest | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] :: Run actions/checkout@pinned | qualifying 10; triggered 0; threshold proximity 0.200
+    closest | 99 .github/workflows/ci.yml :: fast [ubuntu-latest] :: Run tests | qualifying 10; triggered 0; threshold proximity 0.200
+    closest | 99 .github/workflows/ci.yml :: check [ubuntu-latest] :: Run actions/checkout@pinned | qualifying 10; triggered 0; threshold proximity 0.046
+
+Job time split and heuristic step classification (seconds):
+  run 1 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 900.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 900.0
+  run 1 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 2 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 900.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 900.0
+  run 2 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 3 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 900.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 900.0
+  run 3 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 4 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 900.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 900.0
+  run 4 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 5 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 900.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 900.0
+  run 5 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 6 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 900.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 900.0
+  run 6 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 7 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 900.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 900.0
+  run 7 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 8 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 900.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 900.0
+  run 8 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 9 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 900.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 900.0
+  run 9 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+  run 10 attempt 1 | check | dispatch 2.0; wait 3.0; setup 30.0; run 900.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 900.0
+  run 10 attempt 1 | fast | dispatch 2.0; wait 3.0; setup 30.0; run 90.0
+    Run actions/checkout@pinned | checkout/setup | 30.0
+    Run tests | unknown/run | 90.0
+
+Gaps (no extrapolation):

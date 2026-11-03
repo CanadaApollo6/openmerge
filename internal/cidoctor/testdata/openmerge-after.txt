@@ -1,0 +1,342 @@
+OpenMerge CI doctor v1 (advisory, read-only)
+Queue: CanadaApollo6/openmerge main (installation evaluation; lane "")
+Window: 2026-10-01T00:00:00Z -> 2026-11-04T00:00:00Z (exclusive)
+Queue workflow runs: 3; gaps: 52
+Minutes at stake are measured comparisons, never projected savings. Findings overlap; do not sum them.
+
+Findings:
+  None. Inspect sample counts and gaps before interpreting this as an improvement.
+
+Thresholds:
+  CheckoutFraction = 0.1
+  CheckoutSeconds = 60
+  ColdSetupRatio = 2
+  LongJobSeconds = 600
+  LongPoleFraction = 0.8
+  MinimumRuns = 10
+  RetryFraction = 0.05
+  SerialStepFraction = 0.7
+  SiblingIdleFraction = 0.5
+
+Observations (medians; below 10 qualifying runs produces no finding):
+  long-pole | 385936461 .github/workflows/ci.yml :: sim-exits [ubuntu-latest] | qualifying 3; triggered 3; runs [41549291483 41688299610 41691904891]; comparison []
+    median_job_seconds = 477.000
+    median_sibling_idle_seconds = 197.000
+    trigger_fraction = 1.000
+  serial-step | 385936461 .github/workflows/ci.yml :: sim-exits [ubuntu-latest] :: Run make test-sim-exits | qualifying 3; triggered 1; runs [41549291483 41688299610 41691904891]; comparison []
+    median_job_seconds = 477.000
+    median_step_fraction = 0.969
+    median_step_seconds = 460.000
+    trigger_fraction = 0.333
+  checkout-cost | 1 non-triggering comparisons; qualifying 3..3 per comparison; triggered 0
+    closest | 385936461 .github/workflows/ci.yml | qualifying 3; triggered 0; threshold proximity 0.193
+  cold-setup | 7 non-triggering comparisons; qualifying 3..3 per comparison; triggered 0
+    closest | 385936461 .github/workflows/ci.yml :: lint [ubuntu-latest] | qualifying 3; triggered 0; threshold proximity 0.818
+    closest | 385936461 .github/workflows/ci.yml :: test (rest) [ubuntu-latest] | qualifying 3; triggered 0; threshold proximity 0.654
+    closest | 385936461 .github/workflows/ci.yml :: test (internal/store) [ubuntu-latest] | qualifying 3; triggered 0; threshold proximity 0.635
+  long-pole | 6 non-triggering comparisons; qualifying 3..3 per comparison; triggered 0
+  masked-skip | 1 non-triggering comparisons; qualifying 3..3 per comparison; triggered 0
+  retry-habit | 8 non-triggering comparisons; qualifying 3..3 per comparison; triggered 0
+  serial-step | 72 non-triggering comparisons; qualifying 3..3 per comparison; triggered 0
+    closest | 385936461 .github/workflows/ci.yml :: test (internal/store) [ubuntu-latest] :: make test (internal/store) | qualifying 3; triggered 0; threshold proximity 0.742
+    closest | 385936461 .github/workflows/ci.yml :: test (internal/serve) [ubuntu-latest] :: make test (internal/serve) | qualifying 3; triggered 0; threshold proximity 0.670
+    closest | 385936461 .github/workflows/ci.yml :: test (rest) [ubuntu-latest] :: make test (rest) | qualifying 3; triggered 0; threshold proximity 0.620
+
+Job time split and heuristic step classification (seconds):
+  run 41549291483 attempt 1 | build | dispatch unavailable; wait 2.0; setup 14.0; run 82.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 3.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 9.0
+    Run make build | unknown/run | 24.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 4.0
+    Run docker build --tag openmerge:ci . | unknown/run | 50.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41549291483 attempt 1 | check | dispatch unavailable; wait 2.0; setup 1.0; run 2.0
+    Set up job | setup/setup | 0.0
+    Run echo "needs: $RESULTS" | unknown/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41549291483 attempt 1 | lint | dispatch unavailable; wait 2.0; setup 11.0; run 71.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run make fmt | unknown/run | 1.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 67.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41549291483 attempt 1 | sim-exits | dispatch unavailable; wait 2.0; setup 10.0; run 444.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 7.0
+    Run make test-sim-exits | unknown/run | 440.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 1.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41549291483 attempt 1 | test (internal/queue) | dispatch unavailable; wait 2.0; setup 27.0; run 212.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 14.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 3.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | setup/setup | 0.0
+    make test (internal/queue) | unknown/run | 207.0
+    Run actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | unknown/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 1.0
+    Stop containers | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41549291483 attempt 1 | test (internal/serve) | dispatch unavailable; wait 2.0; setup 25.0; run 425.0
+    Set up job | setup/setup | 0.0
+    Initialize containers | setup/setup | 14.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | setup/setup | 0.0
+    make test (internal/serve) | unknown/run | 422.0
+    Run actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | unknown/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 1.0
+    Complete job | cleanup/run | 0.0
+  run 41549291483 attempt 1 | test (internal/store) | dispatch unavailable; wait 2.0; setup 25.0; run 269.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 15.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 6.0
+    Run actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | setup/setup | 1.0
+    make test (internal/store) | unknown/run | 265.0
+    Run actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | unknown/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 1.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41549291483 attempt 1 | test (rest) | dispatch unavailable; wait 7.0; setup 28.0; run 360.0
+    Set up job | setup/setup | 3.0
+    Initialize containers | setup/setup | 17.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 6.0
+    Run actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | setup/setup | 0.0
+    make test (rest) | unknown/run | 358.0
+    Run actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | unknown/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 1.0
+    Complete job | cleanup/run | 0.0
+  run 41688299610 attempt 1 | build | dispatch unavailable; wait 2.0; setup 17.0; run 79.0
+    Set up job | setup/setup | 2.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 7.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run make build | unknown/run | 29.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 0.0
+    Run docker build --tag openmerge:ci . | unknown/run | 47.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41688299610 attempt 1 | check | dispatch unavailable; wait 2.0; setup 1.0; run 3.0
+    Set up job | setup/setup | 0.0
+    Run echo "needs: $RESULTS" | unknown/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41688299610 attempt 1 | lint | dispatch unavailable; wait 1.0; setup 18.0; run 70.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 6.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 9.0
+    Run make fmt | unknown/run | 0.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 67.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 1.0
+  run 41688299610 attempt 1 | sim-exits | dispatch unavailable; wait 1.0; setup 14.0; run 463.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 6.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 6.0
+    Run make test-sim-exits | unknown/run | 460.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41688299610 attempt 1 | test (internal/queue) | dispatch unavailable; wait 2.0; setup 27.0; run 238.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 13.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | setup/setup | 2.0
+    make test (internal/queue) | unknown/run | 233.0
+    Run actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | unknown/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 1.0
+    Complete job | cleanup/run | 0.0
+  run 41688299610 attempt 1 | test (internal/serve) | dispatch unavailable; wait 3.0; setup 27.0; run 251.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 15.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 6.0
+    Run actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | setup/setup | 3.0
+    make test (internal/serve) | unknown/run | 247.0
+    Run actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | unknown/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 1.0
+    Complete job | cleanup/run | 0.0
+  run 41688299610 attempt 1 | test (internal/store) | dispatch unavailable; wait 1.0; setup 33.0; run 412.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 13.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 9.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | setup/setup | 1.0
+    make test (internal/store) | unknown/run | 409.0
+    Run actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | unknown/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 1.0
+    Complete job | cleanup/run | 0.0
+  run 41688299610 attempt 1 | test (rest) | dispatch unavailable; wait 1.0; setup 34.0; run 338.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 15.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 7.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | setup/setup | 2.0
+    make test (rest) | unknown/run | 334.0
+    Run actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | unknown/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 1.0
+    Complete job | cleanup/run | 0.0
+  run 41691904891 attempt 1 | build | dispatch unavailable; wait 1.0; setup 28.0; run 82.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 18.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run make build | unknown/run | 30.0
+    Run docker compose -f deploy/compose.yaml config --quiet | unknown/run | 0.0
+    Run docker build --tag openmerge:ci . | unknown/run | 49.0
+    Run docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version' | unknown/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41691904891 attempt 1 | check | dispatch unavailable; wait 2.0; setup 0.0; run 3.0
+    Set up job | setup/setup | 0.0
+    Run echo "needs: $RESULTS" | unknown/run | 1.0
+    Complete job | cleanup/run | 0.0
+  run 41691904891 attempt 1 | lint | dispatch unavailable; wait 2.0; setup 20.0; run 48.0
+    Set up job | setup/setup | 3.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 8.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run make fmt | unknown/run | 0.0
+    Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | unknown/run | 46.0
+    Post Run golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a | cleanup/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41691904891 attempt 1 | sim-exits | dispatch unavailable; wait 1.0; setup 19.0; run 855.0
+    Set up job | setup/setup | 1.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 10.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 7.0
+    Run make test-sim-exits | unknown/run | 853.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41691904891 attempt 1 | test (internal/queue) | dispatch unavailable; wait 1.0; setup 41.0; run 157.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 14.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 17.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 6.0
+    Run actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | setup/setup | 2.0
+    make test (internal/queue) | unknown/run | 153.0
+    Run actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | unknown/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 1.0
+    Complete job | cleanup/run | 0.0
+  run 41691904891 attempt 1 | test (internal/serve) | dispatch unavailable; wait 5.0; setup 27.0; run 375.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 13.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 2.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | setup/setup | 2.0
+    make test (internal/serve) | unknown/run | 371.0
+    Run actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | unknown/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 1.0
+    Stop containers | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41691904891 attempt 1 | test (internal/store) | dispatch unavailable; wait 2.0; setup 41.0; run 408.0
+    Set up job | setup/setup | 1.0
+    Initialize containers | setup/setup | 12.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 18.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 8.0
+    Run actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | setup/setup | 1.0
+    make test (internal/store) | unknown/run | 405.0
+    Run actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | unknown/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 1.0
+    Stop containers | cleanup/run | 0.0
+    Complete job | cleanup/run | 0.0
+  run 41691904891 attempt 1 | test (rest) | dispatch unavailable; wait 2.0; setup 49.0; run 311.0
+    Set up job | setup/setup | 2.0
+    Initialize containers | setup/setup | 15.0
+    Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | checkout/setup | 16.0
+    Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | setup/setup | 13.0
+    Run actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | setup/setup | 3.0
+    make test (rest) | unknown/run | 307.0
+    Run actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 | unknown/run | 0.0
+    Post Run actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e | cleanup/run | 0.0
+    Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 | cleanup/run | 0.0
+    Stop containers | cleanup/run | 1.0
+    Complete job | cleanup/run | 0.0
+
+Gaps (no extrapolation):
+  run 41549291483 | dispatch-time | build: push timestamp unavailable, after job creation, or a rerun
+  run 41549291483 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 41549291483 | dispatch-time | lint: push timestamp unavailable, after job creation, or a rerun
+  run 41549291483 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 41549291483 | dispatch-time | test (internal/queue): push timestamp unavailable, after job creation, or a rerun
+  run 41549291483 | dispatch-time | test (internal/serve): push timestamp unavailable, after job creation, or a rerun
+  run 41549291483 | dispatch-time | test (internal/store): push timestamp unavailable, after job creation, or a rerun
+  run 41549291483 | dispatch-time | test (rest): push timestamp unavailable, after job creation, or a rerun
+  run 41549291483 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate
+  run 41549291483 | warm-baseline | build: fewer than 10 matching default-branch runs or zero median
+  run 41549291483 | warm-baseline | check: fewer than 10 matching default-branch runs or zero median
+  run 41549291483 | warm-baseline | lint: fewer than 10 matching default-branch runs or zero median
+  run 41549291483 | warm-baseline | sim-exits: fewer than 10 matching default-branch runs or zero median
+  run 41549291483 | warm-baseline | test (internal/queue): fewer than 10 matching default-branch runs or zero median
+  run 41549291483 | warm-baseline | test (internal/serve): fewer than 10 matching default-branch runs or zero median
+  run 41549291483 | warm-baseline | test (internal/store): fewer than 10 matching default-branch runs or zero median
+  run 41549291483 | warm-baseline | test (rest): fewer than 10 matching default-branch runs or zero median
+  run 41688299610 | dispatch-time | build: push timestamp unavailable, after job creation, or a rerun
+  run 41688299610 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 41688299610 | dispatch-time | lint: push timestamp unavailable, after job creation, or a rerun
+  run 41688299610 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 41688299610 | dispatch-time | test (internal/queue): push timestamp unavailable, after job creation, or a rerun
+  run 41688299610 | dispatch-time | test (internal/serve): push timestamp unavailable, after job creation, or a rerun
+  run 41688299610 | dispatch-time | test (internal/store): push timestamp unavailable, after job creation, or a rerun
+  run 41688299610 | dispatch-time | test (rest): push timestamp unavailable, after job creation, or a rerun
+  run 41688299610 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate
+  run 41688299610 | warm-baseline | build: fewer than 10 matching default-branch runs or zero median
+  run 41688299610 | warm-baseline | check: fewer than 10 matching default-branch runs or zero median
+  run 41688299610 | warm-baseline | lint: fewer than 10 matching default-branch runs or zero median
+  run 41688299610 | warm-baseline | sim-exits: fewer than 10 matching default-branch runs or zero median
+  run 41688299610 | warm-baseline | test (internal/queue): fewer than 10 matching default-branch runs or zero median
+  run 41688299610 | warm-baseline | test (internal/serve): fewer than 10 matching default-branch runs or zero median
+  run 41688299610 | warm-baseline | test (internal/store): fewer than 10 matching default-branch runs or zero median
+  run 41688299610 | warm-baseline | test (rest): fewer than 10 matching default-branch runs or zero median
+  run 41691904891 | dispatch-time | build: push timestamp unavailable, after job creation, or a rerun
+  run 41691904891 | dispatch-time | check: push timestamp unavailable, after job creation, or a rerun
+  run 41691904891 | dispatch-time | lint: push timestamp unavailable, after job creation, or a rerun
+  run 41691904891 | dispatch-time | sim-exits: push timestamp unavailable, after job creation, or a rerun
+  run 41691904891 | dispatch-time | test (internal/queue): push timestamp unavailable, after job creation, or a rerun
+  run 41691904891 | dispatch-time | test (internal/serve): push timestamp unavailable, after job creation, or a rerun
+  run 41691904891 | dispatch-time | test (internal/store): push timestamp unavailable, after job creation, or a rerun
+  run 41691904891 | dispatch-time | test (rest): push timestamp unavailable, after job creation, or a rerun
+  run 41691904891 | pr-data | no recorded same-SHA pull request comparison; absence is not evidence of no duplicate
+  run 41691904891 | warm-baseline | build: fewer than 10 matching default-branch runs or zero median
+  run 41691904891 | warm-baseline | check: fewer than 10 matching default-branch runs or zero median
+  run 41691904891 | warm-baseline | lint: fewer than 10 matching default-branch runs or zero median
+  run 41691904891 | warm-baseline | sim-exits: fewer than 10 matching default-branch runs or zero median
+  run 41691904891 | warm-baseline | test (internal/queue): fewer than 10 matching default-branch runs or zero median
+  run 41691904891 | warm-baseline | test (internal/serve): fewer than 10 matching default-branch runs or zero median
+  run 41691904891 | warm-baseline | test (internal/store): fewer than 10 matching default-branch runs or zero median
+  run 41691904891 | warm-baseline | test (rest): fewer than 10 matching default-branch runs or zero median
+  run 41694369667 | baseline-data | incomplete or ambiguous default-branch run
