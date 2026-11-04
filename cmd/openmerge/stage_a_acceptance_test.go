@@ -315,6 +315,13 @@ func TestStageAAcceptanceCLI(t *testing.T) {
 				// Quiesce workers before historical reads: deliberately observe every
 				// successful approval only after settlement, without policy-lock contention.
 				stop()
+				mcpClient := mcpTestClient(t, api.URL)
+				mcpResult := mcpCall(t, mcpClient, "change", map[string]any{"owner": "owner", "repo": "acceptance", "base": "main", "id": string(id)})
+				var mcpChange status.ChangeResponse
+				must(json.Unmarshal([]byte(mcpText(t, mcpResult)), &mcpChange))
+				if mcpResult.IsError || mcpChange.PR == nil || mcpChange.PR.Landing == nil || mcpChange.PR.Landing.Outcome != "landed" || mcpChange.PR.Landing.SHA != show.PR.Landing.SHA {
+					t.Fatalf("MCP did not read the fake-forge landing: %+v", mcpChange)
+				}
 				if !read("brief", &view) {
 					t.Fatal("settled brief unavailable")
 				}

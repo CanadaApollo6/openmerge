@@ -25,7 +25,7 @@ type Read struct {
 var queueParameters = []Parameter{
 	{"owner", "path", "string", true, "Repository owner. Repository matching is case-insensitive."},
 	{"repo", "path", "string", true, "Repository name."},
-	{"base", "path", "string", true, "Exact base branch. URL-encode slashes within the branch."},
+	{"base", "path", "string", true, "Exact raw base branch name, including slashes."},
 }
 
 var changeParameter = Parameter{"id", "path", "string", true, "Canonical change ID recorded in this queue."}

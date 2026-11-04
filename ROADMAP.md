@@ -115,7 +115,7 @@ ADR 0006 lands in four PRs:
 - [ ] Check timeouts (automatic, p95-based)
 - [ ] Pause, scheduled freezes with exclusions, `schedule` conditions
 - [ ] Read-only web dashboard: queue graph, batch history, why-is-my-PR-stuck explainer
-- [ ] **MCP server** exposing queue status, enqueue/dequeue, failure explanations
+- [x] **Read-only MCP server** exposing registry reads, queue status, and failure explanations. Enqueue and dequeue use forge-authenticated comments; write tools await an authentication ADR. See [the agent guide](docs/agents.md).
 
 **Exit:** the strict adopter profiles in [ADR 0009](docs/adr/0009-speculative-batching.md) pass in simulation (20 changes/day with 30-minute CI: p95 time to merge under 60 minutes; 5 changes/day with 3-hour CI: p95 under 4.5 hours; both under 1.5 CI runs per merged change), and the simulator publishes strict capacity across defect rates. The earlier 2,000 PRs/day strict target is superseded: strict capacity is bounded by failure resolution rather than depth, and Phase 2b's exit covers high volume.
 
@@ -170,7 +170,7 @@ Stage A acceptance also requires the separate outside-pushes work in
 - **PR-less queues and generated prose (C):** `changes.pull_requests: never` once notifications and request-changes work outside pull requests; optional, labelled model summaries in briefs
 - A ready-made **queue-watcher agent skill** that reads the structured logs and "why" API and reports anomalies
 - Outbound webhooks and OpenTelemetry export for every queue event
-- Agent skills and docs written for agents (`llms.txt`, Markdown docs, stable `--json` and exit codes)
+- [x] Docs written for agents ([guide](docs/agents.md), `llms.txt`, stable `--json` and exit codes). Agent skills remain planned.
 
 **Exit (on the fake forge):** for Stage A, an unattended coding agent opens a pull request and takes it to landed or definitively rejected using only the CLI or MCP; a low-risk change lands on policy alone, a change that needs a human waits until a scripted reviewer approves its exact head, and every landing's decision snapshot can be read back. For Stage B, the same starting from `openmerge change submit` with no pull request.
 
