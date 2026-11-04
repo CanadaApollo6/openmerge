@@ -139,6 +139,13 @@ func TestMCPRegistryAndRealHandler(t *testing.T) {
 	tools := map[string]*mcp.Tool{}
 	for _, tool := range listed.Tools {
 		tools[tool.Name] = tool
+		encoded, err := json.Marshal(tool)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(strings.ToLower(string(encoded)), "url-encode") {
+			t.Errorf("%s tells the agent to URL-encode: %s", tool.Name, encoded)
+		}
 	}
 	for _, read := range status.Reads() {
 		if read.Name == "live" {
@@ -163,6 +170,9 @@ func TestMCPRegistryAndRealHandler(t *testing.T) {
 		}
 		for _, p := range read.Parameters {
 			property := properties[p.Name].(map[string]any)
+			if p.Name == "base" && !strings.Contains(strings.ToLower(property["description"].(string)), "raw") {
+				t.Errorf("%s base must request the raw branch name: %v", read.Name, property)
+			}
 			if property["type"] != p.Type || property["description"] != p.Description || slices.Contains(required, any(p.Name)) != p.Required {
 				t.Errorf("%s parameter %s: %+v", read.Name, p.Name, schema)
 			}
@@ -253,7 +263,7 @@ func TestMCPErrorsComputingAndSize(t *testing.T) {
 		{"ambiguous", 409, `{"version":1,"error":"ambiguous-queue","message":"select partition"}`, "", "ambiguous-queue: select partition (HTTP 409)", true},
 		{"computing", 202, "{\"version\":1,\"status\":\"computing\"}\n", "7", "computing", false},
 		{"at-limit", 200, `{"padding":"` + strings.Repeat("x", mcpMaxResponse-14) + `"}`, "", "padding", false},
-		{"over-limit", 200, `{"padding":"` + strings.Repeat("x", mcpMaxResponse-13) + `"}`, "", "MCP body limit is 65536 bytes", true},
+		{"over-limit", 200, `{"padding":"` + strings.Repeat("x", mcpMaxResponse-13) + `"}`, "", "MCP body limit is 262144 bytes", true},
 		{"invalid-json", 200, "not JSON", "", "invalid, oversized or unsupported", true},
 		{"secret-body", 200, `{"echo":"mcp-private-test-token"}`, "", "invalid, oversized or unsupported", true},
 		{"malformed-error", 500, "mcp-private-test-token", "", "status API returned HTTP 500", true},
@@ -279,8 +289,8 @@ func TestMCPErrorsComputingAndSize(t *testing.T) {
 			if tc.retry != "" && (len(result.Content) != 2 || !strings.Contains(result.Content[1].(*mcp.TextContent).Text, "Retry-After: 7")) {
 				t.Fatal("computing response lost retry time")
 			}
-			if tc.name == "over-limit" && !strings.Contains(text, "repository_queues") {
-				t.Fatal("missing narrower read advice")
+			if tc.name == "over-limit" && !strings.Contains(text, "no narrower read exists") {
+				t.Fatal("missing accurate advice for an unfiltered read")
 			}
 		})
 	}
