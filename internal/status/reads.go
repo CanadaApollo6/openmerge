@@ -50,6 +50,9 @@ var reads = []Read{
 	{"decisions", "/v1/queues/{owner}/{repo}/{base}/changes/{id}/decisions", parameters(changeParameter, revisionParameter,
 		Parameter{"after", "query", "integer", false, "Nonnegative event cursor. Defaults to 0."},
 		Parameter{"limit", "query", "integer", false, "Maximum decisions, from 1 to 100. Defaults to 20."}), "Read a page of recorded landing decisions for a change."},
+	{"queue_events", "/v1/queues/{owner}/{repo}/{base}/events", parameters(
+		Parameter{"after", "query", "integer", false, "Nonnegative journal event cursor. Defaults to 0."},
+		Parameter{"limit", "query", "integer", false, "Maximum events, from 1 to 100. Defaults to 20."}), "Poll with after=next_cursor to resume queue event history after a restart. Drain pages while has_more is true, then keep polling from the last cursor."},
 	{"savings", "/v1/queues/{owner}/{repo}/{base}/reports/savings", parameters(
 		Parameter{"since", "query", "string", true, "Inclusive window start in RFC3339 format."},
 		Parameter{"until", "query", "string", false, "Exclusive window end in RFC3339 format. Defaults to now. Future times are rejected."},

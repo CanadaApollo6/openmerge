@@ -37,6 +37,7 @@ within the limit are ignored.
 | `/v1/queues/{owner}/{repo}/{base}/changes/{id}` | Change evidence, accountability, waiting reasons, and landing |
 | `/v1/queues/{owner}/{repo}/{base}/changes/{id}/brief` | Public recorded brief v1 DTO; requires `audience=reviewer`, `operator`, or `agent` |
 | `/v1/queues/{owner}/{repo}/{base}/changes/{id}/decisions` | Recorded landing decisions with `revision`, `after`, and `limit` |
+| `/v1/queues/{owner}/{repo}/{base}/events` | Queue event page with `after` and `limit`, `next_cursor`, and `has_more` |
 | `/v1/queues/{owner}/{repo}/{base}/reports/savings` | `{"version":1,"savings":SAVINGS}`; requires `since`; accepts `until` and `full-suite-minutes` |
 | `/v1/health` | Authenticated runtime readiness and liveness observations |
 | `/v1/authority-completion` | Repository authority completion with expected digests |
@@ -64,6 +65,48 @@ report attributes to landings within the window. Journal reads and computation
 share the existing 15 second deadline. A deadline failure returns 503
 `unavailable`. Large histories can require the direct database report. A narrower
 window does not bound the history read.
+
+Queue events accept a nonnegative `after` cursor, default 0, and `limit` from
+1 to 100, default 20. Invalid, repeated, or unknown parameters return 400
+`invalid-request`. Queue selection, authentication, and method rules match savings.
+Each page contains `version`, `events`, `next_cursor`, and `has_more`.
+Events follow journal ID order and have IDs strictly greater than `after`.
+Each event has `id`, `at`, `type`, and the same sanitized `summary` as PR detail.
+Retry and cancellation evidence uses the same optional fields as PR detail.
+Single-PR observations include `pr`, including evidence bound through a change ID.
+Batch-wide events do not imply a single PR. Events without a public summary,
+including dependency and provenance side evidence, use `Recorded queue event`.
+Their payloads remain private. Pages preserve individual rows without PR filtering
+or coalescing. A dependency projection that withholds journal positions returns
+503 `unavailable` rather than exposing private cursors or timing.
+
+`next_cursor` is the last returned event ID, or `after` for an empty page.
+`has_more` reports another row in the same snapshot. Unlike decisions, queue
+events retain the final cursor instead of returning 0 at the end, so polling can
+resume. An `after` past the end returns `events: []`, the same cursor, and
+`has_more: false`. A saved cursor survives client and server restarts.
+The store currently retains all journal rows. There is no retention window or
+expired cursor today. IDs are global, so gaps between IDs do not imply loss.
+Future journal pruning must add an explicit missed-history signal before this
+read can safely resume from an expired cursor. Manual database deletion bypasses
+the retention contract and cannot be detected by this read.
+
+Each request loads the whole journal through the status source, even for a
+small page. Projection replays the prefix through that page. Transfer, decoding,
+and memory grow with the journal. Reads and projection share a 15 second
+deadline. A deadline failure returns 503 `unavailable` without advancing a cursor.
+
+A poller sends its saved cursor and persists `next_cursor` after consuming the
+page. It drains pages while `has_more` is true, then polls again later.
+
+```sh
+cursor=0
+page=$(curl --fail --silent --show-error \
+	-H "Authorization: Bearer $OPENMERGE_API_TOKEN" \
+	"$OPENMERGE_API/v1/queues/acme/project/main/events?after=$cursor&limit=20")
+printf '%s\n' "$page" | jq '.events'
+cursor=$(printf '%s\n' "$page" | jq -r '.next_cursor')
+```
 
 URL-encode each path component, including slashes in base branch names:
 `/v1/queues/acme/project/release%2Fv1`. PR numbers are positive integers.

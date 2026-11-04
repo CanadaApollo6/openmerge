@@ -187,6 +187,10 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			serveSavings(w, r, source, keys, sanitizer)
 			return
 		}
+		if path := r.URL.EscapedPath(); strings.HasPrefix(path, "/v1/queues/") && strings.Count(path, "/") == 6 && strings.HasSuffix(path, "/events") && registeredRead(path) {
+			serveQueueEvents(w, r, source, keys, sanitizer)
+			return
+		}
 		change, isChange, changeErr := changeRoute(r, keys)
 		briefKeys, changeID, audience, isBrief, briefErr := briefRoute(r, keys)
 		selected, pr, limit, err := route(r, keys)
