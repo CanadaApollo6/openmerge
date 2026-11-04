@@ -3,6 +3,7 @@ package status
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"reflect"
 	"strings"
@@ -14,10 +15,12 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/queuemetrics"
 	"github.com/CanadaApollo6/openmerge/internal/store"
+	"github.com/CanadaApollo6/openmerge/internal/treededupe"
 )
 
 func TestSavingsHTTPContractAndValidation(t *testing.T) {
 	j := journal(testingEvents()...)
+	j.TreeDedupeShadow = savingsShadowLedger(t, at)
 	src := &source{journals: []store.Journal{j}}
 	h := Handler(src, []store.QueueKey{key}, "secret", nil)
 	path := "/v1/queues/owner/repo/main/reports/savings"
@@ -85,14 +88,67 @@ func TestSavingsHTTPContractAndValidation(t *testing.T) {
 	}
 }
 
-func TestSavingsJournalInputsSurviveDependencyProjection(t *testing.T) {
-	j, binding, ref, _ := statusfixture.StatusJournal(t, "dependency-waiting", 1)
-	projected, err := ProjectDependencies(j, binding, map[string][]dependency.Grant{ref: nil}, statusfixture.StatusSources())
+func savingsShadowLedger(t *testing.T, at time.Time) []byte {
+	t.Helper()
+	ledger := treededupe.Ledger{}
+	ledger.ObserveBuild(treededupe.Build{At: at.Add(-3 * time.Minute), BatchID: "source", SHA: strings.Repeat("a", 40), Kind: treededupe.KindBatch, Key: "same-tree"})
+	ledger.ObserveOutcome(strings.Repeat("a", 40), at.Add(-2*time.Minute), true)
+	ledger.ObserveBuild(treededupe.Build{At: at.Add(-time.Minute), BatchID: "hit", SHA: strings.Repeat("b", 40), Kind: treededupe.KindBatch, Key: "same-tree"})
+	raw, err := ledger.Encode()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if j.Key != projected.Key || !reflect.DeepEqual(j.Seed, projected.Seed) || !reflect.DeepEqual(j.Events, projected.Events) || !reflect.DeepEqual(j.TreeDedupeShadow, projected.TreeDedupeShadow) {
-		t.Fatal("dependency projection changed savings journal inputs")
+	return raw
+}
+
+func TestSavingsJournalInputsSurviveDependencyProjection(t *testing.T) {
+	j, binding, ref, grant := statusfixture.StatusJournal(t, "dependency-waiting", 1)
+	at := j.Events[0].RecordedAt
+	j.TreeDedupeShadow = savingsShadowLedger(t, at)
+	j.OutsideWarnings = store.OutsideWarningSummary{Outstanding: 1, EventIDs: []int64{1}, Truncated: true, Error: "fixture-warning"}
+	j.HasAuthorityPin = true
+	j.ProvenanceCapacity = &store.ProvenanceCapacity{FenceCount: 1, ProjectedBytes: 10, LimitBytes: 100, HighWaterBytes: 80}
+	for i := range j.Events {
+		dedupe := fmt.Sprintf("fixture-%d", i)
+		j.Events[i].DedupeKey = &dedupe
+	}
+	// New journal inputs need a nonzero fixture before projection parity can cover them.
+	value := reflect.ValueOf(j)
+	for i := 0; i < value.NumField(); i++ {
+		switch value.Type().Field(i).Name {
+		case "DependencyQueue", "DependencyRedacted", "DependencyStatus":
+		default:
+			if value.Field(i).IsZero() {
+				t.Fatalf("populate journal field %s", value.Type().Field(i).Name)
+			}
+		}
+	}
+	window := queuemetrics.SavingsWindow{Since: at.Add(-time.Hour), Until: at.Add(time.Hour), FullSuiteMinutes: 20}
+	want, err := queuemetrics.ComputeSavings(j, window)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want.Shadow == nil || want.Shadow.WouldReuseSuccess != 1 {
+		t.Fatal("fixture has no shadow savings", want.Shadow)
+	}
+	for name, grants := range map[string][]dependency.Grant{"authorized": {grant}, "redacted": nil} {
+		t.Run(name, func(t *testing.T) {
+			projected, err := ProjectDependencies(j, binding, map[string][]dependency.Grant{ref: grants}, statusfixture.StatusSources())
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := queuemetrics.ComputeSavings(projected, window)
+			if err != nil || !reflect.DeepEqual(got, want) {
+				t.Fatalf("projected savings differ: got %+v, want %+v, err %v", got, want, err)
+			}
+			// These are the only additive dependency presentation fields.
+			projected.DependencyQueue = j.DependencyQueue
+			projected.DependencyRedacted = j.DependencyRedacted
+			projected.DependencyStatus = j.DependencyStatus
+			if !reflect.DeepEqual(j, projected) {
+				t.Fatal("dependency projection changed the persisted journal")
+			}
+		})
 	}
 }
 

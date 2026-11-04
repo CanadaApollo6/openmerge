@@ -61,7 +61,7 @@ func TestReadRegistryInventory(t *testing.T) {
 
 func TestReadRegistrySourcePaths(t *testing.T) {
 	// Inspect handlers too. An early return can bypass every runtime registry check.
-	files, err := parser.ParseDir(token.NewFileSet(), ".", func(info os.FileInfo) bool { return !strings.HasSuffix(info.Name(), "_test.go") }, 0)
+	files, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,23 +69,29 @@ func TestReadRegistrySourcePaths(t *testing.T) {
 	for _, path := range readRouteInventory {
 		paths[path] = true
 	}
-	for _, pkg := range files {
-		for name, file := range pkg.Files {
-			ast.Inspect(file, func(node ast.Node) bool {
-				lit, ok := node.(*ast.BasicLit)
-				if !ok || lit.Kind != token.STRING {
-					return true
-				}
-				value, err := strconv.Unquote(lit.Value)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if (value == "/v1" || strings.HasPrefix(value, "/v1/")) && !paths[strings.TrimSuffix(value, "/")] {
-					t.Errorf("%s declares an API path outside the read inventory: %q", name, value)
-				}
-				return true
-			})
+	for _, entry := range files {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
 		}
+		file, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			lit, ok := node.(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return true
+			}
+			value, err := strconv.Unquote(lit.Value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (value == "/v1" || strings.HasPrefix(value, "/v1/")) && !paths[strings.TrimSuffix(value, "/")] {
+				t.Errorf("%s declares an API path outside the read inventory: %q", name, value)
+			}
+			return true
+		})
 	}
 }
 
