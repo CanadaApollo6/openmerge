@@ -24,6 +24,7 @@ Commands:
   change brief <id>       Read a recorded change brief
   change decisions <id>   Read recorded landing decisions
   queue status [options]  Read queue status and PR explanations
+  mcp [options]           Serve read-only tools over stdio
   audit export [options]  Export recorded audit evidence
   report savings [opts]   Summarize CI runs, minutes and time saved
   report ci-doctor [opts] Diagnose queue CI timings
@@ -50,6 +51,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		output = schema.V1
 	case (len(args) == 2 || len(args) == 3) && args[0] == "config" && args[1] == "validate":
 		return validateConfig(args[2:], stdout, stderr)
+	case len(args) > 0 && args[0] == "mcp":
+		return runMCP(args[1:], stdout, stderr)
 	case len(args) > 0 && args[0] == "audit":
 		return runAudit(args[1:], stdout, stderr)
 	case len(args) > 0 && args[0] == "report":
