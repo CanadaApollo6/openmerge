@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -37,6 +38,59 @@ func (s *Server) logEvent(ctx context.Context, w *worker, before, after queue.St
 		for _, pin := range batch.PRs {
 			log(message, pin.PR, batch.ID, batch.TestedSHA, reason, extra...)
 		}
+	}
+	batchChanged := func(id string) bool {
+		old := before.Batch(id)
+		if old == nil {
+			return false
+		}
+		if !reflect.DeepEqual(old, after.Batch(id)) {
+			return true
+		}
+		for _, pin := range old.PRs {
+			if before.PendingDequeue(pin.PR) != after.PendingDequeue(pin.PR) {
+				return true
+			}
+		}
+		return false
+	}
+	failed := func(id string, reason queue.DequeueReason) {
+		if !batchChanged(id) {
+			return
+		}
+		b := before.Batch(id)
+		view := before
+		// Diagnostic helpers predate chains and describe Active only.
+		view.Active, view.Following = b, nil
+		batchLog("batch failed", string(reason), b, "detail", view.DequeueDetail(b.PRs[0].PR, reason))
+	}
+	built := func(id, sha string) {
+		old, batch := before.Batch(id), after.Batch(id)
+		if old != nil && old.Phase == queue.Building && batch != nil && batch.TestedSHA == sha && batch.Phase == queue.Testing {
+			batchLog("test ref built", "", batch, "ref", batch.TestRef)
+		}
+	}
+	checks := func(batch *queue.Batch, result string) {
+		if batch == nil || w.logChecks[batch.ID] == result {
+			return
+		}
+		if w.logChecks == nil {
+			w.logChecks = make(map[string]string)
+		}
+		if result == "pending" {
+			batchLog("checks result", "pending", batch)
+		} else {
+			batchLog("checks result", "", batch, "success", result == "true")
+		}
+		w.logChecks[batch.ID] = result
+	}
+	checksForSHA := func(sha string) *queue.Batch {
+		for _, b := range before.Batches() {
+			if b.TestedSHA == sha && b.Phase == queue.Testing && b.InvalidationReason == "" {
+				return b
+			}
+		}
+		return nil
 	}
 	for _, entry := range after.Entries {
 		found := false
@@ -80,77 +134,118 @@ func (s *Server) logEvent(ctx context.Context, w *worker, before, after queue.St
 			}
 			if removed && old.AdmissionID == e.AdmissionID && old.PR == e.PR {
 				batch := e.BatchID
-				if batch == "" && before.Active != nil {
-					batch = before.Active.ID
+				if b := before.BatchForPR(e.PR); batch == "" && b != nil {
+					batch = b.ID
 				}
 				log("dequeued", e.PR, batch, old.HeadSHA, string(e.Reason), "detail", before.DequeueDetail(e.PR, e.Reason))
 			}
 		}
 	case queue.FastForwardRefBuilt:
-		if after.Active != nil && after.Active.TestedSHA == e.TestedSHA {
-			batchLog("test ref built", "", after.Active, "ref", after.Active.TestRef)
-		}
+		built(e.BatchID, e.TestedSHA)
 	case queue.FastForwardBlocked:
-		batchLog("fast-forward blocked", "fast-forward-required", before.Active)
-	case queue.FastForwardMergeCommitsBlocked:
-		log("fast-forward blocked", e.PR, e.BatchID, "", string(queue.MergeCommitsNotAllowed))
-	case queue.TestRefBuilt:
-		if after.Active != nil && after.Active.TestedSHA == e.TestedSHA {
-			batchLog("test ref built", "", after.Active, "ref", after.Active.TestRef)
+		if batchChanged(e.BatchID) {
+			batchLog("fast-forward blocked", "fast-forward-required", before.Batch(e.BatchID))
 		}
+	case queue.FastForwardMergeCommitsBlocked:
+		if batchChanged(e.BatchID) {
+			log("fast-forward blocked", e.PR, e.BatchID, "", string(queue.MergeCommitsNotAllowed))
+		}
+	case queue.TestRefBuilt:
+		built(e.BatchID, e.TestedSHA)
+	case queue.ChainedTestRefBuilt:
+		built(e.BatchID, e.TestedSHA)
 	case queue.CheckProvenanceObserved:
-		if before.CheckProvenanceDetail() != after.CheckProvenanceDetail() {
+		if detail := after.BatchCheckProvenanceDetail(e.BatchID); before.BatchCheckProvenanceDetail(e.BatchID) != detail {
 			reason := "unbound-check-provenance"
-			if after.CheckProvenanceDetail() == "" {
+			if detail == "" {
 				reason = ""
 			}
-			batchLog("check provenance", reason, after.Active, "detail", after.CheckProvenanceDetail())
+			batchLog("check provenance", reason, after.Batch(e.BatchID), "detail", detail)
 		}
 	case queue.BatchFailed:
-		if before.Active != nil && before.Active.ID == e.BatchID && before.Active.Phase == queue.Testing && !before.ChecksPassed(before.Active.TestedSHA) {
-			batchLog("batch failed", string(e.Reason), before.Active, "detail", before.DequeueDetail(before.Active.PRs[0].PR, e.Reason))
+		failed(e.BatchID, e.Reason)
+	case queue.ChecksFailureConfirmed:
+		failed(e.BatchID, e.Reason)
+	case queue.BatchDiagnosed:
+		failed(e.BatchID, e.Reason)
+	case queue.ChecksObserved:
+		b := after.Batch(e.BatchID)
+		if b == nil || b.Phase != queue.Testing || b.InvalidationReason != "" || b.TestedSHA != e.TestedSHA || e.Validate() != nil {
+			break
 		}
+		r := b.CheckRetry
+		if r == nil || r.Confirmed || r.Unsupported || r.OutcomeUnknown || r.Timeout != e.Timeout || !r.OriginalDeadline.Equal(e.OriginalDeadline) {
+			break
+		}
+		stale := (r.Requested || e.Success && len(r.FailedRuns) > 0) && !r.NewAttempts(e.Runs)
+		for _, run := range e.Runs {
+			for _, latest := range r.ObservedRuns {
+				if run.Name == latest.Name && run.Source == latest.Source && (run.ID < latest.ID || run.ID == latest.ID && max(run.Attempt, 1) < max(latest.Attempt, 1)) {
+					stale = true
+				}
+			}
+		}
+		if e.Terminal && stale && !batchChanged(e.BatchID) {
+			break
+		}
+		// Repeated terminal observations can leave the fold unchanged after a
+		// pending read. Mixed stale reads can instead revoke an earlier pass.
+		result := "pending"
+		if e.Terminal && !stale {
+			result = fmt.Sprint(after.ChecksPassed(b.TestedSHA))
+		}
+		checks(b, result)
 	case queue.ChecksCompleted:
-		result := fmt.Sprint(e.Success)
-		if before.Active != nil && before.Active.TestedSHA == e.TestedSHA && w.logChecks != result {
-			batchLog("checks result", "", before.Active, "success", e.Success)
-			w.logChecks = result
+		if b := checksForSHA(e.TestedSHA); b != nil && (b.CheckRetry == nil || !b.CheckRetry.Confirmed) && (!e.Success || after.ChecksPassed(e.TestedSHA)) {
+			checks(b, fmt.Sprint(e.Success))
 		}
 	case queue.ChecksReopened:
-		if before.Active != nil && before.Active.TestedSHA == e.TestedSHA && w.logChecks != "pending" {
-			batchLog("checks result", "pending", before.Active)
-			w.logChecks = "pending"
+		if b := checksForSHA(e.TestedSHA); b != nil && batchChanged(b.ID) {
+			checks(b, "pending")
 		}
-	case queue.BatchStarted:
-		w.logChecks = ""
 	case queue.OutsidePushRecorded:
-		log("outside push recorded", 0, "", e.NewSHA, "outside-queue", "previous_sha", e.PreviousSHA, "rewrite", e.Rewrite, "ancestry_known", e.AncestryKnown, "history_known", e.HistoryKnown, "truncated", e.Truncated, "possible_stale_observation", e.PossibleStaleObservation, "verification_before_landing", e.VerificationBeforeLanding)
+		if e.Validate() == nil {
+			log("outside push recorded", 0, "", e.NewSHA, "outside-queue", "previous_sha", e.PreviousSHA, "rewrite", e.Rewrite, "ancestry_known", e.AncestryKnown, "history_known", e.HistoryKnown, "truncated", e.Truncated, "possible_stale_observation", e.PossibleStaleObservation, "verification_before_landing", e.VerificationBeforeLanding)
+		}
 	case queue.BaseMoved:
 		if before.Active != nil && after.Active == nil {
 			batchLog("abandoned", "base-moved", before.Active)
 		}
 	case queue.ConfigApplied:
 		// The first application at startup is not a change worth an INFO line.
-		if before.ConfigDigest != "" && before.ConfigDigest != e.Digest {
+		if before.ConfigDigest != "" && before.ConfigDigest != after.ConfigDigest {
 			log("configuration changed", 0, "", after.BaseSHA, "", "commit", e.Commit, "digest", e.Digest)
 		}
 		if before.Active != nil && (after.Active == nil || after.Active.ID != before.Active.ID) {
 			batchLog("abandoned", "config-changed", before.Active)
 		}
 	case queue.LandingStarted:
-		if after.Active != nil && after.Active.LandingAttempt.ID == e.AttemptID {
-			batchLog("landing started", "", after.Active, "attempt", e.AttemptID)
+		if b := after.Batch(e.BatchID); b != nil && b.Phase == queue.Landing && b.LandingAttempt.ID == e.AttemptID && batchChanged(e.BatchID) {
+			batchLog("landing started", "", b, "attempt", e.AttemptID)
 		}
 	case queue.Landed:
-		if before.Active != nil && after.Active == nil {
-			batchLog("landed", "", before.Active)
+		if b := before.Batch(e.BatchID); b != nil && after.Batch(e.BatchID) == nil {
+			batchLog("landed", "", b)
 		}
 	case queue.LandingAbandoned:
-		if before.Active != nil && after.Active == nil {
-			batchLog("abandoned", "fenced", before.Active)
+		if b := before.Batch(e.BatchID); b != nil && after.Batch(e.BatchID) == nil {
+			batchLog("abandoned", "fenced", b)
+		}
+	case queue.BatchesInvalidated:
+		for _, id := range e.BatchIDs {
+			if b := before.Batch(id); b != nil && after.Batch(id) == nil {
+				batchLog("abandoned", e.Reason, b)
+			}
 		}
 	case queue.TestRefBuildFailed:
-		batchLog("test ref build failed", "", before.Active, "conflict", e.Conflict)
+		if batchChanged(e.BatchID) {
+			batchLog("test ref build failed", "", before.Batch(e.BatchID), "conflict", e.Conflict)
+		}
+	}
+	for id := range w.logChecks {
+		if after.Batch(id) == nil {
+			delete(w.logChecks, id)
+		}
 	}
 	cfg := w.plannerConfig(s.options.PollInterval)
 	oldReason, newReason := before.PauseReason(cfg), after.PauseReason(cfg)

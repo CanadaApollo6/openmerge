@@ -583,6 +583,14 @@ events use PR zero, and unavailable batch/SHA fields are empty. DEBUG adds
 reconciliation cycles and quota backoff deadlines. Unchanged polls and repeated
 check results do not emit duplicate INFO transitions.
 
+`test ref built` covers both serial batches and every member of a speculative
+chain. `checks result` records `success: true`, `success: false`, or
+`reason: pending` once per batch per result change, including identified check
+observations and reruns. Batch records repeat for each PR in that batch, with
+the same `batch` and tested `sha`. Concurrent batches track results independently.
+`abandoned` records discarded chain members with the invalidation reason, such
+as `predecessor-failed`, `base-moved`, or `config-changed`.
+
 Git cache operations emit `git cache operation` records after releasing the cache
 lock. `repository` is the same forge `owner/name` used by queue logs, and
 `operation` identifies the public method, for example `build-test-ref`, `land`, or
