@@ -5,8 +5,9 @@ window: how many CI runs, CI minutes and how much waiting did OpenMerge save,
 compared with testing every PR on its own? It is the report to hand a design
 partner after a trial period.
 
-The command is **read-only**. It opens the same restricted journal reader as
-`tools/dogfood`: no migrations, no connection pings, and every query runs in a
+The command is **read-only**. In database mode it opens the same restricted
+journal reader as `tools/dogfood`. It runs no migrations or connection pings.
+Every query runs in a
 `REPEATABLE READ, READ ONLY` transaction with a bounded deadline. It never
 contacts GitHub or any other forge. Every number comes from the queue's recorded
 journal, replayed through the production `queue.Apply` fold.
@@ -31,6 +32,41 @@ openmerge report savings \
 
 Exit codes: `0` success, `2` usage, `1` read or computation failure. Flag errors
 never echo arguments, and read errors redact the connection string.
+
+## Read through the API
+
+An agent needs only the status API URL and its read-only bearer token.
+`GET /v1` lists the savings read and its parameters.
+
+```sh
+OPENMERGE_API_TOKEN_FILE=/path/to/token openmerge report savings \
+  --api https://openmerge.example.com --repository acme/api --base main \
+  --since 2026-10-01T00:00:00Z --until 2026-11-01T00:00:00Z \
+  --full-suite-minutes 18 --json
+```
+
+`--api` reads `/v1/queues/{owner}/{repo}/{base}/reports/savings` over HTTP.
+It requires no Postgres credentials or App key. It uses `OPENMERGE_API_TOKEN`,
+`OPENMERGE_API_TOKEN_FILE`, or `--api-token-file`, with the same rules as
+`openmerge queue status`. Redirects are refused. Responses are limited to 32 MiB.
+Error bodies are limited to 8 KiB and sanitized.
+
+`--api` overrides `OPENMERGE_DATABASE_URL`. An explicit `--database-url` cannot
+be combined with `--api`. `--installation` and nonempty `--lane` are database-only.
+The API selects the server's configured queues by repository and base. It returns
+409 when more than one installation or lane matches. An unserved queue returns 404.
+
+API mode uses a 20 second client limit and the server's 15 second request deadline.
+`--timeout` controls direct database reads only. Large histories can exceed the
+server deadline because savings reads the full journal, including carried-in work.
+A smaller window does not cap that history. Use the direct database report when
+it exceeds this limit.
+
+The HTTP response is `{"version":1,"savings":SAVINGS}`. `--json` emits only
+`SAVINGS`, the same report object as database mode. Both modes replay the same
+seed, recorded events, timestamps, and shadow ledger with `internal/queuemetrics`.
+API errors add exit codes `3` for not found, `4` for unauthorized or forbidden,
+and `5` for an ambiguous queue. Invalid requests use `2`. Other read failures use `1`.
 
 ## What is counted
 

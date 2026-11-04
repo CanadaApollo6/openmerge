@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -18,6 +20,7 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/forge/fake"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/queuemetrics"
+	"github.com/CanadaApollo6/openmerge/internal/status"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 	"github.com/jackc/pgx/v5"
 )
@@ -137,6 +140,14 @@ func TestReportSavingsCLI(t *testing.T) {
 		t.Fatal("dequeue not applied")
 	}
 
+	fromCLI, err := queuemetrics.ReadJournal(t.Context(), u.String(), key, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromSource, err := s.Journals(t.Context(), []store.QueueKey{key})
+	if err != nil || len(fromSource) != 1 || !reflect.DeepEqual(fromSource[0], fromCLI) {
+		t.Fatalf("status source differs from report journal: %v", err)
+	}
 	base := []string{"report", "savings", "--database-url", u.String(), "--installation", "1", "--repository", "fixture/app", "--since", at(0).Format(time.RFC3339), "--until", at(3600).Format(time.RFC3339)}
 	for _, tc := range []struct {
 		name  string
@@ -147,6 +158,17 @@ func TestReportSavingsCLI(t *testing.T) {
 			t.Fatalf("%s: exit %d: %s", tc.name, code, stderr.String())
 		}
 		reportGolden(t, tc.name, out.Bytes())
+		api := httptest.NewServer(status.Handler(s, []store.QueueKey{key}, "read-secret", nil))
+		t.Setenv("OPENMERGE_API_TOKEN", "read-secret")
+		t.Setenv("OPENMERGE_API_TOKEN_FILE", "")
+		t.Setenv("OPENMERGE_DATABASE_URL", "postgres://must-not-connect@127.0.0.1:1/missing")
+		var apiOut, apiErr bytes.Buffer
+		apiArgs := []string{"report", "savings", "--api", api.URL, "--repository", key.Repository, "--base", key.BaseBranch, "--since", at(0).Format(time.RFC3339), "--until", at(3600).Format(time.RFC3339)}
+		code := run(append(apiArgs, tc.extra...), &apiOut, &apiErr)
+		api.Close()
+		if code != 0 || !bytes.Equal(apiOut.Bytes(), out.Bytes()) {
+			t.Fatalf("API/database CLI mismatch: exit %d\nAPI %s\ndatabase %s\nstderr %s", code, &apiOut, &out, &apiErr)
+		}
 	}
 	var out, stderr bytes.Buffer
 	if code := run(append(base[:len(base):len(base)], "--json"), &out, &stderr); code != 0 {
