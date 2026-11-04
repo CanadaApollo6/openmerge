@@ -45,15 +45,20 @@ Successful text content contains the API body unchanged, including whitespace.
 Structured content contains the same JSON. Tool errors have `isError: true`.
 API errors include the sanitized error code, message, and HTTP status. HTTP
 401, 403, 404, and 409 remain distinguishable. A computing report returns a
-normal result with its JSON and a separate `Retry-After` text item. Wait for
-that interval or HTTP date, then repeat the call.
+normal result with its JSON and a separate `Retry-After` text item. Tool errors,
+including HTTP 429 and 503, also carry this item when the header is valid.
+The interval is an integer from 0 to 86400 seconds. Other values are ignored.
+Wait for that interval, then repeat the call.
 
 Each read has a 20-second client timeout. Redirects are refused. MCP rejects
-bodies over 64 KiB without truncation. This protects agent context while allowing
-the 32 KiB CI summary target with headroom. The error suggests a narrower read.
-Use `detail=summary` when available, smaller pages, `events=1`, or one change's
-brief. Use the API directly when you need bulk JSON. Stdout contains only MCP
-protocol. Startup diagnostics go to stderr.
+bodies over 256 KiB without truncation. The error names a smaller parameter
+value when the read has one and the request has not already selected it.
+`detail=summary` reduces a full report. `limit=1` reduces a decisions page.
+`events=1` reduces PR event history but leaves embedded queue entries unchanged.
+At the smallest parameter values, no narrower read exists for that request.
+`openmerge queue status --json` returns the full queue body, up to the CLI's
+32 MiB limit. Use the API directly for other full read bodies. Stdout contains
+only MCP protocol. Startup diagnostics go to stderr.
 
 ## Answer common questions
 

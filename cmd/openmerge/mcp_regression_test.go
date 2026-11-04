@@ -176,3 +176,21 @@ func TestMCPSizeAdvicePerRead(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPFutureDetailSizeAdvice(t *testing.T) {
+	read := status.Read{Name: "future_report", Parameters: []status.Parameter{
+		{Name: "detail", In: "query", Type: "string", Description: "One of summary or full. Defaults to summary."},
+	}}
+	for _, tc := range []struct {
+		arguments string
+		want      string
+	}{
+		{`{"detail":"full"}`, "retry with detail=summary"},
+		{`{"detail":"summary"}`, "no narrower read exists"},
+		{`{}`, "no narrower read exists"},
+	} {
+		if got := mcpNarrowerRead(read, []byte(tc.arguments)); !strings.Contains(got, tc.want) {
+			t.Errorf("arguments %s: %s", tc.arguments, got)
+		}
+	}
+}

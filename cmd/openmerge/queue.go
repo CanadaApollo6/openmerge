@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -140,8 +141,9 @@ func readStatusAPIResponse(ctx context.Context, api, path, tokenFile string, max
 		return statusAPIResponse{}, 1
 	}
 	defer func() { _ = response.Body.Close() }()
+	result := statusAPIResponse{retryAfter: statusRetryAfter(response.Header.Get("Retry-After"), token)}
 	if response.StatusCode != http.StatusOK && (!acceptComputing || response.StatusCode != http.StatusAccepted) {
-		return statusAPIResponse{}, queueAPIError(response, token, stderr)
+		return result, queueAPIError(response, token, stderr)
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxBody+1))
 	if os.IsTimeout(err) {
@@ -152,11 +154,49 @@ func readStatusAPIResponse(ctx context.Context, api, path, tokenFile string, max
 		_, _ = fmt.Fprintln(stderr, "invalid, oversized or unsupported status API response")
 		return statusAPIResponse{}, 1
 	}
-	if token != "" && strings.Contains(string(body), token) {
+	if statusBodyContainsToken(body, token) {
 		_, _ = fmt.Fprintln(stderr, "invalid, oversized or unsupported status API response")
 		return statusAPIResponse{}, 1
 	}
-	return statusAPIResponse{body: body, retryAfter: diagnostic.Sanitize(response.Header.Get("Retry-After"), token)}, 0
+	result.body = body
+	return result, 0
+}
+
+func statusBodyContainsToken(body []byte, token string) bool {
+	if token == "" {
+		return false
+	}
+	if bytes.Contains(body, []byte(token)) {
+		return true
+	}
+	// Tokens visit decoded keys and values, including overwritten duplicate keys.
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	for {
+		value, err := decoder.Token()
+		if err != nil {
+			return false
+		}
+		if text, ok := value.(string); ok && strings.Contains(text, token) {
+			return true
+		}
+	}
+}
+
+func statusRetryAfter(raw, token string) string {
+	if token != "" && strings.Contains(raw, token) {
+		return ""
+	}
+	for _, r := range raw {
+		if r < '0' || r > '9' {
+			return ""
+		}
+	}
+	seconds, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil || seconds > 86400 {
+		return ""
+	}
+	return strconv.FormatUint(seconds, 10)
 }
 
 func queueAPIError(response *http.Response, token string, stderr io.Writer) int {

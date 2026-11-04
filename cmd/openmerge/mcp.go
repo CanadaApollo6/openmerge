@@ -19,9 +19,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// Text and structured content can both enter the client's context. This allows
-// the ADR 0017 summary (32 KiB) with headroom without returning bulk reports.
-const mcpMaxResponse = 64 << 10
+// Text and structured content can both enter the client's context.
+const mcpMaxResponse = 256 << 10
 
 func runMCP(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("mcp", flag.ContinueOnError)
@@ -90,19 +89,20 @@ func newMCPServer(api, tokenFile string) *mcp.Server {
 			}
 			var diagnostics bytes.Buffer
 			response, code := readStatusAPIResponse(ctx, api, path, tokenFile, mcpMaxResponse, true, &diagnostics)
+			var result *mcp.CallToolResult
 			if code != 0 {
 				message := strings.TrimSpace(diagnostics.String())
 				if strings.Contains(message, "invalid, oversized or unsupported") {
-					message += fmt.Sprintf("; MCP body limit is %d bytes; %s", mcpMaxResponse, mcpNarrowerRead(read))
+					message += fmt.Sprintf("; MCP body limit is %d bytes; %s", mcpMaxResponse, mcpNarrowerRead(read, request.Params.Arguments))
 				}
-				return mcpFailure(message), nil
-			}
-			if !json.Valid(response.body) {
-				return mcpFailure("invalid, oversized or unsupported status API response"), nil
-			}
-			result := &mcp.CallToolResult{
-				Content:           []mcp.Content{&mcp.TextContent{Text: string(response.body)}},
-				StructuredContent: json.RawMessage(response.body),
+				result = mcpFailure(message)
+			} else if !json.Valid(response.body) {
+				result = mcpFailure("invalid, oversized or unsupported status API response")
+			} else {
+				result = &mcp.CallToolResult{
+					Content:           []mcp.Content{&mcp.TextContent{Text: string(response.body)}},
+					StructuredContent: json.RawMessage(response.body),
+				}
 			}
 			if response.retryAfter != "" {
 				result.Content = append(result.Content, &mcp.TextContent{Text: "Retry-After: " + response.retryAfter + "; wait, then repeat this read."})
@@ -117,18 +117,36 @@ func mcpFailure(message string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: message}}}
 }
 
-func mcpNarrowerRead(read status.Read) string {
+func mcpNarrowerRead(read status.Read, raw json.RawMessage) string {
+	var arguments map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &arguments)
+	const bulk = "; openmerge queue status --json returns the full queue body; use the API directly for other full read bodies"
 	for _, parameter := range read.Parameters {
+		if parameter.In != "query" {
+			continue
+		}
 		switch parameter.Name {
 		case "detail":
-			return "retry with detail=summary"
+			var detail string
+			_ = json.Unmarshal(arguments[parameter.Name], &detail)
+			if detail == "full" {
+				return "retry with detail=summary" + bulk
+			}
 		case "limit":
-			return "retry with a smaller limit and page with after"
+			var limit int64
+			_ = json.Unmarshal(arguments[parameter.Name], &limit)
+			if _, set := arguments[parameter.Name]; !set || limit > 1 {
+				return "retry with limit=1" + bulk
+			}
 		case "events":
-			return "retry with events=1, or use change or brief for this PR"
+			var events int64
+			_ = json.Unmarshal(arguments[parameter.Name], &events)
+			if _, set := arguments[parameter.Name]; !set || events > 1 {
+				return "retry with events=1 to reduce event history only; queue entries remain unchanged" + bulk
+			}
 		}
 	}
-	return "use repository_queues for one repository, or pr, change, or brief for one change; use the API directly for bulk JSON"
+	return "no narrower read exists for these parameters" + bulk
 }
 
 // Build the escaped path from literal registry segments, never by joining or

@@ -340,7 +340,17 @@ func TestMCPBinarySurface(t *testing.T) {
 	}
 	mcpTestToken(t)
 	key := store.QueueKey{Installation: "7", Repository: "owner/repo", BaseBranch: "release/v1"}
-	api := httptest.NewServer(status.Handler(mcpJournalSource{{Key: key, Seed: queue.State{BaseBranch: key.BaseBranch}}}, []store.QueueKey{key}, os.Getenv("OPENMERGE_API_TOKEN"), nil))
+	handler := status.Handler(mcpJournalSource{{Key: key, Seed: queue.State{BaseBranch: key.BaseBranch}}}, []store.QueueKey{key}, os.Getenv("OPENMERGE_API_TOKEN"), nil)
+	var throttled atomic.Bool
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if throttled.Load() {
+			w.Header().Set("Retry-After", "17")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"version":1,"error":"throttled","message":"try later"}`)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
 	defer api.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -412,6 +422,15 @@ func TestMCPBinarySurface(t *testing.T) {
 	names := []string{}
 	for _, tool := range list.Tools {
 		names = append(names, tool.Name)
+		if tool.Name == "queue" {
+			schema := tool.InputSchema.(map[string]any)
+			base := schema["properties"].(map[string]any)["base"]
+			encoded, err := json.Marshal(base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("tools/list queue base: %s", encoded)
+		}
 	}
 	t.Logf("tools/list names: %s", strings.Join(names, ", "))
 	send(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"queue","arguments":{"owner":"owner","repo":"repo","base":"release/v1"}}}`)
@@ -420,5 +439,12 @@ func TestMCPBinarySurface(t *testing.T) {
 	var result mcp.CallToolResult
 	if err := json.Unmarshal(called, &result); err != nil || result.IsError || !strings.Contains(mcpText(t, &result), `"base":"release/v1"`) {
 		t.Fatalf("real binary call failed: %s", called)
+	}
+	throttled.Store(true)
+	send(`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"queues","arguments":{}}}`)
+	throttle := receive(4)
+	t.Logf("tools/call HTTP 429 result: %s", throttle)
+	if err := json.Unmarshal(throttle, &result); err != nil || !result.IsError || !strings.Contains(mcpText(t, &result), "HTTP 429") || len(result.Content) != 2 || result.Content[1].(*mcp.TextContent).Text != "Retry-After: 17; wait, then repeat this read." {
+		t.Fatalf("real binary throttling lost retry interval: %s", throttle)
 	}
 }
