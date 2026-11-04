@@ -1,0 +1,9 @@
+# OpenMerge
+
+> OpenMerge is an open-source Go merge queue. Agents read its versioned status API through a read-only MCP server or CLI JSON commands. Writes use forge-authenticated comments.
+
+## Agent documentation
+
+- [Agent guide](docs/agents.md): MCP configuration, CLI JSON reads, common questions, exit codes, and forge commands.
+- [API v1](docs/api.md): Read contracts, authentication, errors, and discovery.
+- [ADR 0017](docs/adr/0017-agent-first-reads.md): Agent-first reads, the shared registry, MCP, and rollout boundaries.

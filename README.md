@@ -14,7 +14,7 @@ Agents now open pull requests faster than CI and humans can land them. The merge
 - **Throughput:** batching with bisection, speculative chains with an adaptive window, priorities, multiple queues, two-step CI.
 - **Monorepo lanes:** independent scopes merge in parallel (path globs, Bazel, Nx, Turborepo, Pants).
 - **Flaky-test handling:** ingest JUnit/CTRF, score flakiness, quarantine, and never evict a PR for a known flake.
-- **Agent-native:** JSON API, CLI with `--json`, an MCP server, change identity across re-pushes, per-agent budgets, and machine-readable failure reasons.
+- **Agent-native:** JSON API, CLI with `--json`, a [read-only MCP server](docs/agents.md), change identity across re-pushes, per-agent budgets, and machine-readable failure reasons.
 - **PR automation:** labels, reviews, backports, merge protections, stacks.
 - **Runs anywhere:** one binary plus Postgres. GitHub first, then GitLab and Forgejo/Gitea.
 
