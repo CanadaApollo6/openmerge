@@ -41,13 +41,13 @@ func observeGitOperations(logger *slog.Logger) func(gitops.OperationStats) {
 	}
 }
 
-func observeGitCacheOperations(logger *slog.Logger, cache *status.GitCache) func(gitops.OperationStats) {
+func observeGitCacheOperations(logger *slog.Logger, cache *status.GitCache, installation string) func(gitops.OperationStats) {
 	logOperation := observeGitOperations(logger)
 	if cache == nil {
 		return logOperation
 	}
 	return func(s gitops.OperationStats) {
-		cache.Observe(s)
+		cache.Observe(installation, s)
 		if logOperation != nil {
 			logOperation(s)
 		}

@@ -33,6 +33,50 @@ func gitCacheRead(t *testing.T, h http.Handler) GitCacheSnapshot {
 	return body.Cache
 }
 
+func gitCacheEntry(s GitCacheSnapshot, name string) GitCacheRepository {
+	for _, r := range s.Repositories {
+		if r.Name == strings.ToLower(name) {
+			return r
+		}
+	}
+	return GitCacheRepository{}
+}
+
+func TestGitCacheConfinesReadsToInstallation(t *testing.T) {
+	seven := store.QueueKey{Installation: "7", Repository: "Owner/Repo", BaseBranch: "main"}
+	eight := store.QueueKey{Installation: "8", Repository: "owner/repo", BaseBranch: "main"}
+	served := []store.QueueKey{seven, eight}
+	cache := NewGitCache(func() []store.QueueKey { return served })
+	cache.Observe("7", gitops.OperationStats{Repository: "owner/repo", Operation: "read-ref", CacheBytesMeasured: true, CacheBytes: 987654321})
+
+	read := func(keys ...store.QueueKey) GitCacheSnapshot {
+		return gitCacheRead(t, Handler(nil, keys, "secret", nil, ReadOptions{GitCache: cache}))
+	}
+	if got := read(eight); len(got.Repositories) != 0 {
+		t.Fatalf("installation 8 read installation 7's measurement: %+v", got.Repositories)
+	}
+	got := read(seven)
+	if len(got.Repositories) != 1 || got.Repositories[0].Installation != "7" || got.Repositories[0].Name != "owner/repo" || *got.Repositories[0].LastCacheBytes != 987654321 {
+		t.Fatalf("installation 7 row: %+v", got.Repositories)
+	}
+
+	cache.Observe("8", gitops.OperationStats{Repository: "owner/repo", Operation: "read-ref"})
+	got = read(eight, seven)
+	if len(got.Repositories) != 2 || got.Repositories[0].Installation != "7" || got.Repositories[1].Installation != "8" || got.Repositories[1].LastCacheBytes != nil {
+		t.Fatalf("installations were combined or misordered: %+v", got.Repositories)
+	}
+
+	cache.Observe("9", gitops.OperationStats{Repository: "owner/repo", Operation: "read-ref"})
+	if len(cache.repositories) != 2 {
+		t.Fatalf("unserved installation was retained: %+v", cache.repositories)
+	}
+
+	served = []store.QueueKey{eight}
+	if got := read(eight, seven); len(got.Repositories) != 1 || got.Repositories[0].Installation != "8" {
+		t.Fatalf("removed installation still served: %+v", got.Repositories)
+	}
+}
+
 func TestGitCacheHistogramBoundaries(t *testing.T) {
 	keys := []store.QueueKey{key}
 	cache := NewGitCache(func() []store.QueueKey { return keys })
@@ -44,8 +88,8 @@ func TestGitCacheHistogramBoundaries(t *testing.T) {
 				continue
 			}
 			name := fmt.Sprintf("boundary-%d-%d", i, delta)
-			cache.Observe(gitops.OperationStats{Repository: key.Repository, Operation: name, Wait: upper + delta, Hold: upper + delta, Maintenance: upper + delta})
-			op := gitCacheRead(t, h).Repositories[key.Repository].Operations[name]
+			cache.Observe("7", gitops.OperationStats{Repository: key.Repository, Operation: name, Wait: upper + delta, Hold: upper + delta, Maintenance: upper + delta})
+			op := gitCacheEntry(gitCacheRead(t, h), key.Repository).Operations[name]
 			var want GitCacheHistogram
 			bucket := i
 			if delta > 0 {
@@ -72,27 +116,27 @@ func TestGitCacheGCAndDrops(t *testing.T) {
 	h := Handler(nil, keys, "secret", nil, ReadOptions{GitCache: cache})
 	observe := func(s gitops.OperationStats) {
 		s.Repository, s.Operation = key.Repository, "read-ref"
-		cache.Observe(s)
+		cache.Observe("7", s)
 	}
 	observe(gitops.OperationStats{})
-	r := gitCacheRead(t, h).Repositories[key.Repository]
+	r := gitCacheEntry(gitCacheRead(t, h), key.Repository)
 	if r.LastGCAt != nil || r.LastCacheBytes != nil || r.Operations["read-ref"].Maintenance.Buckets[0] != 1 {
 		t.Fatalf("unmeasured fields not null or zero timing lost: %+v", r)
 	}
 	observe(gitops.OperationStats{GCRan: true, GCOutcome: gitops.GCOK, CacheBytesMeasured: true, CacheBytes: 4096})
 	before := time.Now().UTC()
 	observe(gitops.OperationStats{GCRan: true, GCOutcome: gitops.GCFailed, Dropped: 7})
-	failed := gitCacheRead(t, h).Repositories[key.Repository]
+	failed := gitCacheEntry(gitCacheRead(t, h), key.Repository)
 	if failed.GCOutcomes[gitops.GCFailed] != 1 || failed.GCOutcomes[gitops.GCOK] != 1 || failed.Dropped != 7 || failed.LastGCAt == nil || failed.LastGCAt.Before(before) || failed.LastCacheBytes == nil || *failed.LastCacheBytes != 4096 {
 		t.Fatalf("GC failure or loss absent: %+v", failed)
 	}
 	observe(gitops.OperationStats{GCOutcome: gitops.GCSkippedBackoff})
-	r = gitCacheRead(t, h).Repositories[key.Repository]
+	r = gitCacheEntry(gitCacheRead(t, h), key.Repository)
 	if r.GCOutcomes[gitops.GCSkippedBackoff] != 1 || !r.LastGCAt.Equal(*failed.LastGCAt) || r.Dropped != 7 {
 		t.Fatalf("backoff changed last attempt or recounted losses: %+v", r)
 	}
 	observe(gitops.OperationStats{GCRan: true, GCOutcome: gitops.GCTimedOut})
-	if gitCacheRead(t, h).Repositories[key.Repository].GCOutcomes[gitops.GCTimedOut] != 1 {
+	if gitCacheEntry(gitCacheRead(t, h), key.Repository).GCOutcomes[gitops.GCTimedOut] != 1 {
 		t.Fatal("timed-out attempt absent")
 	}
 }
@@ -100,14 +144,14 @@ func TestGitCacheGCAndDrops(t *testing.T) {
 func TestGitCacheReadContract(t *testing.T) {
 	keys := []store.QueueKey{key}
 	cache := NewGitCache(func() []store.QueueKey { return keys })
-	cache.Observe(gitops.OperationStats{Repository: key.Repository, Operation: "read-ref"})
-	cache.Observe(gitops.OperationStats{Repository: "other/private", Operation: "read-ref"})
+	cache.Observe("7", gitops.OperationStats{Repository: key.Repository, Operation: "read-ref"})
+	cache.Observe("7", gitops.OperationStats{Repository: "other/private", Operation: "read-ref"})
 	for name, h := range map[string]http.Handler{
 		"static":  Handler(nil, keys, "secret", nil, ReadOptions{GitCache: cache}),
 		"dynamic": DynamicHandler(nil, func() []store.QueueKey { return keys }, "secret", nil, ReadOptions{GitCache: cache}),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := gitCacheRead(t, h); len(got.Repositories) != 1 || got.Repositories[key.Repository].Operations["read-ref"].Count != 1 {
+			if got := gitCacheRead(t, h); len(got.Repositories) != 1 || gitCacheEntry(got, key.Repository).Operations["read-ref"].Count != 1 {
 				t.Fatalf("wrong served inventory: %+v", got)
 			}
 			for _, token := range []string{"", "Bearer wrong"} {
@@ -152,9 +196,9 @@ func TestGitCacheDiscoveryChurn(t *testing.T) {
 	cache := NewGitCache(func() []store.QueueKey { return keys })
 	h := DynamicHandler(nil, func() []store.QueueKey { return keys }, "secret", nil, ReadOptions{GitCache: cache})
 	for i := range 1000 {
-		keys = []store.QueueKey{{Repository: fmt.Sprintf("owner/repo-%d", i)}}
-		cache.Observe(gitops.OperationStats{Repository: strings.ToUpper(keys[0].Repository), Operation: "read-ref"})
-		cache.Observe(gitops.OperationStats{Repository: "other/private", Operation: "read-ref"})
+		keys = []store.QueueKey{{Installation: "7", Repository: fmt.Sprintf("owner/repo-%d", i)}}
+		cache.Observe("7", gitops.OperationStats{Repository: strings.ToUpper(keys[0].Repository), Operation: "read-ref"})
+		cache.Observe("7", gitops.OperationStats{Repository: "other/private", Operation: "read-ref"})
 		if len(cache.repositories) != 1 || len(gitCacheRead(t, h).Repositories) != 1 {
 			t.Fatal("repository churn retained old aggregates")
 		}
@@ -164,8 +208,8 @@ func TestGitCacheDiscoveryChurn(t *testing.T) {
 		t.Fatalf("removed repository retained: %+v", got)
 	}
 	keys = []store.QueueKey{key, key}
-	cache.Observe(gitops.OperationStats{Repository: key.Repository, Operation: "read-ref"})
-	if got := gitCacheRead(t, h); len(got.Repositories) != 1 || got.Repositories[key.Repository].Operations["read-ref"].Count != 1 {
+	cache.Observe("7", gitops.OperationStats{Repository: key.Repository, Operation: "read-ref"})
+	if got := gitCacheRead(t, h); len(got.Repositories) != 1 || gitCacheEntry(got, key.Repository).Operations["read-ref"].Count != 1 {
 		t.Fatalf("readded repository did not restart: %+v", got)
 	}
 }
@@ -178,7 +222,7 @@ func TestGitCacheConcurrentObservations(t *testing.T) {
 	for range 8 {
 		wg.Go(func() {
 			for range 1000 {
-				cache.Observe(gitops.OperationStats{Repository: key.Repository, Operation: "read-ref", Wait: time.Millisecond, GCRan: true, GCOutcome: gitops.GCFailed, CacheBytesMeasured: true, CacheBytes: 123, Dropped: 1})
+				cache.Observe("7", gitops.OperationStats{Repository: key.Repository, Operation: "read-ref", Wait: time.Millisecond, GCRan: true, GCOutcome: gitops.GCFailed, CacheBytesMeasured: true, CacheBytes: 123, Dropped: 1})
 			}
 		})
 	}
@@ -186,7 +230,7 @@ func TestGitCacheConcurrentObservations(t *testing.T) {
 		wg.Go(func() {
 			for range 100 {
 				snapshot := gitCacheRead(t, h)
-				if r, ok := snapshot.Repositories[key.Repository]; ok {
+				if r := gitCacheEntry(snapshot, key.Repository); r.Name != "" {
 					r.GCOutcomes[gitops.GCFailed] = 0
 					r.Operations["read-ref"] = GitCacheOperation{}
 					*r.LastCacheBytes = 0
@@ -196,7 +240,7 @@ func TestGitCacheConcurrentObservations(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	r := gitCacheRead(t, h).Repositories[key.Repository]
+	r := gitCacheEntry(gitCacheRead(t, h), key.Repository)
 	op := r.Operations["read-ref"]
 	if op.Count != 8000 || op.Wait.Buckets[4] != 8000 || r.Dropped != 8000 || r.GCOutcomes[gitops.GCFailed] != 8000 || *r.LastCacheBytes != 123 {
 		t.Fatalf("concurrent observations lost: %+v", r)

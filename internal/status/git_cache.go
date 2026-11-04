@@ -1,6 +1,8 @@
 package status
 
 import (
+	"cmp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +41,8 @@ type GitCacheOperation struct {
 
 // GitCacheRepository uses nullable measurements to distinguish unmeasured and empty caches.
 type GitCacheRepository struct {
+	Installation   string                       `json:"installation"`
+	Name           string                       `json:"name"`
 	Operations     map[string]GitCacheOperation `json:"operations"`
 	GCOutcomes     map[gitops.GCOutcome]uint64  `json:"gc_outcomes"`
 	LastGCAt       *time.Time                   `json:"last_gc_at"`
@@ -48,48 +52,56 @@ type GitCacheRepository struct {
 
 // GitCacheSnapshot includes process initialization time so readers can calculate rates.
 type GitCacheSnapshot struct {
-	Since               time.Time                     `json:"since"`
-	BucketUpperBoundsMS [len(gitCacheBounds)]float64  `json:"bucket_upper_bounds_ms"`
-	Repositories        map[string]GitCacheRepository `json:"repositories"`
+	Since               time.Time                    `json:"since"`
+	BucketUpperBoundsMS [len(gitCacheBounds)]float64 `json:"bucket_upper_bounds_ms"`
+	Repositories        []GitCacheRepository         `json:"repositories"`
+}
+
+// gitCacheIdentity keeps installations apart because repository names alone do
+// not confine a read: each installation has its own cache and its own served keys.
+type gitCacheIdentity struct{ installation, name string }
+
+func gitCacheKey(key store.QueueKey) gitCacheIdentity {
+	return gitCacheIdentity{key.Installation, strings.ToLower(key.Repository)}
 }
 
 // GitCache receives samples on Repo workers so API reads cannot stall Git operations.
 type GitCache struct {
 	mu           sync.Mutex
 	keys         func() []store.QueueKey
-	repositories map[string]GitCacheRepository
+	repositories map[gitCacheIdentity]GitCacheRepository
 }
 
 // NewGitCache takes the served-key reader so discovery churn cannot retain unserved history.
 func NewGitCache(keys func() []store.QueueKey) *GitCache {
-	return &GitCache{keys: keys, repositories: make(map[string]GitCacheRepository)}
+	return &GitCache{keys: keys, repositories: make(map[gitCacheIdentity]GitCacheRepository)}
 }
 
 // Prune on observations too so a server with no API readers cannot retain removed identities.
-func (c *GitCache) served() map[string]bool {
-	served := make(map[string]bool)
+func (c *GitCache) served() map[gitCacheIdentity]bool {
+	served := make(map[gitCacheIdentity]bool)
 	for _, key := range c.keys() {
-		served[strings.ToLower(key.Repository)] = true
+		served[gitCacheKey(key)] = true
 	}
-	for name := range c.repositories {
-		if _, ok := served[name]; !ok {
-			delete(c.repositories, name)
+	for identity := range c.repositories {
+		if !served[identity] {
+			delete(c.repositories, identity)
 		}
 	}
 	return served
 }
 
 // Observe ignores unserved identities so diagnostic operations cannot expand API tenancy.
-func (c *GitCache) Observe(s gitops.OperationStats) {
+func (c *GitCache) Observe(installation string, s gitops.OperationStats) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	served := c.served()
-	name := strings.ToLower(s.Repository)
-	if _, ok := served[name]; !ok {
+	identity := gitCacheKey(store.QueueKey{Installation: installation, Repository: s.Repository})
+	if !c.served()[identity] {
 		return
 	}
-	r, ok := c.repositories[name]
+	r, ok := c.repositories[identity]
 	if !ok {
+		r.Installation, r.Name = identity.installation, identity.name
 		r.Operations = make(map[string]GitCacheOperation)
 		r.GCOutcomes = map[gitops.GCOutcome]uint64{gitops.GCOK: 0, gitops.GCFailed: 0, gitops.GCTimedOut: 0, gitops.GCSkippedBackoff: 0}
 	}
@@ -111,12 +123,12 @@ func (c *GitCache) Observe(s gitops.OperationStats) {
 		r.LastCacheBytes = &value
 	}
 	r.Dropped += s.Dropped
-	c.repositories[name] = r
+	c.repositories[identity] = r
 }
 
 // Snapshot copies nested values so JSON encoding never holds the aggregation lock.
 func (c *GitCache) Snapshot(keys []store.QueueKey) GitCacheSnapshot {
-	result := GitCacheSnapshot{Since: processStarted, Repositories: make(map[string]GitCacheRepository)}
+	result := GitCacheSnapshot{Since: processStarted, Repositories: []GitCacheRepository{}}
 	for i, bound := range gitCacheBounds {
 		result.BucketUpperBoundsMS[i] = float64(bound) / float64(time.Millisecond)
 	}
@@ -126,15 +138,14 @@ func (c *GitCache) Snapshot(keys []store.QueueKey) GitCacheSnapshot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	served := c.served()
+	copied := make(map[gitCacheIdentity]bool)
 	for _, key := range keys {
-		name := strings.ToLower(key.Repository)
-		if _, ok := served[name]; !ok {
+		identity := gitCacheKey(key)
+		if !served[identity] || copied[identity] {
 			continue
 		}
-		if _, copied := result.Repositories[name]; copied {
-			continue
-		}
-		r, ok := c.repositories[name]
+		copied[identity] = true
+		r, ok := c.repositories[identity]
 		if !ok {
 			continue
 		}
@@ -155,7 +166,10 @@ func (c *GitCache) Snapshot(keys []store.QueueKey) GitCacheSnapshot {
 			value := *r.LastCacheBytes
 			r.LastCacheBytes = &value
 		}
-		result.Repositories[name] = r
+		result.Repositories = append(result.Repositories, r)
 	}
+	slices.SortFunc(result.Repositories, func(a, b GitCacheRepository) int {
+		return cmp.Or(cmp.Compare(a.Name, b.Name), cmp.Compare(a.Installation, b.Installation))
+	})
 	return result
 }

@@ -59,10 +59,11 @@ The `git_cache` object contains these fields.
 | --- | --- |
 | `since` | Process initialization time in UTC RFC3339 format. Counters reset on restart. |
 | `bucket_upper_bounds_ms` | Fixed inclusive bounds `[0,0.001,0.01,0.1,1,10,100,1000,10000,30000,60000]`. |
-| `repositories` | Object keyed by lowercase forge `owner/name`. Only observed repositories in this server's served keys appear. An empty result is `{}`. |
+| `repositories` | Array sorted by `name`, then `installation`. Only observed repositories in this server's served keys appear. An empty result is `[]`. |
 
-Each repository contains `operations`, `gc_outcomes`, `last_gc_at`,
-`last_cache_bytes`, and `dropped`. `operations` maps public Git method names such
+Each repository contains `installation`, `name` (lowercase forge `owner/name`),
+`operations`, `gc_outcomes`, `last_gc_at`, `last_cache_bytes`, and `dropped`.
+Each installation has its own row because it has its own caches. `operations` maps public Git method names such
 as `read-ref` to `count`, `wait_ms`, `hold_ms`, and `maintenance_ms`.
 Each timing is a histogram with `buckets` and `overflow`.
 Bucket counts are disjoint. Each bucket includes its upper bound and excludes
@@ -90,10 +91,13 @@ across Repo instances. Divide count changes by elapsed time to compute rates.
 
 The aggregate map retains at most the repositories in the current served keys,
 including retained recovery partitions. Each observation and read prunes identities
-that leave those keys. A removed and later re-added identity starts new counters.
+that leave those keys. Removal is noticed only at those points, so a repository
+removed and re-added between them keeps its counters. A sample queued before
+removal can also arrive after re-addition. Do not read a counter as evidence of
+activity since a re-addition.
 Operation names come from the finite set of public Git methods. Histograms retain
-fixed counters rather than individual timings. The server shares aggregates across
-caches, installations, branches, and lanes for the same forge identity.
+fixed counters rather than individual timings. A row combines the caches, branches,
+and lanes of one installation and repository.
 The read changes no Git behavior and stores nothing.
 
 The savings endpoint embeds the [CLI report contract](savings-report.md#json)

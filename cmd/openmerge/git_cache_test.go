@@ -54,6 +54,15 @@ func gitCacheResponse(t *testing.T, h http.Handler) status.GitCacheSnapshot {
 	return body.Cache
 }
 
+func gitCacheEntry(s status.GitCacheSnapshot) status.GitCacheRepository {
+	for _, r := range s.Repositories {
+		if r.Installation == "7" && r.Name == "owner/repo" {
+			return r
+		}
+	}
+	return status.GitCacheRepository{}
+}
+
 func awaitGitCache(t *testing.T, h http.Handler, ready func(status.GitCacheSnapshot) bool) status.GitCacheSnapshot {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -83,7 +92,7 @@ func TestGitCacheRealContention(t *testing.T) {
 			once.Do(func() { close(entered); <-release })
 			return remote, gitops.Auth{}, nil
 		},
-		GCInterval: -1, GCThresholdBytes: -1, Observe: observeGitCacheOperations(nil, cache),
+		GCInterval: -1, GCThresholdBytes: -1, Observe: observeGitCacheOperations(nil, cache, "7"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -119,9 +128,9 @@ func TestGitCacheRealContention(t *testing.T) {
 		}
 	}
 	snapshot := awaitGitCache(t, h, func(s status.GitCacheSnapshot) bool {
-		return s.Repositories["owner/repo"].Operations["read-ref"].Count == 2
+		return gitCacheEntry(s).Operations["read-ref"].Count == 2
 	})
-	op := snapshot.Repositories["owner/repo"].Operations["read-ref"]
+	op := gitCacheEntry(snapshot).Operations["read-ref"]
 	var waits, holds uint64
 	for i := 7; i < len(op.Wait.Buckets); i++ {
 		waits += op.Wait.Buckets[i]
@@ -154,13 +163,13 @@ func TestGitCacheRealGCFailure(t *testing.T) {
 	}
 	t.Setenv("OPENMERGE_TEST_REAL_GIT", realGit)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	keys := []store.QueueKey{{Repository: "owner/repo"}}
+	keys := []store.QueueKey{{Installation: "7", Repository: "owner/repo"}}
 	cache := status.NewGitCache(func() []store.QueueKey { return keys })
 	h := status.Handler(nil, keys, "fixture-read-token", nil, status.ReadOptions{GitCache: cache})
 	r, err := gitops.New(t.Context(), gitops.Config{
 		WorkDir: t.TempDir(), HeadRef: func(int) string { return "refs/heads/main" },
 		Remote:     func(context.Context, forge.RepoRef) (string, gitops.Auth, error) { return remote, gitops.Auth{}, nil },
-		GCInterval: -1, GCThresholdBytes: 1, Observe: observeGitCacheOperations(nil, cache),
+		GCInterval: -1, GCThresholdBytes: 1, Observe: observeGitCacheOperations(nil, cache, "7"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -171,9 +180,9 @@ func TestGitCacheRealGCFailure(t *testing.T) {
 	}
 	defer release()
 	snapshot := awaitGitCache(t, h, func(s status.GitCacheSnapshot) bool {
-		return s.Repositories["owner/repo"].GCOutcomes[gitops.GCFailed] == 1
+		return gitCacheEntry(s).GCOutcomes[gitops.GCFailed] == 1
 	})
-	repo := snapshot.Repositories["owner/repo"]
+	repo := gitCacheEntry(snapshot)
 	if repo.LastGCAt == nil || repo.LastCacheBytes != nil || repo.Operations["acquire-commits"].Count != 1 {
 		t.Fatalf("failed GC not reflected accurately: %+v", repo)
 	}
@@ -195,7 +204,7 @@ func (h *blockedGitCacheLog) WithGroup(string) slog.Handler      { return h }
 
 func TestGitCacheRealObserverDrops(t *testing.T) {
 	remote, sha := gitCacheFixture(t)
-	keys := []store.QueueKey{{Repository: "owner/repo"}}
+	keys := []store.QueueKey{{Installation: "7", Repository: "owner/repo"}}
 	cache := status.NewGitCache(func() []store.QueueKey { return keys })
 	h := status.Handler(nil, keys, "fixture-read-token", nil, status.ReadOptions{GitCache: cache})
 	logs := &blockedGitCacheLog{entered: make(chan struct{}), release: make(chan struct{})}
@@ -204,7 +213,7 @@ func TestGitCacheRealObserverDrops(t *testing.T) {
 	r, err := gitops.New(t.Context(), gitops.Config{
 		WorkDir: t.TempDir(), HeadRef: func(int) string { return "refs/heads/main" },
 		Remote:     func(context.Context, forge.RepoRef) (string, gitops.Auth, error) { return remote, gitops.Auth{}, nil },
-		GCInterval: -1, GCThresholdBytes: -1, Observe: observeGitCacheOperations(slog.New(logs), cache),
+		GCInterval: -1, GCThresholdBytes: -1, Observe: observeGitCacheOperations(slog.New(logs), cache, "7"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -241,10 +250,10 @@ func TestGitCacheRealObserverDrops(t *testing.T) {
 	}
 	unblock.Do(func() { close(logs.release) })
 	snapshot := awaitGitCache(t, h, func(s status.GitCacheSnapshot) bool {
-		repo := s.Repositories["owner/repo"]
+		repo := gitCacheEntry(s)
 		return repo.Operations["read-commit-message"].Count+repo.Dropped == operations
 	})
-	observed := snapshot.Repositories["owner/repo"]
+	observed := gitCacheEntry(snapshot)
 	if observed.Dropped != operations-256 || observed.Operations["read-commit-message"].Count != 256 {
 		t.Fatalf("bounded observer losses not exposed: %+v", observed)
 	}
