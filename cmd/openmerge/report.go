@@ -8,9 +8,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -19,21 +21,26 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
 	"github.com/CanadaApollo6/openmerge/internal/forge/github"
 	"github.com/CanadaApollo6/openmerge/internal/queuemetrics"
+	"github.com/CanadaApollo6/openmerge/internal/status"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
-const reportUsage = `Usage: openmerge report savings --installation <id> --repository owner/name --since <RFC3339> [options]
+const reportUsage = `Usage: openmerge report savings (--api URL | --installation <id>) --repository owner/name --since <RFC3339> [options]
 
        openmerge report ci-doctor --installation <id> --repository owner/name --since <RFC3339> (--actions-live | --actions-file <path>) [options]
 
 Summarizes the CI runs, CI minutes and time OpenMerge saved one queue in
 [--since, --until), compared with a baseline of one full CI run per landed PR
-plus the same reruns. Read-only: it opens a restricted journal reader (no
-migrations, every query READ ONLY). CI doctor can also read live Actions metadata.
+plus the same reruns. Read-only. Database reads use a restricted journal reader with no migrations
+and every query READ ONLY. Savings can use the status API instead.
+CI doctor can also read live Actions metadata.
 
 Options:
   --database-url URL         PostgreSQL connection string (default OPENMERGE_DATABASE_URL)
-  --installation ID          journal installation ID (required)
+  --api URL                  savings: read the status API without database or App credentials
+                             overrides OPENMERGE_DATABASE_URL; exclusive with --database-url
+  --api-token-file FILE      savings: bearer token file (OPENMERGE_API_TOKEN_FILE or OPENMERGE_API_TOKEN)
+  --installation ID          journal installation ID (required for database reads)
   --repository owner/name    exact journal repository spelling (required)
   --base BRANCH              journal base branch (default main)
   --lane LANE                exact journal lane (default empty)
@@ -53,7 +60,11 @@ Options:
 CI doctor reports advisory findings, sample counts, gaps, and step classification.
 See docs/savings-report.md and docs/ci-doctor.md for definitions and contracts.
 Exit codes: 0 success; 2 usage; 1 read or computation failure.
+API reads also use 3 not found, 4 unauthorized, 5 ambiguous queue.
+API reads use a 20s client limit and the server's 15s request deadline.
 `
+
+var reportCommands = []string{"savings", "ci-doctor"}
 
 func runReport(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 1 && (args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
@@ -62,7 +73,7 @@ func runReport(args []string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	}
-	if len(args) == 0 || (args[0] != "savings" && args[0] != "ci-doctor") {
+	if len(args) == 0 || !slices.Contains(reportCommands, args[0]) {
 		_, _ = io.WriteString(stderr, reportUsage)
 		return 2
 	}
@@ -76,10 +87,13 @@ func runReport(args []string, stdout, stderr io.Writer) int {
 	lane := flags.String("lane", "", "")
 	since := flags.String("since", "", "")
 	until := flags.String("until", "", "")
+	var api, tokenFile string
 	var minutes float64
 	var actions actionsOptions
 	actions.Budget = cidoctor.DefaultActionsAPIBudget
 	if args[0] == "savings" {
+		flags.StringVar(&api, "api", "", "")
+		flags.StringVar(&tokenFile, "api-token-file", os.Getenv("OPENMERGE_API_TOKEN_FILE"), "")
 		flags.Float64Var(&minutes, "full-suite-minutes", 0, "")
 	} else {
 		flags.StringVar(&actions.File, "actions-file", "", "")
@@ -100,6 +114,11 @@ func runReport(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, "report: invalid command flags; see report --help")
 		return 2
 	}
+	databaseSet, apiSet := false, false
+	flags.Visit(func(f *flag.Flag) {
+		databaseSet = databaseSet || f.Name == "database-url"
+		apiSet = apiSet || f.Name == "api"
+	})
 	now := time.Now().UTC()
 	start, e1 := time.Parse(time.RFC3339Nano, *since)
 	end, e2 := now, error(nil)
@@ -107,14 +126,16 @@ func runReport(args []string, stdout, stderr io.Writer) int {
 		end, e2 = time.Parse(time.RFC3339Nano, *until)
 	}
 	switch {
-	case flags.NArg() != 0 || *installation == "" || *base == "":
-		_, _ = fmt.Fprintln(stderr, "report: --installation is required and arguments are flags only")
+	case flags.NArg() != 0 || (!apiSet && *installation == "") || *base == "":
+		_, _ = fmt.Fprintln(stderr, "report: arguments are flags only; --installation is required for database reads; --base must be nonempty")
 	case !auditRepo.MatchString(*repository):
 		_, _ = fmt.Fprintln(stderr, "report: --repository must be owner/name")
 	case e1 != nil || e2 != nil || !end.After(start):
 		_, _ = fmt.Fprintln(stderr, "report: --since and --until must be RFC3339 with --since before --until")
 	case end.After(now):
 		_, _ = fmt.Fprintln(stderr, "report: --until is in the future; use a completed window")
+	case math.IsNaN(minutes) || math.IsInf(minutes, 0):
+		_, _ = fmt.Fprintln(stderr, "report: --full-suite-minutes must be finite")
 	case minutes < 0:
 		_, _ = fmt.Fprintln(stderr, "report: --full-suite-minutes must not be negative")
 	case *timeout < time.Millisecond:
@@ -129,12 +150,19 @@ func runReport(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, "report: live Actions requires --config-dir or positive --app-id with --private-key")
 	case actions.Live && !positiveInstallation(*installation):
 		_, _ = fmt.Fprintln(stderr, "report: live Actions requires a positive numeric --installation")
-	case *database == "":
+	case apiSet && databaseSet:
+		_, _ = fmt.Fprintln(stderr, "report: --api and --database-url are exclusive; --api overrides OPENMERGE_DATABASE_URL")
+	case apiSet && (*lane != "" || *installation != ""):
+		_, _ = fmt.Fprintln(stderr, "report: --api selects the served queue by repository and base; --installation and --lane are database-only")
+	case !apiSet && *database == "":
 		_, _ = fmt.Fprintln(stderr, "report: set --database-url or OPENMERGE_DATABASE_URL")
 	default:
 		key := store.QueueKey{Installation: *installation, Repository: *repository, BaseBranch: *base, Lane: *lane}
 		if args[0] == "ci-doctor" {
 			return reportCIDoctor(*database, key, cidoctor.Window{Since: start, Until: end}, actions, *timeout, *asJSON, stdout, stderr)
+		}
+		if apiSet {
+			return reportSavingsAPI(api, tokenFile, key, queuemetrics.SavingsWindow{Since: start, Until: end, FullSuiteMinutes: minutes}, *asJSON, stdout, stderr)
 		}
 		return reportSavings(*database, key,
 			queuemetrics.SavingsWindow{Since: start, Until: end, FullSuiteMinutes: minutes}, *timeout, *asJSON, stdout, stderr)
@@ -160,6 +188,36 @@ func reportSavings(database string, key store.QueueKey, w queuemetrics.SavingsWi
 		}
 	}
 	return reportError(database, err, stderr)
+}
+
+func reportSavingsAPI(api, tokenFile string, key store.QueueKey, window queuemetrics.SavingsWindow, asJSON bool, stdout, stderr io.Writer) int {
+	parts := strings.Split(key.Repository, "/")
+	path := "/v1/queues/" + url.PathEscape(parts[0]) + "/" + url.PathEscape(parts[1]) + "/" + url.PathEscape(key.BaseBranch) + "/reports/savings"
+	query := url.Values{"since": {window.Since.Format(time.RFC3339Nano)}, "until": {window.Until.Format(time.RFC3339Nano)}}
+	if window.FullSuiteMinutes != 0 {
+		query.Set("full-suite-minutes", strconv.FormatFloat(window.FullSuiteMinutes, 'g', -1, 64))
+	}
+	body, code := readStatusAPI(api, path+"?"+query.Encode(), tokenFile, stderr)
+	if code != 0 {
+		return code
+	}
+	var result status.SavingsResponse
+	if json.Unmarshal(body, &result) != nil || result.Version != status.Version || result.Savings.Version != queuemetrics.SavingsVersion {
+		_, _ = fmt.Fprintln(stderr, "invalid or unsupported savings API response")
+		return 1
+	}
+	var err error
+	if asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		err = enc.Encode(result.Savings)
+	} else {
+		err = queuemetrics.WriteSavingsText(stdout, result.Savings)
+	}
+	if err != nil {
+		return reportError("", err, stderr)
+	}
+	return 0
 }
 
 func reportError(database string, err error, stderr io.Writer) int {

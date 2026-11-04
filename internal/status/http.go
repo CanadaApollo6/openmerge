@@ -163,6 +163,17 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			serveAuthorityCompletion(w, r, source)
 			return
 		}
+		if r.URL.EscapedPath() == "/v1" {
+			if r.URL.RawQuery != "" || r.URL.ForceQuery {
+				fail(w, http.StatusBadRequest, "invalid-request", "read registry accepts no query")
+				return
+			}
+			writeJSON(w, struct {
+				Version int    `json:"version"`
+				Reads   []Read `json:"reads"`
+			}{Version, Reads()})
+			return
+		}
 		if r.URL.Path == "/v1/discovery" && len(discovery) > 0 {
 			if r.URL.RawQuery != "" {
 				fail(w, http.StatusBadRequest, "invalid-request", "discovery accepts no query")
@@ -170,6 +181,10 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			}
 			snapshot := sanitizeDiscovery(discovery[0](), sanitizer)
 			writeJSON(w, Response{Version: Version, Discovery: &snapshot})
+			return
+		}
+		if path := r.URL.EscapedPath(); strings.HasPrefix(path, "/v1/queues/") && strings.Count(path, "/") == 7 && strings.HasSuffix(path, "/reports/savings") && registeredRead(path) {
+			serveSavings(w, r, source, keys, sanitizer)
 			return
 		}
 		change, isChange, changeErr := changeRoute(r, keys)
@@ -186,6 +201,10 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			return
 		}
 		if selected == nil {
+			fail(w, http.StatusNotFound, "not-found", "queue or endpoint not found")
+			return
+		}
+		if !registeredRead(r.URL.EscapedPath()) {
 			fail(w, http.StatusNotFound, "not-found", "queue or endpoint not found")
 			return
 		}

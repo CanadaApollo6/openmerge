@@ -2,13 +2,17 @@ package queuemetrics
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/CanadaApollo6/openmerge/internal/store"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
@@ -357,5 +361,14 @@ func TestSavingsCountsRerunsAcceptedAfterDequeue(t *testing.T) {
 	s := mustSavings(t, f, window(0, 100))
 	if s.Runs.TestRefsBuilt != 2 || s.Runs.Reruns != 1 || s.Runs.RerunsUnconfirmed != 1 || s.Runs.Executed != 3 {
 		t.Fatalf("late rerun omitted: %+v", s.Runs)
+	}
+}
+
+func TestSavingsCanceledReplay(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := ComputeSavingsContext(ctx, store.Journal{Events: []store.JournalEvent{{ID: 1}}}, SavingsWindow{Since: time.Unix(1, 0), Until: time.Unix(2, 0)})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled computation: %v", err)
 	}
 }

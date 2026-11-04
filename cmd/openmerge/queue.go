@@ -52,11 +52,6 @@ func runQueue(args []string, stdout, stderr io.Writer) int {
 		baseSet = baseSet || f.Name == "base"
 		prSet = prSet || f.Name == "pr"
 	})
-	u, err := url.Parse(*api)
-	if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" && u.Path != "/" {
-		_, _ = fmt.Fprintln(stderr, "--api requires an http(s) origin without credentials, path, query or fragment")
-		return 2
-	}
 	if flags.NArg() != 0 || *base == "" || *pr < 0 || prSet && *pr == 0 || *repo == "" && (prSet || baseSet) {
 		_, _ = fmt.Fprintln(stderr, "status accepts flags only; --pr must be positive; --pr/--base require --repo")
 		return 2
@@ -84,38 +79,13 @@ func runQueue(args []string, stdout, stderr io.Writer) int {
 	if *discovery {
 		path = "/v1/discovery"
 	}
-	token, err := status.ReadToken(os.Getenv("OPENMERGE_API_TOKEN"), *tokenFile)
-	if err != nil {
-		_, _ = fmt.Fprintln(stderr, err)
-		return 2
+	body, code := readStatusAPI(*api, path, *tokenFile, stderr)
+	if code != 0 {
+		return code
 	}
-	request, err := http.NewRequest(http.MethodGet, strings.TrimRight(*api, "/")+path, nil)
-	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "invalid API URL")
-		return 2
-	}
-	request.Header.Set("Accept", "application/json")
-	if token != "" {
-		request.Header.Set("Authorization", "Bearer "+token)
-	}
-	client := &http.Client{Timeout: statusClientTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	response, err := client.Do(request)
-	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "read status API:", statusReadError(err))
-		return 1
-	}
-	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode != http.StatusOK {
-		return queueAPIError(response, token, stderr)
-	}
-	const maxResponse = 32 << 20
-	body, err := io.ReadAll(io.LimitReader(response.Body, maxResponse+1))
-	if os.IsTimeout(err) {
-		_, _ = fmt.Fprintln(stderr, "read status API:", statusReadError(err))
-		return 1
-	}
+	var err error
 	var result status.Response
-	if err != nil || len(body) > maxResponse || json.Unmarshal(body, &result) != nil || result.Version != status.Version || list && !*discovery && result.Queues == nil || *discovery && result.Discovery == nil || !list && result.Queue == nil || *pr > 0 && (result.PR == nil || result.Why == nil) {
+	if json.Unmarshal(body, &result) != nil || result.Version != status.Version || list && !*discovery && result.Queues == nil || *discovery && result.Discovery == nil || !list && result.Queue == nil || *pr > 0 && (result.PR == nil || result.Why == nil) {
 		_, _ = fmt.Fprintln(stderr, "invalid, oversized or unsupported status API response")
 		return 1
 	}
@@ -129,6 +99,50 @@ func runQueue(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// readStatusAPI keeps all HTTP reads on the same authentication and resource limits.
+func readStatusAPI(api, path, tokenFile string, stderr io.Writer) ([]byte, int) {
+	u, err := url.Parse(api)
+	if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" && u.Path != "/" {
+		_, _ = fmt.Fprintln(stderr, "--api requires an http(s) origin without credentials, path, query or fragment")
+		return nil, 2
+	}
+	token, err := status.ReadToken(os.Getenv("OPENMERGE_API_TOKEN"), tokenFile)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return nil, 2
+	}
+	request, err := http.NewRequest(http.MethodGet, strings.TrimRight(api, "/")+path, nil)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "invalid API URL")
+		return nil, 2
+	}
+	request.Header.Set("Accept", "application/json")
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	client := &http.Client{Timeout: statusClientTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Do(request)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "read status API:", diagnostic.Sanitize(statusReadError(err).Error(), token))
+		return nil, 1
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return nil, queueAPIError(response, token, stderr)
+	}
+	const maxResponse = 32 << 20
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxResponse+1))
+	if os.IsTimeout(err) {
+		_, _ = fmt.Fprintln(stderr, "read status API:", diagnostic.Sanitize(statusReadError(err).Error(), token))
+		return nil, 1
+	}
+	if err != nil || len(body) > maxResponse {
+		_, _ = fmt.Fprintln(stderr, "invalid, oversized or unsupported status API response")
+		return nil, 1
+	}
+	return body, 0
 }
 
 func queueAPIError(response *http.Response, token string, stderr io.Writer) int {

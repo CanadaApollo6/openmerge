@@ -376,6 +376,7 @@ func TestStatusTimeoutDiagnostic(t *testing.T) {
 		http.DefaultTransport = statusTimeoutTransport{body: body}
 		for _, args := range [][]string{
 			{"queue", "status", "--api", "http://status.invalid", "--json"},
+			{"report", "savings", "--api", "http://status.invalid", "--repository", "fixture/app", "--since", "2026-10-01T00:00:00Z", "--until", "2026-10-02T00:00:00Z", "--json"},
 			{"change", "show", "chg1_" + strings.Repeat("a", 64), "--repo", "owner/repo", "--api", "http://status.invalid", "--json"},
 		} {
 			var out, errOut bytes.Buffer

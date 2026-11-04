@@ -28,18 +28,48 @@ within the limit are ignored.
 
 | Path | Response |
 | --- | --- |
+| `/v1` | `{"version":1,"reads":[READ,...]}`; registry of all available reads |
 | `/v1/discovery` | `{"version":1,"discovery":DISCOVERY}`; visible/removed repositories, sweeps, installation budgets |
 | `/v1/queues` | `{"version":1,"queues":[QUEUE,...]}`; empty list is `[]` |
 | `/v1/queues/{owner}/{repo}` | List every served queue for this repository |
 | `/v1/queues/{owner}/{repo}/{base}` | `{"version":1,"queue":QUEUE}` |
 | `/v1/queues/{owner}/{repo}/{base}/prs/{n}` | `{"version":1,"queue":QUEUE,"pr":ENTRY,"why":WHY}` |
-| `/v1/queues/{owner}/{repo}/{base}/changes/{id}/brief?audience=reviewer` | Public recorded brief v1 DTO; also operator/agent |
+| `/v1/queues/{owner}/{repo}/{base}/changes/{id}` | Change evidence, accountability, waiting reasons, and landing |
+| `/v1/queues/{owner}/{repo}/{base}/changes/{id}/brief` | Public recorded brief v1 DTO; requires `audience=reviewer`, `operator`, or `agent` |
+| `/v1/queues/{owner}/{repo}/{base}/changes/{id}/decisions` | Recorded landing decisions with `revision`, `after`, and `limit` |
+| `/v1/queues/{owner}/{repo}/{base}/reports/savings` | `{"version":1,"savings":SAVINGS}`; requires `since`; accepts `until` and `full-suite-minutes` |
+| `/v1/health` | Authenticated runtime readiness and liveness observations |
+| `/v1/authority-completion` | Repository authority completion with expected digests |
+| `/v1/live` | Unauthenticated process probe, `{"live":true}` |
+
+`GET /v1` returns the read registry without reading the journal. Each row has a
+stable `name`, a `path` template, `parameters`, and an agent-facing `description`.
+Each parameter has `name`, `in` (`path` or `query`), `type` (`string`, `integer`,
+or `number`), `required`, and `description`. Query parameters are separate from
+the path template. The registry requires the same bearer token as queue reads.
+It accepts no query. `/v1/live` retains its unauthenticated, unversioned contract.
+
+The savings endpoint embeds the [CLI report contract](savings-report.md#json)
+in `savings`. `since` is an inclusive RFC3339 start. `until` is an exclusive
+RFC3339 end and defaults to now. The end must follow the start and cannot be in
+the future. `full-suite-minutes` is a finite nonnegative number. Zero or omission
+uses the observed median. Invalid values and repeated or unknown query parameters
+return 400 `invalid-request`.
+
+Savings reads use the existing queue selection. An unserved repository or base
+returns 404. Multiple installations or lanes return 409 `ambiguous-queue`.
+There is no installation or lane query selector. The server reads and replays
+the full journal prefix for a window, including work before `since` that the
+report attributes to landings within the window. Journal reads and computation
+share the existing 15 second deadline. A deadline failure returns 503
+`unavailable`. Large histories can require the direct database report. A narrower
+window does not bound the history read.
 
 URL-encode each path component, including slashes in base branch names:
 `/v1/queues/acme/project/release%2Fv1`. PR numbers are positive integers.
 PR detail accepts `?events=N`: default 20, range 1–100. Brief detail requires
-`?audience=reviewer|operator|agent`. Other query parameters
-are rejected. A queue is identified internally by installation/repo/base/lane;
+`?audience=reviewer|operator|agent`. Each read accepts only its documented query
+parameters. A queue is identified internally by installation/repo/base/lane;
 lists include all four fields. A detail path matching multiple served partitions
 returns 409 rather than choosing one. Discovery serves every installation of one
 App; default lanes remain empty. Repository path matching is case-insensitive.
