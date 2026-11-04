@@ -88,7 +88,7 @@ func TestApprovalStatusDuringGateAndLanding(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("cycle did not reach slow step")
 			}
-			handler := status.DynamicHandler(s, s.Keys, "", nil, s.DiscoveryStatus)
+			handler := status.DynamicHandler(s, s.Keys, "", nil, status.ReadOptions{Discovery: s.DiscoveryStatus})
 			for _, path := range []string{"/v1/queues/owner/repo/main/prs/1", "/v1/queues/owner/repo/main", "/v1/queues", "/v1/discovery", "/v1/queues/owner/repo/main/changes/" + string(id), "/v1/queues/owner/repo/main/changes/" + string(id) + "/brief?audience=reviewer"} {
 				response := make(chan *httptest.ResponseRecorder, 1)
 				go func() {

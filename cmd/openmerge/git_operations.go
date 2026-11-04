@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/gitops"
+	"github.com/CanadaApollo6/openmerge/internal/status"
 )
 
 const (
@@ -37,5 +38,18 @@ func observeGitOperations(logger *slog.Logger) func(gitops.OperationStats) {
 			attrs = append(attrs, "cache_bytes", s.CacheBytes)
 		}
 		logger.Log(context.Background(), level, "git cache operation", attrs...)
+	}
+}
+
+func observeGitCacheOperations(logger *slog.Logger, cache *status.GitCache) func(gitops.OperationStats) {
+	logOperation := observeGitOperations(logger)
+	if cache == nil {
+		return logOperation
+	}
+	return func(s gitops.OperationStats) {
+		cache.Observe(s)
+		if logOperation != nil {
+			logOperation(s)
+		}
 	}
 }

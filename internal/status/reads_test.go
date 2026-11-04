@@ -36,6 +36,7 @@ func (*registrySource) ChangeDecisions(context.Context, store.QueueKey, queue.Ch
 var readRouteInventory = map[string]string{
 	"reads":                "/v1",
 	"discovery":            "/v1/discovery",
+	"git_cache":            "/v1/git-cache",
 	"queues":               "/v1/queues",
 	"repository_queues":    "/v1/queues/{owner}/{repo}",
 	"queue":                "/v1/queues/{owner}/{repo}/{base}",
@@ -105,7 +106,7 @@ func TestReadRegistryRoutesAndDocs(t *testing.T) {
 		j.Events[i].RecordedAt = at
 	}
 	src := &registrySource{source{journals: []store.Journal{j}}}
-	h := DynamicHandler(src, func() []store.QueueKey { return []store.QueueKey{key} }, "secret", nil, func() Discovery { return Discovery{} })
+	h := DynamicHandler(src, func() []store.QueueKey { return []store.QueueKey{key} }, "secret", nil, ReadOptions{Discovery: func() Discovery { return Discovery{} }})
 	docs, err := os.ReadFile("../../docs/api.md")
 	if err != nil {
 		t.Fatal(err)

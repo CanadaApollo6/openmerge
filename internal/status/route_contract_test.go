@@ -12,8 +12,8 @@ import (
 func TestLegacyRouteContracts(t *testing.T) {
 	src := &source{journals: []store.Journal{journal(testingEvents()...)}}
 	handlers := map[string]http.Handler{
-		"static":  Handler(src, []store.QueueKey{key}, "secret", nil, func() Discovery { return Discovery{} }),
-		"dynamic": DynamicHandler(src, func() []store.QueueKey { return []store.QueueKey{key} }, "secret", nil, func() Discovery { return Discovery{} }),
+		"static":  Handler(src, []store.QueueKey{key}, "secret", nil, ReadOptions{Discovery: func() Discovery { return Discovery{} }}),
+		"dynamic": DynamicHandler(src, func() []store.QueueKey { return []store.QueueKey{key} }, "secret", nil, ReadOptions{Discovery: func() Discovery { return Discovery{} }}),
 	}
 	type result struct {
 		status int

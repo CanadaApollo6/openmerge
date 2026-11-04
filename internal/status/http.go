@@ -98,9 +98,15 @@ func ReadToken(value, file string) (string, error) {
 	return value, nil
 }
 
+// ReadOptions keeps volatile reads independent of journal access.
+type ReadOptions struct {
+	Discovery func() Discovery
+	GitCache  *GitCache
+}
+
 // DynamicHandler snapshots the current worker keys for every request, including
 // branches created after the listener started and recovery-only partitions.
-func DynamicHandler(source Source, keys func() []store.QueueKey, token string, sanitizer *diagnostic.Sanitizer, discovery ...func() Discovery) http.Handler {
+func DynamicHandler(source Source, keys func() []store.QueueKey, token string, sanitizer *diagnostic.Sanitizer, options ...ReadOptions) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if processLive(w, r) {
 			return
@@ -110,16 +116,21 @@ func DynamicHandler(source Source, keys func() []store.QueueKey, token string, s
 			Handler(source, nil, token, sanitizer).ServeHTTP(w, r)
 			return
 		}
-		Handler(source, keys(), token, sanitizer, discovery...).ServeHTTP(w, r)
+		Handler(source, keys(), token, sanitizer, options...).ServeHTTP(w, r)
 	})
 }
 
 // Handler exposes GET only and confines reads to this server's configured keys.
-func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diagnostic.Sanitizer, discovery ...func() Discovery) http.Handler {
+func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diagnostic.Sanitizer, options ...ReadOptions) http.Handler {
 	if sanitizer == nil {
 		sanitizer = diagnostic.NewSanitizer()
 	}
 	sanitizer.AddSecrets(token)
+	var discovery func() Discovery
+	var gitCache *GitCache
+	if len(options) > 0 {
+		discovery, gitCache = options[0].Discovery, options[0].GitCache
+	}
 	keys = slices.Clone(keys)
 	slices.SortFunc(keys, func(a, b store.QueueKey) int {
 		return strings.Compare(a.Repository+"\x00"+a.BaseBranch+"\x00"+a.Installation+"\x00"+a.Lane, b.Repository+"\x00"+b.BaseBranch+"\x00"+b.Installation+"\x00"+b.Lane)
@@ -174,12 +185,23 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			}{Version, Reads()})
 			return
 		}
-		if r.URL.Path == "/v1/discovery" && len(discovery) > 0 {
+		if r.URL.EscapedPath() == "/v1/git-cache" {
+			if r.URL.RawQuery != "" || r.URL.ForceQuery {
+				fail(w, http.StatusBadRequest, "invalid-request", "git cache accepts no query")
+				return
+			}
+			writeJSON(w, struct {
+				Version  int              `json:"version"`
+				GitCache GitCacheSnapshot `json:"git_cache"`
+			}{Version, gitCache.Snapshot(keys)})
+			return
+		}
+		if r.URL.Path == "/v1/discovery" && discovery != nil {
 			if r.URL.RawQuery != "" {
 				fail(w, http.StatusBadRequest, "invalid-request", "discovery accepts no query")
 				return
 			}
-			snapshot := sanitizeDiscovery(discovery[0](), sanitizer)
+			snapshot := sanitizeDiscovery(discovery(), sanitizer)
 			writeJSON(w, Response{Version: Version, Discovery: &snapshot})
 			return
 		}
@@ -239,8 +261,8 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			}
 			// Preserve [] for an empty queue list; discovery is additive in v1.
 			var snapshot *Discovery
-			if len(discovery) > 0 {
-				value := sanitizeDiscovery(discovery[0](), sanitizer)
+			if discovery != nil {
+				value := sanitizeDiscovery(discovery(), sanitizer)
 				snapshot = &value
 			}
 			writeJSON(w, struct {
