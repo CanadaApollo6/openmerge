@@ -20,7 +20,7 @@ func TestDiscoveryEndpointsUseAuthenticationAndFreshSnapshots(t *testing.T) {
 		calls++
 		return Discovery{LastSuccessfulSweep: &now, Repositories: []Repository{{Installation: "7", Name: "owner/not-configured", State: "not configured", LastSuccessfulSweep: &now, LastVerifiedDelivery: &now, LastDeliveryAgeSeconds: &age}}, Installations: []Installation{{ID: "7", WebhooksConfigured: true, WebhookHealthy: true, LastVerifiedDelivery: &now, Budget: Budget{Known: true, Limit: 1000, Remaining: 1000 - calls}}}}
 	}
-	handler := DynamicHandler(emptyDiscoverySource{}, func() []store.QueueKey { return nil }, "secret", nil, read)
+	handler := DynamicHandler(emptyDiscoverySource{}, func() []store.QueueKey { return nil }, "secret", nil, ReadOptions{Discovery: read})
 	for _, path := range []string{"/v1/discovery", "/v1/queues"} {
 		denied := httptest.NewRecorder()
 		handler.ServeHTTP(denied, httptest.NewRequest(http.MethodGet, path, nil))

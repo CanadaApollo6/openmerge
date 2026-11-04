@@ -30,6 +30,7 @@ within the limit are ignored.
 | --- | --- |
 | `/v1` | `{"version":1,"reads":[READ,...]}`; registry of all available reads |
 | `/v1/discovery` | `{"version":1,"discovery":DISCOVERY}`; visible/removed repositories, sweeps, installation budgets |
+| `/v1/git-cache` | `{"version":1,"git_cache":GIT_CACHE}`; in-memory Git cache contention and maintenance aggregates |
 | `/v1/queues` | `{"version":1,"queues":[QUEUE,...]}`; empty list is `[]` |
 | `/v1/queues/{owner}/{repo}` | List every served queue for this repository |
 | `/v1/queues/{owner}/{repo}/{base}` | `{"version":1,"queue":QUEUE}` |
@@ -49,6 +50,55 @@ Each parameter has `name`, `in` (`path` or `query`), `type` (`string`, `integer`
 or `number`), `required`, and `description`. Query parameters are separate from
 the path template. The registry requires the same bearer token as queue reads.
 It accepts no query. `/v1/live` retains its unauthenticated, unversioned contract.
+
+`GET /v1/git-cache` accepts no query, including an empty `?`. Queries return
+400 `invalid-request`. It reads memory and does not contact Git or the journal.
+The `git_cache` object contains these fields.
+
+| Field | Meaning |
+| --- | --- |
+| `since` | Process initialization time in UTC RFC3339 format. Counters reset on restart. |
+| `bucket_upper_bounds_ms` | Fixed inclusive bounds `[0,0.001,0.01,0.1,1,10,100,1000,10000,30000,60000]`. |
+| `repositories` | Array sorted by `name`, then `installation`. Only observed repositories in this server's served keys appear. An empty result is `[]`. |
+
+Each repository contains `installation`, `name` (lowercase forge `owner/name`),
+`operations`, `gc_outcomes`, `last_gc_at`, `last_cache_bytes`, and `dropped`.
+Each installation has its own row because it has its own caches. `operations` maps public Git method names such
+as `read-ref` to `count`, `wait_ms`, `hold_ms`, and `maintenance_ms`.
+Each timing is a histogram with `buckets` and `overflow`.
+Bucket counts are disjoint. Each bucket includes its upper bound and excludes
+the preceding bound. The first bucket includes zero. `overflow` counts values
+above 60000 ms. The sum of all buckets and overflow equals `count`.
+Hold excludes maintenance. Maintenance includes GC and ref cleanup.
+Operations that skip maintenance contribute a zero maintenance sample.
+
+`gc_outcomes` contains counts for `ok`, `failed`, `timed-out`, and
+`skipped-backoff`. The first three count GC attempts. `skipped-backoff` counts
+maintenance passes that defer GC after a prior failure.
+`last_gc_at` is the observer delivery time of the last delivered GC attempt,
+including failures. It is null before an attempt is observed.
+`last_cache_bytes` is the last measured object size after successful GC.
+It is null before a measurement. A later failed GC retains the last measurement.
+
+Samples arrive asynchronously after successful lock acquisition and release.
+Error paths after acquisition count too. Canceled waits and busy local reads
+that never acquire the lock do not count. Each Repo observer buffers at most 256
+samples. `dropped` sums the losses reported with samples delivered for this
+repository. A Repo can cover several repositories, so losses attach to the next
+delivered repository and cannot identify which repository lost a sample.
+Counters and histograms are best effort. Delivery can lag or arrive out of order
+across Repo instances. Divide count changes by elapsed time to compute rates.
+
+The aggregate map retains at most the repositories in the current served keys,
+including retained recovery partitions. Each observation and read prunes identities
+that leave those keys. Removal is noticed only at those points, so a repository
+removed and re-added between them keeps its counters. A sample queued before
+removal can also arrive after re-addition. Do not read a counter as evidence of
+activity since a re-addition.
+Operation names come from the finite set of public Git methods. Histograms retain
+fixed counters rather than individual timings. A row combines the caches, branches,
+and lanes of one installation and repository.
+The read changes no Git behavior and stores nothing.
 
 The savings endpoint embeds the [CLI report contract](savings-report.md#json)
 in `savings`. `since` is an inclusive RFC3339 start. `until` is an exclusive

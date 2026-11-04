@@ -38,6 +38,7 @@ func parameters(extra ...Parameter) []Parameter {
 var reads = []Read{
 	{"reads", "/v1", []Parameter{}, "Discover the versioned reads, their parameters, and their descriptions."},
 	{"discovery", "/v1/discovery", []Parameter{}, "List discovered repositories, serving state, sweeps, and installation budgets."},
+	{"git_cache", "/v1/git-cache", []Parameter{}, "Read per-repository Git cache operation counts, lock wait and hold and maintenance histograms, GC outcomes, and dropped samples since process start. Hold excludes maintenance. Best-effort observations reset on restart."},
 	{"queues", "/v1/queues", []Parameter{}, "List all queues served by this API, including their installation and lane."},
 	{"repository_queues", "/v1/queues/{owner}/{repo}", queueParameters[:2], "List all served queues for a repository."},
 	{"queue", "/v1/queues/{owner}/{repo}/{base}", parameters(), "Read queue state, entries, readiness, and CI history. Ambiguous installations or lanes return 409."},

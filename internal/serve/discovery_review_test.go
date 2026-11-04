@@ -202,7 +202,7 @@ func TestRulesStartupRetryAndReadinessVisibility(t *testing.T) {
 				t.Fatal("ignored command not logged")
 			}
 			recorder := httptest.NewRecorder()
-			status.DynamicHandler(restarted, restarted.Keys, "", nil, restarted.DiscoveryStatus).ServeHTTP(recorder, httptest.NewRequest("GET", "/v1/queues", nil))
+			status.DynamicHandler(restarted, restarted.Keys, "", nil, status.ReadOptions{Discovery: restarted.DiscoveryStatus}).ServeHTTP(recorder, httptest.NewRequest("GET", "/v1/queues", nil))
 			var response status.Response
 			must(t, json.Unmarshal(recorder.Body.Bytes(), &response))
 			if len(response.Queues) != 1 || response.Queues[0].Readiness == nil || response.Queues[0].Readiness.Ready || !strings.Contains(response.Queues[0].Readiness.Reason, "rulesets read failed") || response.Discovery.Repositories[0].State != "validating" {

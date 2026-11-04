@@ -260,13 +260,15 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, saniti
 	if err != nil {
 		return err
 	}
+	gitCache := status.NewGitCache(service.Keys)
+	factory.gitCache, auditFactory.gitCache = gitCache, gitCache
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	serveErrors := make(chan error, 2)
 	for _, endpoint := range []struct {
 		name, address string
 		handler       http.Handler
-	}{{"webhook", o.listen, webhookHandler(service, []byte(o.secret), logger)}, {"status API", o.apiListen, status.DynamicHandler(service, service.Keys, o.apiToken, sanitizer, service.DiscoveryStatus)}} {
+	}{{"webhook", o.listen, webhookHandler(service, []byte(o.secret), logger)}, {"status API", o.apiListen, status.DynamicHandler(service, service.Keys, o.apiToken, sanitizer, status.ReadOptions{Discovery: service.DiscoveryStatus, GitCache: gitCache})}} {
 		if endpoint.address == "" {
 			continue
 		}

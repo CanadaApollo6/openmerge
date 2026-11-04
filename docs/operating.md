@@ -600,6 +600,12 @@ in milliseconds. Hold time excludes maintenance. `gc_ran` indicates an attempt;
 not due or maintenance stopped before GC. `cache_bytes` is present only when
 object bytes were measured after a successful GC.
 
+Normal-case timing is available through authenticated `GET /v1/git-cache`.
+It includes counts and bounded wait, hold, and maintenance histograms even at
+INFO log level. GC outcomes, last observed object bytes, and dropped samples
+show maintenance health and observation loss. These in-memory numbers reset on
+restart. The response includes `since`. See [the API contract](api.md).
+
 Ordinary operations log at DEBUG. Records rise to INFO when lock wait is at
 least 1 second, hold is at least 10 seconds, maintenance is at least 5 seconds,
 or GC ran. Failed or timed-out GC logs at WARN. These records are asynchronous

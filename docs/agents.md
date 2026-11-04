@@ -72,6 +72,7 @@ unknown. Do not infer that a successful read means a PR is ready to land.
 | Which commit landed PR N? | Call `pr`. Read `landing.sha` and `landing.outcome`. Use `change` and `decisions` for recorded evidence. An outside-queue landing does not establish OpenMerge verification. |
 | What is slowing our CI? | Inspect the PR's CI run ledger and queue readiness with `pr` and `queue`. Call `savings` for a bounded RFC3339 `since` and optional `until` window to measure observed runs and minutes. These reads do not replace a workflow bottleneck report. |
 | What changed since I last looked? | Call `queue_events` with your saved cursor as `after`, and save `next_cursor` only after you consume the page. Drain pages while `has_more` is true, then wait at least 60 seconds. Keep one cursor per queue. For one change, page `decisions` with the last event ID as `after`. A queue watermark is not a cursor for either read. |
+| Is the Git cache slowing the queue? | Call `git_cache`. Compare `wait_ms` and `hold_ms` histograms per operation, and read `gc_outcomes` for failed maintenance. Each installation has its own row. Counters reset at `since`, so divide count changes by elapsed time. Nonzero `dropped` means samples were lost. |
 | What does this server serve? | Call `reads`, `queues`, `repository_queues`, or `discovery`. Use `health` for runtime readiness. |
 
 CI doctor, Git cache, and queue events appear in `GET /v1` once their API slices
