@@ -87,6 +87,53 @@ func (f *chainLogFixture) want(t *testing.T, message string, want ...string) {
 	}
 }
 
+func newSerialLogFixture() *chainLogFixture {
+	f := newLogFixture()
+	for pr := 1; pr <= 2; pr++ {
+		f.apply(queue.PRObserved{PR: pr, HeadSHA: fmt.Sprint("head", pr), Eligible: true, Trusted: true})
+		f.apply(queue.EnqueueRequested{PR: pr, At: f.at})
+	}
+	f.apply(queue.BatchStarted{BatchID: "b1", BaseSHA: "base", PRs: []queue.BatchPR{{PR: 1, HeadSHA: "head1"}}, At: f.at})
+	f.apply(queue.TestRefBuilt{BatchID: "b1", TestedSHA: "tested1", Method: queue.Merge, At: f.at})
+	return f
+}
+
+func TestOperationalLogsSerialIdentifiedChecks(t *testing.T) {
+	f := newSerialLogFixture()
+	f.observe("b1", true, true, 1)
+	f.want(t, "checks result", "b1/1/tested1/true")
+}
+
+func TestOperationalLogsSerialConfirmedFailure(t *testing.T) {
+	f := newSerialLogFixture()
+	f.observe("b1", true, false, 1)
+	f.apply(queue.ChecksFailureConfirmed{BatchID: "b1", TestedSHA: "tested1", Reason: queue.ChecksFailed})
+	f.want(t, "checks result", "b1/1/tested1/false")
+	f.want(t, "batch failed", "b1/1/tested1/checks-failed")
+}
+
+func TestOperationalLogsWaitingDequeueHasNoBatch(t *testing.T) {
+	f := newSerialLogFixture()
+	var waiting queue.Entry
+	for _, entry := range f.w.logState.Entries {
+		if entry.PR == 2 {
+			waiting = entry
+		}
+	}
+	f.output.Reset()
+	f.apply(queue.Dequeued{PR: 2, AdmissionID: waiting.AdmissionID, Reason: queue.Requested})
+	rows := logRows(t, &f.output)
+	if len(rows) != 1 || rows[0]["msg"] != "dequeued" || rows[0]["pr"] != float64(2) || rows[0]["batch"] != "" {
+		t.Fatalf("waiting dequeue records = %v", rows)
+	}
+}
+
+func TestOperationalLogsRepeatedTestRefBuiltLogsOnce(t *testing.T) {
+	f := newSerialLogFixture()
+	f.apply(queue.TestRefBuilt{BatchID: "b1", TestedSHA: "tested1", Method: queue.Merge, At: f.at})
+	f.want(t, "test ref built", "b1/1/tested1/")
+}
+
 func TestOperationalLogsChainResultsAndLanding(t *testing.T) {
 	f := newChainLogFixture(t)
 	f.want(t, "test ref built", "b1/1/tested1/", "b2/2/tested2/", "b2/3/tested2/")
