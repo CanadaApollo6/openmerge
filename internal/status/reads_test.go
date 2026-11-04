@@ -216,3 +216,23 @@ func (s *savingsDeadlineSource) Journals(ctx context.Context, _ []store.QueueKey
 	s.deadline = time.Until(end)
 	return nil, context.DeadlineExceeded
 }
+
+func TestRegisteredReadMatchesParserPaths(t *testing.T) {
+	for path, want := range map[string]bool{
+		"/v1/queues":                                  true,
+		"/v1/queues/owner/repo":                       true,
+		"/v1/queues/owner/repo/main":                  true,
+		"/v1/queues/owner/repo/release%2F1":           true,
+		"/v1/queues/owner/repo/main/prs/1":            true,
+		"/v1/queues/owner/repo/main/%70rs/1":          true,
+		"/v1/queues/owner/repo/main/changes/id":       true,
+		"/v1/queues/owner/repo/main/changes/id/brief": true,
+		"/v1/queues/owner/repo/main/events":           false,
+		"/v1/queues/owner/repo/main/prs/1/extra":      false,
+		"/v1/queues/owner/repo/main/nope/1":           false,
+	} {
+		if got := registeredRead(path); got != want {
+			t.Errorf("registeredRead(%q) = %v, want %v", path, got, want)
+		}
+	}
+}

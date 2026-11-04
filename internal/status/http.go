@@ -204,6 +204,10 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			fail(w, http.StatusNotFound, "not-found", "queue or endpoint not found")
 			return
 		}
+		if !registeredRead(r.URL.EscapedPath()) {
+			fail(w, http.StatusNotFound, "not-found", "queue or endpoint not found")
+			return
+		}
 		list := r.URL.Path == "/v1/queues" || strings.Count(r.URL.EscapedPath(), "/") == 4
 		if !list && len(selected) > 1 {
 			fail(w, http.StatusConflict, "ambiguous-queue", "multiple installations or lanes match this queue")

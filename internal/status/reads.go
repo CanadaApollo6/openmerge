@@ -1,5 +1,10 @@
 package status
 
+import (
+	"net/url"
+	"strings"
+)
+
 // Parameter keeps tool inputs explicit so discovery needs no route-specific knowledge.
 type Parameter struct {
 	Name        string `json:"name"`
@@ -66,4 +71,28 @@ func Reads() []Read {
 		result[i].Parameters = append([]Parameter{}, result[i].Parameters...)
 	}
 	return result
+}
+
+// registeredRead runs after the route parsers, so their validation errors keep
+// their contract while a new parser branch cannot serve a read without a row.
+func registeredRead(escapedPath string) bool {
+	parts := strings.Split(escapedPath, "/")
+	for _, read := range reads {
+		template := strings.Split(read.Path, "/")
+		if len(template) != len(parts) {
+			continue
+		}
+		matched := true
+		for i, segment := range template {
+			if strings.HasPrefix(segment, "{") {
+				continue
+			}
+			decoded, err := url.PathUnescape(parts[i])
+			matched = matched && err == nil && decoded == segment
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
 }
