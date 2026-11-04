@@ -294,25 +294,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			known[e.PR] = e
 		}
 		if pr > 0 && !j.DependencyRedacted && (inheritedPause[originalID] || affects(record.Event, pr, before, s, tested)) {
-			kind, _, _ := queue.EncodeEvent(record.Event)
-			evidence := Event{ID: record.ID, Type: kind, At: record.RecordedAt.UTC(), Summary: sanitizer.Sanitize(eventSummary(record.Event, before, s))}
-			evidence.Runs, evidence.RerunState = retryEvidence(record.Event, before, s, sanitizer)
-			switch e := record.Event.(type) {
-			case queue.CheckCancellationDeferred:
-				evidence.CancellationState = "requested"
-				if e.Abandoned {
-					evidence.CancellationState = "abandoned"
-				}
-			case queue.CheckCancellationRequested:
-				evidence.CancellationState = "requested"
-			case queue.CheckCancellationReported:
-				evidence.CancellationState = "requested"
-				if e.Unsupported {
-					evidence.CancellationState = "unsupported"
-				} else if len(e.Confirmed) > 0 {
-					evidence.CancellationState = "confirmed"
-				}
-			}
+			evidence := projectEvent(record, before, s, sanitizer)
 			events = appendEvidence(events, evidence, record.Event, previous, before)
 			previous = record.Event
 			// Keep one extra row until a reopen's matching refresh arrives.
@@ -685,6 +667,29 @@ func explanationContext(j store.Journal, pr int, frames []projectionFrame) (map[
 		inherited[id] = true
 	}
 	return result, inherited
+}
+
+func projectEvent(record store.JournalEvent, before, after queue.State, sanitizer *diagnostic.Sanitizer) Event {
+	kind, _, _ := queue.EncodeEvent(record.Event)
+	evidence := Event{ID: record.ID, Type: kind, At: record.RecordedAt.UTC(), Summary: sanitizer.Sanitize(eventSummary(record.Event, before, after))}
+	evidence.Runs, evidence.RerunState = retryEvidence(record.Event, before, after, sanitizer)
+	switch e := record.Event.(type) {
+	case queue.CheckCancellationDeferred:
+		evidence.CancellationState = "requested"
+		if e.Abandoned {
+			evidence.CancellationState = "abandoned"
+		}
+	case queue.CheckCancellationRequested:
+		evidence.CancellationState = "requested"
+	case queue.CheckCancellationReported:
+		evidence.CancellationState = "requested"
+		if e.Unsupported {
+			evidence.CancellationState = "unsupported"
+		} else if len(e.Confirmed) > 0 {
+			evidence.CancellationState = "confirmed"
+		}
+	}
+	return evidence
 }
 
 func eventSummary(event queue.Event, before, after queue.State) string {

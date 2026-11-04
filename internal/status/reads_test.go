@@ -43,6 +43,7 @@ var readRouteInventory = map[string]string{
 	"change":               "/v1/queues/{owner}/{repo}/{base}/changes/{id}",
 	"brief":                "/v1/queues/{owner}/{repo}/{base}/changes/{id}/brief",
 	"decisions":            "/v1/queues/{owner}/{repo}/{base}/changes/{id}/decisions",
+	"queue_events":         "/v1/queues/{owner}/{repo}/{base}/events",
 	"savings":              "/v1/queues/{owner}/{repo}/{base}/reports/savings",
 	"health":               "/v1/health",
 	"authority_completion": "/v1/authority-completion",
@@ -230,7 +231,7 @@ func TestRegisteredReadMatchesParserPaths(t *testing.T) {
 		"/v1/queues/owner/repo/main/%70rs/1":          true,
 		"/v1/queues/owner/repo/main/changes/id":       true,
 		"/v1/queues/owner/repo/main/changes/id/brief": true,
-		"/v1/queues/owner/repo/main/events":           false,
+		"/v1/queues/owner/repo/main/events":           true,
 		"/v1/queues/owner/repo/main/prs/1/extra":      false,
 		"/v1/queues/owner/repo/main/nope/1":           false,
 	} {
