@@ -392,6 +392,7 @@ func TestMCPBinarySurface(t *testing.T) {
 	send(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
 	send(`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`)
 	listed := receive(2)
+	t.Logf("tools/list result: %s", listed)
 	var list struct {
 		Tools []mcp.Tool `json:"tools"`
 	}
