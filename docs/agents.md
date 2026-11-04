@@ -71,7 +71,7 @@ unknown. Do not infer that a successful read means a PR is ready to land.
 | Why is my PR waiting? | Call `pr` with the repository, base, and PR number. Inspect `waiting_reason`, queue blocks, `why`, and the CI ledger. Use its change ID with `brief`, audience `agent`, for recorded next steps. |
 | Which commit landed PR N? | Call `pr`. Read `landing.sha` and `landing.outcome`. Use `change` and `decisions` for recorded evidence. An outside-queue landing does not establish OpenMerge verification. |
 | What is slowing our CI? | Inspect the PR's CI run ledger and queue readiness with `pr` and `queue`. Call `savings` for a bounded RFC3339 `since` and optional `until` window to measure observed runs and minutes. These reads do not replace a workflow bottleneck report. |
-| What changed since I last looked? | Compare queue `watermark` values. Read recent PR `why.events`. Page `decisions` with the last event ID as `after` and a bounded `limit` for one change. A queue watermark is not a decisions cursor. |
+| What changed since I last looked? | Call `queue_events` with your saved cursor as `after`, and save `next_cursor` only after you consume the page. Drain pages while `has_more` is true, then wait at least 60 seconds. Keep one cursor per queue. For one change, page `decisions` with the last event ID as `after`. A queue watermark is not a cursor for either read. |
 | What does this server serve? | Call `reads`, `queues`, `repository_queues`, or `discovery`. Use `health` for runtime readiness. |
 
 CI doctor, Git cache, and queue events appear in `GET /v1` once their API slices
