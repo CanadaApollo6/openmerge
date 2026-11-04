@@ -3,11 +3,15 @@ package status
 import (
 	"context"
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +30,63 @@ func (*registrySource) AuthorityCompletion(context.Context, store.AuthorityCompl
 }
 func (*registrySource) ChangeDecisions(context.Context, store.QueueKey, queue.ChangeID, uint64, int64, int) ([]store.DecisionRecord, int64, bool, error) {
 	return []store.DecisionRecord{}, 0, true, nil
+}
+
+// Keep this inventory independent of reads so deleting a row cannot delete its test.
+var readRouteInventory = map[string]string{
+	"reads":                "/v1",
+	"discovery":            "/v1/discovery",
+	"queues":               "/v1/queues",
+	"repository_queues":    "/v1/queues/{owner}/{repo}",
+	"queue":                "/v1/queues/{owner}/{repo}/{base}",
+	"pr":                   "/v1/queues/{owner}/{repo}/{base}/prs/{n}",
+	"change":               "/v1/queues/{owner}/{repo}/{base}/changes/{id}",
+	"brief":                "/v1/queues/{owner}/{repo}/{base}/changes/{id}/brief",
+	"decisions":            "/v1/queues/{owner}/{repo}/{base}/changes/{id}/decisions",
+	"savings":              "/v1/queues/{owner}/{repo}/{base}/reports/savings",
+	"health":               "/v1/health",
+	"authority_completion": "/v1/authority-completion",
+	"live":                 "/v1/live",
+}
+
+func TestReadRegistryInventory(t *testing.T) {
+	got := map[string]string{}
+	for _, read := range Reads() {
+		got[read.Name] = read.Path
+	}
+	if !reflect.DeepEqual(got, readRouteInventory) {
+		t.Fatalf("registry differs from route inventory: got %v, want %v", got, readRouteInventory)
+	}
+}
+
+func TestReadRegistrySourcePaths(t *testing.T) {
+	// Inspect handlers too. An early return can bypass every runtime registry check.
+	files, err := parser.ParseDir(token.NewFileSet(), ".", func(info os.FileInfo) bool { return !strings.HasSuffix(info.Name(), "_test.go") }, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := map[string]bool{}
+	for _, path := range readRouteInventory {
+		paths[path] = true
+	}
+	for _, pkg := range files {
+		for name, file := range pkg.Files {
+			ast.Inspect(file, func(node ast.Node) bool {
+				lit, ok := node.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					return true
+				}
+				value, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if (value == "/v1" || strings.HasPrefix(value, "/v1/")) && !paths[strings.TrimSuffix(value, "/")] {
+					t.Errorf("%s declares an API path outside the read inventory: %q", name, value)
+				}
+				return true
+			})
+		}
+	}
 }
 
 func TestReadRegistryRoutesAndDocs(t *testing.T) {
@@ -47,7 +108,7 @@ func TestReadRegistryRoutesAndDocs(t *testing.T) {
 				t.Fatalf("invalid or duplicate read: %+v", read)
 			}
 			names[read.Name], paths[read.Path] = true, true
-			if !strings.Contains(string(docs), read.Path) {
+			if !strings.Contains(string(docs), "`"+read.Path+"`") {
 				t.Errorf("docs/api.md omits %s", read.Path)
 			}
 			path, query := read.Path, url.Values{}
@@ -93,15 +154,6 @@ func TestReadRegistryRoutesAndDocs(t *testing.T) {
 			}
 			if w.Header().Get("Cache-Control") != "no-store" {
 				t.Fatal(w.Header())
-			}
-			// Removing a row must remove its route, even for special probes.
-			original := reads
-			defer func() { reads = original }()
-			reads = nil
-			w = httptest.NewRecorder()
-			h.ServeHTTP(w, request)
-			if w.Code != 404 {
-				t.Fatalf("unregistered route served: %s: %d %s", path, w.Code, w.Body)
 			}
 		})
 	}

@@ -106,7 +106,7 @@ func DynamicHandler(source Source, keys func() []store.QueueKey, token string, s
 			return
 		}
 		// Health uses its own bounded runtime snapshot; it never discovers keys.
-		if read := readAtPath(r.URL.EscapedPath()); read != nil && read.Name == "health" {
+		if r.URL.EscapedPath() == "/v1/health" {
 			Handler(source, nil, token, sanitizer).ServeHTTP(w, r)
 			return
 		}
@@ -139,7 +139,7 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 				return
 			}
 		}
-		if read := readAtPath(r.URL.EscapedPath()); read != nil && read.Name == "health" {
+		if r.URL.EscapedPath() == "/v1/health" {
 			serveHealth(w, r, source, sanitizer)
 			return
 		}
@@ -159,16 +159,11 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			fail(w, http.StatusMethodNotAllowed, "method-not-allowed", "only GET is supported")
 			return
 		}
-		read := readAtPath(r.URL.EscapedPath())
-		if read == nil {
-			fail(w, http.StatusNotFound, "not-found", "queue or endpoint not found")
-			return
-		}
 		if r.URL.EscapedPath() == "/v1/authority-completion" {
 			serveAuthorityCompletion(w, r, source)
 			return
 		}
-		if read.Name == "reads" {
+		if r.URL.EscapedPath() == "/v1" {
 			if r.URL.RawQuery != "" || r.URL.ForceQuery {
 				fail(w, http.StatusBadRequest, "invalid-request", "read registry accepts no query")
 				return
@@ -188,7 +183,7 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			writeJSON(w, Response{Version: Version, Discovery: &snapshot})
 			return
 		}
-		if read.Name == "savings" {
+		if path := r.URL.EscapedPath(); strings.HasPrefix(path, "/v1/queues/") && strings.Count(path, "/") == 7 && strings.HasSuffix(path, "/reports/savings") {
 			serveSavings(w, r, source, keys, sanitizer)
 			return
 		}

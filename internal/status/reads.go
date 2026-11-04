@@ -1,7 +1,5 @@
 package status
 
-import "strings"
-
 // Parameter keeps tool inputs explicit so discovery needs no route-specific knowledge.
 type Parameter struct {
 	Name        string `json:"name"`
@@ -11,7 +9,7 @@ type Parameter struct {
 	Description string `json:"description"`
 }
 
-// Read is the shared contract for discovery, route admission, and future MCP tools.
+// Read is the shared contract for discovery and future MCP tools.
 type Read struct {
 	Name        string      `json:"name"`
 	Path        string      `json:"path"`
@@ -32,7 +30,6 @@ func parameters(extra ...Parameter) []Parameter {
 	return append(append([]Parameter{}, queueParameters...), extra...)
 }
 
-// reads is also the route allowlist, so a new read cannot bypass discovery.
 var reads = []Read{
 	{"reads", "/v1", []Parameter{}, "Discover the versioned reads, their parameters, and their descriptions."},
 	{"discovery", "/v1/discovery", []Parameter{}, "List discovered repositories, serving state, sweeps, and installation budgets."},
@@ -69,26 +66,4 @@ func Reads() []Read {
 		result[i].Parameters = append([]Parameter{}, result[i].Parameters...)
 	}
 	return result
-}
-
-func readAtPath(path string) *Read {
-	parts := strings.Split(path, "/")
-	for i := range reads {
-		template := strings.Split(reads[i].Path, "/")
-		if len(parts) != len(template) {
-			continue
-		}
-		match := true
-		for n, part := range template {
-			if strings.HasPrefix(part, "{") {
-				match = match && parts[n] != ""
-			} else {
-				match = match && parts[n] == part
-			}
-		}
-		if match {
-			return &reads[i]
-		}
-	}
-	return nil
 }
