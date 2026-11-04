@@ -2,7 +2,9 @@ package queuemetrics
 
 import (
 	"cmp"
+	"context"
 	"fmt"
+	"math"
 	"slices"
 	"time"
 
@@ -209,6 +211,11 @@ const (
 // the production fold and summarizes the window. It is a pure function of the
 // journal and window.
 func ComputeSavings(j store.Journal, w SavingsWindow) (Savings, error) {
+	return ComputeSavingsContext(context.Background(), j, w)
+}
+
+// ComputeSavingsContext stops journal replay when the request is canceled.
+func ComputeSavingsContext(ctx context.Context, j store.Journal, w SavingsWindow) (Savings, error) {
 	r := Savings{
 		Version: SavingsVersion, Installation: j.Key.Installation, Repository: j.Key.Repository, BaseBranch: j.Key.BaseBranch, Lane: j.Key.Lane,
 		Since: w.Since.UTC(), Until: w.Until.UTC(), Baseline: BaselineDefinition, Executed: ExecutedDefinition,
@@ -217,8 +224,8 @@ func ComputeSavings(j store.Journal, w SavingsWindow) (Savings, error) {
 	if w.Since.IsZero() || !w.Until.After(w.Since) {
 		return r, fmt.Errorf("window must have a positive duration")
 	}
-	if w.FullSuiteMinutes < 0 {
-		return r, fmt.Errorf("full-suite minutes must not be negative")
+	if math.IsNaN(w.FullSuiteMinutes) || math.IsInf(w.FullSuiteMinutes, 0) || w.FullSuiteMinutes < 0 {
+		return r, fmt.Errorf("full-suite minutes must be finite and nonnegative")
 	}
 	s := j.Seed
 	batches := map[string]*savingsBatch{}
@@ -272,6 +279,9 @@ func ComputeSavings(j store.Journal, w SavingsWindow) (Savings, error) {
 	var sizes, latencies []float64
 	rejectedLandings := 0
 	for _, rec := range j.Events {
+		if err := ctx.Err(); err != nil {
+			return r, err
+		}
 		if rec.RecordedAt.IsZero() {
 			return r, fmt.Errorf("event %d has no recorded timestamp", rec.ID)
 		}
@@ -310,6 +320,9 @@ func ComputeSavings(j store.Journal, w SavingsWindow) (Savings, error) {
 				b.outcome = outcome
 			}
 			for _, run := range order {
+				if err := ctx.Err(); err != nil {
+					return r, err
+				}
 				if run.batch == b && run.outcome == outcomeOpen {
 					run.outcome = outcome
 				}
@@ -383,6 +396,9 @@ func ComputeSavings(j store.Journal, w SavingsWindow) (Savings, error) {
 		}
 	}
 	for _, a := range rerunOrder {
+		if err := ctx.Err(); err != nil {
+			return r, err
+		}
 		switch {
 		case a.accepted:
 			a.run.reruns++
@@ -393,6 +409,9 @@ func ComputeSavings(j store.Journal, w SavingsWindow) (Savings, error) {
 
 	var observed []float64
 	for _, run := range order {
+		if err := ctx.Err(); err != nil {
+			return r, err
+		}
 		attributed := !run.builtAt.Before(w.Since)
 		if !attributed {
 			for _, id := range run.batch.admissions {
@@ -482,7 +501,7 @@ func ComputeSavings(j store.Journal, w SavingsWindow) (Savings, error) {
 	if j.TreeDedupeShadow != nil {
 		r.Shadow, r.Warnings = shadowSavings(j.TreeDedupeShadow, w, r.Warnings)
 	}
-	return r, nil
+	return r, ctx.Err()
 }
 
 // shadowSavings summarizes the shadow ledger for the window. An unreadable

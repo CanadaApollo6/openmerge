@@ -122,7 +122,7 @@ func (q HealthQueue) Failing() bool {
 
 // processLive must run before dynamic key discovery as well as authentication.
 func processLive(w http.ResponseWriter, r *http.Request) bool {
-	if r.URL.EscapedPath() != "/v1/live" {
+	if read := readAtPath(r.URL.EscapedPath()); read == nil || read.Name != "live" {
 		return false
 	}
 	w.Header().Set("Cache-Control", "no-store")
