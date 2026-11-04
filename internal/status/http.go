@@ -183,7 +183,7 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			writeJSON(w, Response{Version: Version, Discovery: &snapshot})
 			return
 		}
-		if path := r.URL.EscapedPath(); strings.HasPrefix(path, "/v1/queues/") && strings.Count(path, "/") == 7 && strings.HasSuffix(path, "/reports/savings") {
+		if path := r.URL.EscapedPath(); strings.HasPrefix(path, "/v1/queues/") && strings.Count(path, "/") == 7 && strings.HasSuffix(path, "/reports/savings") && registeredRead(path) {
 			serveSavings(w, r, source, keys, sanitizer)
 			return
 		}

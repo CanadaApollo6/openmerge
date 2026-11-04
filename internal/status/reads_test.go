@@ -90,6 +90,9 @@ func TestReadRegistrySourcePaths(t *testing.T) {
 			if (value == "/v1" || strings.HasPrefix(value, "/v1/")) && !paths[strings.TrimSuffix(value, "/")] {
 				t.Errorf("%s declares an API path outside the read inventory: %q", name, value)
 			}
+			if strings.HasPrefix(value, "/reports/") && !paths["/v1/queues/{owner}/{repo}/{base}"+value] {
+				t.Errorf("%s dispatches a report outside the read inventory: %q", name, value)
+			}
 			return true
 		})
 	}
