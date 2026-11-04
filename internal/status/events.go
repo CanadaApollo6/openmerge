@@ -88,7 +88,7 @@ func serveQueueEvents(w http.ResponseWriter, r *http.Request, source Source, key
 	j := journals[0]
 	// Private dependency reads withhold journal positions and timing on PR detail too.
 	if j.DependencyRedacted {
-		fail(w, 409, "event-history-withheld", "event history is withheld; retrying will not help; ask an operator to restore access for retained history; use queue or PR detail meanwhile")
+		fail(w, 409, "event-history-withheld", "event history is withheld; dependency evidence may still be arriving, so retry after the poll interval; if this persists, ask an operator to restore access for retained history; use queue or PR detail meanwhile")
 		return
 	}
 	response := QueueEventsResponse{Version: Version, Events: []QueueEvent{}, NextCursor: after}

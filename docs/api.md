@@ -79,13 +79,18 @@ including dependency and provenance side evidence, use `Recorded queue event`.
 Their payloads remain private. Pages preserve individual rows without PR filtering
 or coalescing. A dependency projection that withholds journal positions returns
 409 `event-history-withheld` rather than exposing private cursors or timing.
-This refusal has no `Retry-After` header. Retrying will not help.
-It can persist even when the current revision has no dependency status.
-Ask an operator to restore access sufficient for the retained history.
+This refusal has no `Retry-After` header. It covers two states that the read cannot
+tell apart: a declaration whose first diagnostic has not arrived, and access that
+does not cover the retained history. The first clears with the same cursor, so
+keep the cursor and retry after the poll interval. If the refusal persists, ask an
+operator to restore access. It can persist even when the current revision has no
+dependency status.
 Use queue or PR detail for the permitted projection while access is unresolved.
 The error contains no dependency identity, position, or timestamp.
 
 `next_cursor` is the last returned event ID, or `after` for an empty page.
+A cursor is a numeric threshold and is not bound to a queue. A larger cursor from
+another queue skips this queue's earlier events, so keep one cursor per queue.
 `has_more` reports another row in the same snapshot. Unlike decisions, queue
 events retain the final cursor instead of returning 0 at the end, so polling can
 resume. An `after` past the end returns `events: []`, the same cursor, and

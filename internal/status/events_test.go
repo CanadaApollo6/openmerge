@@ -293,7 +293,7 @@ func TestQueueEventsRespectDependencyPrivacy(t *testing.T) {
 		if w.Code != 409 || body["error"] != "event-history-withheld" || len(body) != 3 || body["version"] != float64(Version) || w.Header().Get("Retry-After") != "" {
 			t.Fatal(w.Code, w.Header(), w.Body)
 		}
-		want := "event history is withheld; retrying will not help; ask an operator to restore access for retained history; use queue or PR detail meanwhile"
+		want := "event history is withheld; dependency evidence may still be arriving, so retry after the poll interval; if this persists, ask an operator to restore access for retained history; use queue or PR detail meanwhile"
 		if body["message"] != want {
 			t.Fatal("refusal leaked details or omitted recovery guidance", w.Body)
 		}
