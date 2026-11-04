@@ -148,6 +148,9 @@ We now owe the contract tests above, and a reduction in GitHub requests per
 report so that a 14-day window on a busy repository fits its budget. Completed
 runs do not change, so reuse across snapshots is the first thing to try.
 
+- 2026-11-04. We now owe a ranged queue-events query with validated prefix state,
+  change aliases, and a history-wide dependency visibility gate.
+
 ## Alternatives considered
 
 - **Answer CI doctor synchronously.** Measured at 109 seconds and 500 GitHub

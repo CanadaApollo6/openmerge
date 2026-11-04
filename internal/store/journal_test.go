@@ -41,6 +41,11 @@ func TestJournalsAreScopedAndReproduceLoad(t *testing.T) {
 	if !reflect.DeepEqual(want, state) || watermark != j.Events[len(j.Events)-1].ID {
 		t.Fatal("journal and load disagree")
 	}
+	reporting, err := s.ReportingJournals(t.Context(), []QueueKey{key, missing})
+	must(t, err)
+	if !reflect.DeepEqual(journals, reporting) {
+		t.Fatal("status and worker reporting journals disagree")
+	}
 	var count int
 	must(t, s.pool.QueryRow(t.Context(), "SELECT count(*) FROM queues").Scan(&count))
 	if count != 2 {

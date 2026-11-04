@@ -78,7 +78,12 @@ Batch-wide events do not imply a single PR. Events without a public summary,
 including dependency and provenance side evidence, use `Recorded queue event`.
 Their payloads remain private. Pages preserve individual rows without PR filtering
 or coalescing. A dependency projection that withholds journal positions returns
-503 `unavailable` rather than exposing private cursors or timing.
+409 `event-history-withheld` rather than exposing private cursors or timing.
+This refusal has no `Retry-After` header. Retrying will not help.
+It can persist even when the current revision has no dependency status.
+Ask an operator to restore access sufficient for the retained history.
+Use queue or PR detail for the permitted projection while access is unresolved.
+The error contains no dependency identity, position, or timestamp.
 
 `next_cursor` is the last returned event ID, or `after` for an empty page.
 `has_more` reports another row in the same snapshot. Unlike decisions, queue
@@ -95,17 +100,75 @@ Each request loads the whole journal through the status source, even for a
 small page. Projection replays the prefix through that page. Transfer, decoding,
 and memory grow with the journal. Reads and projection share a 15 second
 deadline. A deadline failure returns 503 `unavailable` without advancing a cursor.
+Wait at least 60 seconds after draining before the next poll. Use one poller per
+queue and avoid concurrent status reads. Increase the interval for large histories.
+A local 13,000-row fixture took 1.07 to 2.25 seconds per tail poll.
+At 60 seconds, those reads occupy about 2 to 4 percent of one connection.
+A request that reaches the 15 second deadline occupies up to 25 percent.
+These synthetic measurements are not production latency estimates.
+The source shares the worker pool. Concurrent reads can still exhaust it.
+Back off further after a transient 503. Keep the saved cursor on every failure.
 
 A poller sends its saved cursor and persists `next_cursor` after consuming the
 page. It drains pages while `has_more` is true, then polls again later.
+This example consumes each page by printing its events. Replace that operation
+with your consumer. The consumer must finish successfully before saving the cursor.
+Run the example again after the poll interval. Each poller needs its own cursor file.
+A failure exits nonzero and preserves the last consumed page's cursor.
+A crash after consumption but before persistence can repeat a page.
+Consumers must tolerate repeated event IDs.
 
 ```sh
-cursor=0
-page=$(curl --fail --silent --show-error \
-	-H "Authorization: Bearer $OPENMERGE_API_TOKEN" \
-	"$OPENMERGE_API/v1/queues/acme/project/main/events?after=$cursor&limit=20")
-printf '%s\n' "$page" | jq '.events'
-cursor=$(printf '%s\n' "$page" | jq -r '.next_cursor')
+python3 <<'PY'
+import json
+import os
+from pathlib import Path
+import tempfile
+import urllib.request
+
+cursor_file = Path(os.environ.get("OPENMERGE_CURSOR_FILE", ".openmerge-events.cursor"))
+text = cursor_file.read_text().strip() if cursor_file.exists() else "0"
+if not text.isascii() or not text.isdecimal() or int(text) > 2**63 - 1:
+    raise ValueError("invalid saved cursor")
+cursor = int(text)
+while True:
+    url = (os.environ["OPENMERGE_API"] +
+           f"/v1/queues/acme/project/main/events?after={cursor}&limit=20")
+    request = urllib.request.Request(url, headers={
+        "Authorization": "Bearer " + os.environ["OPENMERGE_API_TOKEN"]})
+    with urllib.request.urlopen(request, timeout=20) as response:
+        page = json.load(response)
+    if not isinstance(page, dict) or page.get("version") != 1:
+        raise ValueError("invalid page version")
+    events, next_cursor, has_more = (page.get("events"), page.get("next_cursor"),
+                                     page.get("has_more"))
+    if (not isinstance(events, list) or len(events) > 20 or
+            type(next_cursor) is not int or type(has_more) is not bool):
+        raise ValueError("invalid page shape")
+    previous = cursor
+    for event in events:
+        if (not isinstance(event, dict) or type(event.get("id")) is not int or
+                not previous < event["id"] <= 2**63 - 1 or
+                not all(isinstance(event.get(k), str) for k in ("at", "type", "summary"))):
+            raise ValueError("invalid event")
+        previous = event["id"]
+    if next_cursor != previous or (has_more and not events):
+        raise ValueError("invalid page cursor")
+    print(json.dumps(events), flush=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", dir=cursor_file.parent,
+                                         delete=False) as saved:
+            temporary = saved.name
+            saved.write(str(next_cursor) + "\n")
+        os.replace(temporary, cursor_file)
+    finally:
+        if temporary and os.path.exists(temporary):
+            os.unlink(temporary)
+    cursor = next_cursor
+    if not has_more:
+        break
+PY
 ```
 
 URL-encode each path component, including slashes in base branch names:

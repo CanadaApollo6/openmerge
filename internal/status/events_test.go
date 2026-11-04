@@ -266,18 +266,47 @@ func TestQueueEventsPreserveAllWireKinds(t *testing.T) {
 }
 
 func TestQueueEventsRespectDependencyPrivacy(t *testing.T) {
-	j, binding, _, _ := statusfixture.StatusJournal(t, "dependency-waiting", 1)
-	j, err := ProjectDependencies(j, binding, nil, statusfixture.StatusSources())
-	if err != nil || !j.DependencyRedacted {
-		t.Fatal(err, j.DependencyRedacted)
+	var refused string
+	for _, historical := range []bool{false, true} {
+		j, binding, _, _ := statusfixture.StatusJournal(t, "dependency-waiting", 1)
+		if historical {
+			event := queue.PRObserved{PR: 2, HeadSHA: strings.Repeat("d", 40), Eligible: true, Trusted: true}
+			_, raw, err := queue.EncodeEvent(event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			j.Events = append(j.Events, store.JournalEvent{ID: int64(len(j.Events) + 1), RecordedAt: at, Event: event, Payload: raw})
+		}
+		j, err := ProjectDependencies(j, binding, nil, statusfixture.StatusSources())
+		if err != nil || !j.DependencyRedacted || historical && len(j.DependencyStatus) != 0 {
+			t.Fatal(err, j.DependencyRedacted, j.DependencyStatus)
+		}
+		h := Handler(&source{journals: []store.Journal{j}}, []store.QueueKey{j.Key}, "secret", nil)
+		r := httptest.NewRequest("GET", "/v1/queues/"+j.Key.Repository+"/"+j.Key.BaseBranch+"/events", nil)
+		r.Header.Set("Authorization", "Bearer secret")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		var body map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if w.Code != 409 || body["error"] != "event-history-withheld" || len(body) != 3 || body["version"] != float64(Version) || w.Header().Get("Retry-After") != "" {
+			t.Fatal(w.Code, w.Header(), w.Body)
+		}
+		want := "event history is withheld; retrying will not help; ask an operator to restore access for retained history; use queue or PR detail meanwhile"
+		if body["message"] != want {
+			t.Fatal("refusal leaked details or omitted recovery guidance", w.Body)
+		}
+		if historical && refused != w.Body.String() {
+			t.Fatal("historical dependency state changed the public refusal", w.Body)
+		}
+		refused = w.Body.String()
 	}
-	h := Handler(&source{journals: []store.Journal{j}}, []store.QueueKey{j.Key}, "secret", nil)
-	r := httptest.NewRequest("GET", "/v1/queues/"+j.Key.Repository+"/"+j.Key.BaseBranch+"/events", nil)
-	r.Header.Set("Authorization", "Bearer secret")
+	h := Handler(&source{err: errors.New("private dependency provider detail")}, []store.QueueKey{key}, "", nil)
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
-	if w.Code != 503 || strings.Contains(w.Body.String(), `"events"`) || strings.Contains(w.Body.String(), "next_cursor") {
-		t.Fatal(w.Code, w.Body)
+	h.ServeHTTP(w, httptest.NewRequest("GET", eventsPath, nil))
+	if w.Code != 503 || !strings.Contains(w.Body.String(), `"error":"unavailable"`) || strings.Contains(w.Body.String(), "private") || strings.Contains(w.Body.String(), "event-history-withheld") {
+		t.Fatal("transient source failure confused with permanent refusal", w.Code, w.Body)
 	}
 }
 

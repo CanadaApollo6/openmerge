@@ -131,6 +131,9 @@ func (s *Store) journals(ctx context.Context, keys []QueueKey, warnings bool) ([
 			}
 			reader := sharedReader(ctx, tx, id, journal.Seed)
 			for i := range journal.Events {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				event := &journal.Events[i]
 				decoded, err := reader.Apply(uint64(event.ID), event.Payload)
 				if err != nil {
