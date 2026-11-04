@@ -53,9 +53,10 @@ Wait for that interval, then repeat the call.
 Each read has a 20-second client timeout. Redirects are refused. MCP rejects
 bodies over 256 KiB without truncation. The error names a smaller parameter
 value when the read has one and the request has not already selected it.
-`detail=summary` reduces a full report. `limit=1` reduces a decisions page.
-`events=1` reduces PR event history but leaves embedded queue entries unchanged.
-At the smallest parameter values, no narrower read exists for that request.
+`detail=summary` reduces a full report. `limit=1` bounds a decisions page, but
+one record can still exceed the limit. `events=1` reduces PR event history but
+leaves embedded queue entries unchanged. If the body stays over the limit at the
+smallest parameter values, no narrower read exists for that request.
 `openmerge queue status --json` returns the full queue body, up to the CLI's
 32 MiB limit. Use the API directly for other full read bodies. Stdout contains
 only MCP protocol. Startup diagnostics go to stderr.

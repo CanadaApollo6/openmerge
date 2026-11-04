@@ -177,6 +177,41 @@ func TestMCPSizeAdvicePerRead(t *testing.T) {
 	}
 }
 
+func TestMCPSizeAdviceSaysWhenARetryMayNotHelp(t *testing.T) {
+	mcpTestToken(t)
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"padding":"`+strings.Repeat("x", 256<<10)+`"}`)
+	}))
+	defer api.Close()
+	client := mcpTestClient(t, api.URL)
+	base := map[string]any{"owner": "o", "repo": "r", "base": "main"}
+	for name, extra := range map[string]map[string]any{"pr": {"n": 1}, "decisions": {"id": "chg"}} {
+		args := map[string]any{}
+		for key, value := range base {
+			args[key] = value
+		}
+		for key, value := range extra {
+			args[key] = value
+		}
+		text := mcpText(t, mcpCall(t, client, name, args))
+		if !strings.Contains(text, "if the body stays over the limit, no narrower read exists") {
+			t.Errorf("%s advice promises a retry will shrink the body: %.300s", name, text)
+		}
+	}
+}
+
+func TestMCPRejectsInvalidUTF8(t *testing.T) {
+	mcpTestToken(t)
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("{\"value\":\"\xff\"}"))
+	}))
+	defer api.Close()
+	result := mcpCall(t, mcpTestClient(t, api.URL), "queues", map[string]any{})
+	if !result.IsError || result.StructuredContent != nil {
+		t.Fatalf("invalid UTF-8 was returned as a result: %+v", result)
+	}
+}
+
 func TestMCPFutureDetailSizeAdvice(t *testing.T) {
 	read := status.Read{Name: "future_report", Parameters: []status.Parameter{
 		{Name: "detail", In: "query", Type: "string", Description: "One of summary or full. Defaults to summary."},

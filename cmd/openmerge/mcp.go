@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 
 	"github.com/CanadaApollo6/openmerge/internal/status"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -96,7 +97,7 @@ func newMCPServer(api, tokenFile string) *mcp.Server {
 					message += fmt.Sprintf("; MCP body limit is %d bytes; %s", mcpMaxResponse, mcpNarrowerRead(read, request.Params.Arguments))
 				}
 				result = mcpFailure(message)
-			} else if !json.Valid(response.body) {
+			} else if !utf8.Valid(response.body) || !json.Valid(response.body) {
 				result = mcpFailure("invalid, oversized or unsupported status API response")
 			} else {
 				result = &mcp.CallToolResult{
@@ -136,13 +137,13 @@ func mcpNarrowerRead(read status.Read, raw json.RawMessage) string {
 			var limit int64
 			_ = json.Unmarshal(arguments[parameter.Name], &limit)
 			if _, set := arguments[parameter.Name]; !set || limit > 1 {
-				return "retry with limit=1" + bulk
+				return "retry with limit=1, which bounds the page but not one record; if the body stays over the limit, no narrower read exists" + bulk
 			}
 		case "events":
 			var events int64
 			_ = json.Unmarshal(arguments[parameter.Name], &events)
 			if _, set := arguments[parameter.Name]; !set || events > 1 {
-				return "retry with events=1 to reduce event history only; queue entries remain unchanged" + bulk
+				return "retry with events=1, which reduces event history only; queue entries remain, so if the body stays over the limit, no narrower read exists" + bulk
 			}
 		}
 	}
