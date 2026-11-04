@@ -22,12 +22,17 @@ type chainLogFixture struct {
 	at     time.Time
 }
 
-func newChainLogFixture(t *testing.T) *chainLogFixture {
-	t.Helper()
+func newLogFixture() *chainLogFixture {
 	f := &chainLogFixture{w: &worker{}, at: time.Unix(1, 0).UTC()}
 	f.w.Key.Repository, f.w.Key.BaseBranch = repo.Path, "main"
 	f.w.logState = queue.State{BaseBranch: "main", BaseSHA: "base", Fence: "fence"}
 	f.s = &Server{options: Options{Logger: slog.New(slog.NewJSONHandler(&f.output, nil))}}
+	return f
+}
+
+func newChainLogFixture(t *testing.T) *chainLogFixture {
+	t.Helper()
+	f := newLogFixture()
 	for pr := 1; pr <= 3; pr++ {
 		f.apply(queue.PRObserved{PR: pr, HeadSHA: fmt.Sprint("head", pr), Eligible: true, Trusted: true})
 		f.apply(queue.EnqueueRequested{PR: pr, At: f.at})
@@ -134,6 +139,145 @@ func TestOperationalLogsChainFailedPredecessor(t *testing.T) {
 	f.want(t, "test ref built")
 }
 
+func TestOperationalLogsChainProvenanceAndTimeout(t *testing.T) {
+	f := newChainLogFixture(t)
+	f.output.Reset()
+	provenance := queue.CheckProvenanceObserved{BatchID: "b2", TestedSHA: "tested2", Checks: []queue.UnboundCheck{{Name: "ci", Source: "app:ci", HeadBranch: "wrong-branch"}}}
+	f.apply(provenance)
+	f.apply(provenance)
+	f.apply(queue.BatchFailed{BatchID: "b2", Reason: queue.ChecksTimeout})
+	f.apply(queue.BatchFailed{BatchID: "b2", Reason: queue.ChecksTimeout})
+	f.want(t, "check provenance", "b2/2/tested2/unbound-check-provenance", "b2/3/tested2/unbound-check-provenance")
+	f.want(t, "batch failed", "b2/2/tested2/checks-timeout", "b2/3/tested2/checks-timeout")
+	for _, row := range logRows(t, &f.output) {
+		if !strings.Contains(row["detail"].(string), "wrong-branch") || !strings.Contains(row["detail"].(string), "openmerge/queue/main/b2") {
+			t.Errorf("missing batch provenance: %v", row)
+		}
+	}
+	f.apply(queue.CheckProvenanceObserved{BatchID: "b2", TestedSHA: "tested2"})
+	f.want(t, "check provenance", "b2/2/tested2/unbound-check-provenance", "b2/3/tested2/unbound-check-provenance", "b2/2/tested2/", "b2/3/tested2/")
+}
+
+func TestOperationalLogsChainAbandonments(t *testing.T) {
+	for _, reason := range []string{"base-moved", "config-changed", "predecessor-abandoned"} {
+		t.Run(reason, func(t *testing.T) {
+			f := newChainLogFixture(t)
+			f.output.Reset()
+			switch reason {
+			case "base-moved":
+				f.apply(queue.BaseMoved{SHA: "outside"})
+			case "config-changed":
+				f.apply(queue.ConfigApplied{Commit: "commit", Digest: strings.Repeat("a", 64)})
+			case "predecessor-abandoned":
+				f.apply(queue.LandingStarted{BatchID: "b1", AttemptID: "attempt", FenceToken: "fence", At: f.at})
+				f.apply(queue.LandingAbandoned{BatchID: "b1", NewFence: "next"})
+				f.apply(queue.LandingAbandoned{BatchID: "b1", NewFence: "next"})
+			}
+			ids := []string{"b1", "b2"}
+			want := []string{"b1/1/tested1/" + reason}
+			if reason == "predecessor-abandoned" {
+				ids = []string{"b2"}
+				want = []string{"b1/1/tested1/fenced"}
+			}
+			f.apply(queue.BatchesInvalidated{BatchIDs: ids, Reason: reason})
+			f.apply(queue.BatchesInvalidated{BatchIDs: ids, Reason: reason})
+			f.want(t, "abandoned", append(want, "b2/2/tested2/"+reason, "b2/3/tested2/"+reason)...)
+		})
+	}
+}
+
+func TestOperationalLogsChainBuildFailures(t *testing.T) {
+	for _, kind := range []string{"conflict", "infrastructure", "fast-forward", "merge-commits"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newChainLogFixture(t)
+			f.apply(queue.PRObserved{PR: 4, HeadSHA: "head4", Eligible: true, Trusted: true})
+			f.apply(queue.EnqueueRequested{PR: 4, At: f.at})
+			f.apply(queue.ChainedBatchStarted{BatchID: "b3", BaseSHA: "tested2", PRs: []queue.BatchPR{{PR: 4, HeadSHA: "head4"}}, ParentBatchID: "b2", Position: 3, At: f.at})
+			f.output.Reset()
+			var event queue.Event = queue.TestRefBuildFailed{BatchID: "b3", Conflict: kind == "conflict", At: f.at}
+			message, reason := "test ref build failed", ""
+			if kind == "fast-forward" || kind == "merge-commits" {
+				f.apply(queue.FastForwardBatchSelected{BatchID: "b3", PRs: f.w.logState.Batch("b3").PRs})
+				message = "fast-forward blocked"
+				if kind == "fast-forward" {
+					event = queue.FastForwardBlocked{BatchID: "b3"}
+					reason = "fast-forward-required"
+				} else {
+					event = queue.FastForwardMergeCommitsBlocked{BatchID: "b3", PR: 4}
+					reason = string(queue.MergeCommitsNotAllowed)
+				}
+			}
+			f.apply(event)
+			f.apply(event)
+			f.want(t, message, "b3/4//"+reason)
+		})
+	}
+}
+
+func TestOperationalLogsChainFailureReopens(t *testing.T) {
+	f := newChainLogFixture(t)
+	f.output.Reset()
+	f.observe("b2", true, false, 1)
+	f.observe("b1", true, false, 1)
+	f.observe("b2", true, false, 1)
+	f.observe("b2", false, false, 2)
+	f.observe("b1", true, false, 1)
+	f.observe("b2", true, true, 2)
+	f.want(t, "checks result", "b2/2/tested2/false", "b2/3/tested2/false", "b1/1/tested1/false",
+		"b2/2/tested2/pending", "b2/3/tested2/pending", "b2/2/tested2/true", "b2/3/tested2/true")
+}
+
+func TestOperationalLogsRepeatedFailureAfterPending(t *testing.T) {
+	for _, chained := range []bool{false, true} {
+		t.Run(fmt.Sprint("chained=", chained), func(t *testing.T) {
+			f := newLogFixture()
+			if chained {
+				f = newChainLogFixture(t)
+			} else {
+				f.apply(queue.PRObserved{PR: 1, HeadSHA: "head1", Eligible: true, Trusted: true})
+				f.apply(queue.EnqueueRequested{PR: 1, At: f.at})
+				f.apply(queue.BatchStarted{BatchID: "b1", BaseSHA: "base", PRs: []queue.BatchPR{{PR: 1, HeadSHA: "head1"}}, At: f.at})
+				f.apply(queue.TestRefBuilt{BatchID: "b1", TestedSHA: "tested1", Method: queue.Merge, At: f.at})
+			}
+			f.output.Reset()
+			if chained {
+				f.observe("b1", true, false, 1)
+				f.apply(queue.ChecksObserved{BatchID: "b1", TestedSHA: "tested1"})
+				f.observe("b1", true, false, 1)
+			} else {
+				f.apply(queue.ChecksCompleted{TestedSHA: "tested1", Success: false})
+				f.apply(queue.ChecksReopened{TestedSHA: "tested1", At: f.at})
+				f.apply(queue.ChecksCompleted{TestedSHA: "tested1", Success: false})
+			}
+			f.want(t, "checks result", "b1/1/tested1/false", "b1/1/tested1/pending", "b1/1/tested1/false")
+		})
+	}
+}
+
+func TestOperationalLogsChainIgnoreStaleEvents(t *testing.T) {
+	f := newChainLogFixture(t)
+	f.output.Reset()
+	for _, event := range []queue.Event{
+		queue.ChainedTestRefBuilt{BatchID: "b2", TestedSHA: "tested2", LandingSHA: "tested2", ParentBatchID: "b1", Position: 2, Method: queue.Merge, At: f.at},
+		queue.TestRefBuilt{BatchID: "b1", TestedSHA: "tested1", Method: queue.Merge, At: f.at},
+		queue.ChecksObserved{BatchID: "b2", TestedSHA: "wrong", Terminal: true, Success: true},
+		queue.ChecksObserved{BatchID: "b2", TestedSHA: "tested2", Terminal: true, Success: true, Timeout: time.Hour, OriginalDeadline: f.at},
+		queue.CheckProvenanceObserved{BatchID: "b2", TestedSHA: "wrong", Checks: []queue.UnboundCheck{{Name: "ci"}}},
+		queue.BatchFailed{BatchID: "b2", Reason: queue.ChecksFailed},
+		queue.ChecksFailureConfirmed{BatchID: "b2", TestedSHA: "tested2", Reason: queue.ChecksFailed},
+		queue.LandingStarted{BatchID: "b2", AttemptID: "wrong", FenceToken: "fence", At: f.at},
+		queue.Landed{BatchID: "b1", NewBaseSHA: "tested1", NewFence: "next"},
+		queue.LandingAbandoned{BatchID: "b1", NewFence: "next"},
+		queue.TestRefBuildFailed{BatchID: "b2", Conflict: true, At: f.at},
+		queue.BatchesInvalidated{BatchIDs: []string{"b2"}, Reason: "predecessor-failed"},
+	} {
+		f.apply(event)
+	}
+	if f.output.Len() != 0 {
+		t.Fatalf("ignored events produced logs: %s", &f.output)
+	}
+}
+
 func logRows(t *testing.T, output *bytes.Buffer) []map[string]any {
 	t.Helper()
 	var rows []map[string]any
@@ -181,6 +325,59 @@ func TestOperationalLogsCommittedLanding(t *testing.T) {
 	if output.String() != before {
 		t.Fatalf("unchanged reconciliation duplicated INFO logs: %s", &output)
 	}
+}
+
+func TestOperationalLogsCommittedChain(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		s, w, f, _ := fixture(t, repositoryConfig+"    speculation:\n      max_depth: 4\n")
+		var output bytes.Buffer
+		s.options.Logger = slog.New(slog.NewJSONHandler(&output, nil))
+		base, err := f.ReadRef(t.Context(), repo, "main")
+		must(t, err)
+		_, err = f.OpenPR(repo, 2, base, true)
+		must(t, err)
+		for _, pr := range []int{1, 2} {
+			f.AddComment(repo, pr, "writer", "@openmerge queue")
+		}
+		must(t, s.cycle(t.Context(), w))
+		state, _, err := s.store.Load(t.Context(), w.id)
+		must(t, err)
+		if len(state.Batches()) != 2 {
+			t.Fatalf("expected two speculative batches, got %+v", state.Batches())
+		}
+		for i, batch := range state.Batches() {
+			f.SetCheckRuns(repo, batch.TestedSHA, []forge.CheckRun{{ID: uint64(i + 1), Name: "ci", State: forge.Success, HeadBranch: batch.TestRef}})
+		}
+		time.Sleep(2 * time.Millisecond)
+		must(t, s.cycle(t.Context(), w))
+		landed, _, err := s.store.Load(t.Context(), w.id)
+		must(t, err)
+		if len(landed.Entries) != 0 || landed.Active != nil {
+			t.Fatalf("chain did not land: %+v", landed.Batches())
+		}
+		for i, batch := range state.Batches() {
+			for _, message := range []string{"test ref built", "checks result", "landing started", "landed"} {
+				count := 0
+				for _, row := range logRows(t, &output) {
+					if row["msg"] == message && row["batch"] == batch.ID && (message != "checks result" || row["success"] == true) {
+						count++
+						if row["pr"] != float64(i+1) || row["sha"] != batch.TestedSHA {
+							t.Errorf("wrong batch context: %v", row)
+						}
+					}
+				}
+				if count != 1 {
+					t.Errorf("batch %s %q records = %d, want 1; output=%s", batch.ID, message, count, &output)
+				}
+			}
+		}
+		before := output.String()
+		s.logCommitted(t.Context(), w)
+		must(t, s.cycle(t.Context(), w))
+		if output.String() != before {
+			t.Fatalf("unchanged chain reconciliation duplicated logs: %s", &output)
+		}
+	})
 }
 
 func TestOperationalLogsIgnoreStaleRulesEvents(t *testing.T) {

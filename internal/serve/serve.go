@@ -154,7 +154,7 @@ type worker struct {
 	deferred                []string
 	logState                queue.State
 	logWatermark            int64
-	logChecks               string
+	logChecks               map[string]string
 	ledgerCache             *ledgerCache
 	rulesNextCheck          time.Time
 	rulesFailures           int
