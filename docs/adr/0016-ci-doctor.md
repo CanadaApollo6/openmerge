@@ -152,6 +152,14 @@ the OpenMerge configuration file. The App already reads configuration this way.
 The reader refuses any other path. A file it cannot read produces a
 `dependency-graph` gap. CI doctor still reads no logs and no artifacts.
 
+### Serving correction (2026-11-04)
+
+The rollout's "Status API and dashboard surface" slice is split, and agents come
+first. [ADR 0017](0017-agent-first-reads.md) decides how the report is served to
+agents. The dashboard is a later slice with its own approval. A live report on
+OpenMerge's repository took 109 seconds and 500 GitHub requests, so the API
+serves snapshots computed in the background, not a live read per request.
+
 ## Consequences
 
 Users get specific, checkable advice on their own workflows, which saves CI
