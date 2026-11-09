@@ -3,6 +3,15 @@
 - **Status:** Accepted
 - **Date:** 2026-10-28
 
+**Dated amendment, 2026-11-09 (owner decision):** the owner cancelled ADR 0009
+period B on 2026-10-31, with the queue idle and drained, so no period-B drain
+can be recorded. The owner retires that gate for this ADR: implementation and
+experiments may start. The [dogfood log](../research/phase2-dogfood.md#log)
+unsealed the period A figures on the same date. Each slice keeps its deploy
+class, a Hold slice still needs its own owner approval, and the provider
+permissions for compute resale are still required. The original text remains
+as history.
+
 ## Context
 
 The owner's product direction, recorded on 2026-10-28, is an open-source,

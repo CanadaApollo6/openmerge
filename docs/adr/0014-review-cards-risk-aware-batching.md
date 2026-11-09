@@ -3,6 +3,14 @@
 - **Status:** Accepted
 - **Date:** 2026-10-31
 
+**Dated amendment, 2026-11-09 (owner decision):** the owner cancelled ADR 0009
+period B on 2026-10-31, with the queue idle and drained, so no period-B drain
+can be recorded. The owner retires that gate for this ADR: implementation may
+start, and no sealed period-B measurement remains to protect. Each slice keeps
+its deploy class, and a Hold slice still needs its own owner approval. The
+[operating gates](../operating.md) still apply. The original text remains as
+history.
+
 ## Context
 
 OpenMerge aims to reduce CI minutes and elapsed CI time, batch and merge PRs

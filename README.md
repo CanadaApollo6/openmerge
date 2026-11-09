@@ -6,7 +6,7 @@
 
 Agents now open pull requests faster than CI and humans can land them. The merge path — queuing, batching, speculative testing, flaky-test handling, and the rules around them — has become the bottleneck, and the best tools for it are closed, paywalled, or tied to a single forge. OpenMerge brings the ideas that Mergify popularized to everyone, under the Apache 2.0 license.
 
-> **Status: pre-alpha.** Phase 1 is complete, and OpenMerge lands its own PRs: the planner, Postgres store, GitHub App driver, polling server, read-only API/CLI, and Compose quickstart are available. All core conditions have runtime observations, with classic protection and installed App grant checks alongside ruleset validation. The version-1 JSON Schema and fast-forward mode are available. Phase 2.1 adds multi-base workers, App-wide installation discovery, and webhook health with backstop polling; throughput and post-merge verification follow. See the [roadmap](ROADMAP.md).
+> **Status: pre-alpha.** OpenMerge lands its own PRs. In a 14-day trial at speculation depth 4 it landed 131 changes, and daily audits of 129 of them found no violation ([log](docs/research/phase2-dogfood.md#log)). Built: the strict queue with batching and bisection, speculative chains with an adaptive window (`max_depth` defaults to 1), adaptive batch sizing, bounded check retries, optional CI cancellation, multi-repository serving with webhooks and backstop polling, and a read-only status API, CLI, and MCP server. The [savings report](docs/savings-report.md) and [CI doctor](docs/ci-doctor.md) show where queue CI time goes. Not built yet: priorities, freezes, check timeouts, a dashboard, post-merge verification, and any forge other than GitHub. See the [roadmap](ROADMAP.md).
 
 ## What it will do
 
@@ -23,6 +23,8 @@ Agents now open pull requests faster than CI and humans can land them. The merge
 - [Roadmap](ROADMAP.md): principles, architecture, phases, and decisions
 - [Operating guide](docs/operating.md): deployment, recovery, and queue CI provenance
 - [Queue-only full CI](docs/guides/queue-only-ci.md): light PR suites, full suites only on queue refs
+- [Agent guide](docs/agents.md) and [API v1](docs/api.md): MCP setup, CLI JSON reads, and the status API contract
+- [CI savings report](docs/savings-report.md) and [CI doctor](docs/ci-doctor.md): what the queue saved, and where queue CI time goes
 - [Architecture decisions](docs/adr/README.md): the ADRs behind the design
 - [Research](docs/research/README.md): how Mergify works, and the wider merge-queue landscape
 
