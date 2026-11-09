@@ -10,6 +10,13 @@ cards as the flagship opt-in AI feature, superseding only this ADR's
 text remains as history; all other AI, hosting and rollout constraints remain.
 This note activates nothing; ADR 0012 remains Accepted for its other decisions.
 
+**Dated amendment, 2026-11-09 (owner decisions):** the owner cancelled ADR 0009 period B on
+2026-10-31, so the period-B drain that this ADR waits for can never be recorded. That gate is
+retired and implementation may start. The same decisions allow a hand-run concierge alpha before
+slices 3 to 5, allow a pilot fee, and settle the control-plane licence. See
+[Owner decisions (2026-11-09)](#owner-decisions-2026-11-09). The original text remains as history,
+and every other gate in the rollout plan still applies.
+
 ## Context
 
 OpenMerge becomes a product with hosted and self-hosted editions. The owner keeps the merge engine
@@ -881,3 +888,54 @@ compatibility and prices during qualification. Resource sizes, recovery targets,
 and proposed polling bounds remain engineering assumptions until rollout evidence exists. The owner
 decisions above settle runtime, ownership, initial scope and upgrade cadence; acceptance does not
 waive the ADR 0009 period-B drain or any implementation/activation gate.
+
+### Owner decisions (2026-11-09)
+
+Riel St. Amand (`CanadaApollo6`) made these decisions on 2026-11-09. They amend the rollout plan
+above without rewriting it. This record is **Inert, docs only**. It deploys nothing.
+
+1. **The period-B gate is retired.** The owner stopped the ADR 0009 experiment on 2026-10-31 and
+   cancelled period B. The [dogfood log](../research/phase2-dogfood.md#log) records that the queue
+   was idle and drained at the stop, with 0 entries and no active batch. No period-B drain can
+   follow, so implementation of the slices above may start. Each slice keeps its class and its
+   exit evidence. A Hold slice still needs its own owner approval before deployment or activation.
+
+2. **A concierge alpha comes before the control plane.** The owner may run OpenMerge by hand for
+   at most three design partners before slices 3 to 5 exist. The model is the separate
+   Smart-Data-Ohio instance that already runs beside the dogfood server. More than three partners
+   needs a new decision. The concierge alpha keeps these rules:
+
+   - Each partner gets one engine process, one dedicated Postgres database, and one Git cache.
+     Partners never share a database. The dedicated-database guard above is unchanged.
+   - Each partner uses a GitHub App that its own organization owns, created with
+     `openmerge setup github --owner ORG` and installed on selected repositories only. No shared
+     regional App exists yet.
+   - Every binary upgrade of a partner instance follows
+     [Deploying outside a trial](../operating.md#deploying-outside-a-trial): a backup and a
+     passing replay of that partner's journal. The owner's own instances upgrade first
+     (decision 11 above).
+   - The partner hears in writing, before installation, that the service is pre-alpha, that one
+     person operates it with no backup person, where its App key is stored, and that no
+     recovery-time promise exists (decision 4 above).
+
+   **Accepted risk.** A partner's App private key and webhook secret are files on the serving
+   host, readable by the service user. The sign-only key vault and the credential broker in
+   [Hold the hosted App key outside public product services](#hold-the-hosted-app-key-outside-public-product-services)
+   do not exist yet. The owner accepts that risk for the concierge alpha only. Each key reaches
+   one partner's selected repositories, and the partner can revoke it by uninstalling or deleting
+   its App. The shared-App hosted alpha (slice 5) and the external paid beta (slice 7) still
+   require slices 3 and 4 and every gate listed for them. Concierge operation is not evidence for
+   those slices, although its measured costs may inform decision 9.
+
+3. **Concierge partners may pay a pilot fee.** The owner agrees a flat fee with each partner. A
+   pilot fee is not a published price. Decision 9 above still requires measured cost floors and a
+   30-day bill before the hosted service sets prices. The fee buys no SLA and no recovery promise.
+
+4. **The control plane is closed source.** Accounts, organizations, subscriptions, billing,
+   onboarding, provisioning, and hosted AI metering live in a separate private repository. The Go
+   engine stays Apache-2.0, as [ADR 0013's owner decision 1](0013-ci-cost-executors.md) records.
+   This settles the question that decision 8 above left open: OpenMerge is open-core, and the
+   boundary is the control plane.
+   [Preserve self-hosted parity without Cloudflare dependencies](#preserve-self-hosted-parity-without-cloudflare-dependencies)
+   still applies. The dashboard that reads `/v1` ships with the self-hosted packaging, and no
+   engine safety feature becomes hosted-only.

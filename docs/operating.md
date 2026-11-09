@@ -900,6 +900,30 @@ For an environment-only change or a routine restart, use
 `systemctl --user restart openmerge.service`; systemd rereads the EnvironmentFile.
 Do not run another process against the same git cache during replacement.
 
+## Deploying outside a trial
+
+No trial is running. The owner stopped the ADR 0009 experiment on 2026-10-31
+([log](research/phase2-dogfood.md#log)). Until the owner pre-registers another
+trial, deploy to a live server by these rules (owner decision, 2026-11-09):
+
+- Follow steps 1 to 6 of [Deploying mid-trial](#deploying-mid-trial): the
+  backup, the export, replay gates 2 and 4, the watermark re-check, the install,
+  and the log inspection. A failed gate stops the deploy.
+- Write a deploy record in [`research/deploys/`](research/deploys/) with the
+  old and new commits, the deployed range, the replay result, and the rollback
+  path. Add one line to the [dogfood log](research/phase2-dogfood.md#log).
+- Skip the materiality verdict and the per-PR complementary evidence. Both
+  protect a comparison between trial periods, and no comparison is running.
+- Get owner approval before you deploy or activate a Hold change. Hold keeps
+  that meaning outside a trial.
+
+A change that cannot affect what lands needs no evidence document in
+`docs/research/`. Its tests and its review are its evidence. That covers the
+`openmerge report` commands, read-only status API and MCP reads, the simulator
+and the CI efficiency lab, release tooling, docs, and the hosted control plane.
+A change to planning, landing, check observation, the store, event types,
+snapshots, or migrations still records evidence as before.
+
 ## Deploying mid-trial
 
 Follow [ADR 0007's trial deployment gates](adr/0007-changes-not-prs.md#trial-deployment)
