@@ -106,8 +106,13 @@ jobs:
           OPENMERGE_REPOS: owner/repository
           OPENMERGE_GITHUB_PRIVATE_KEY_PATH: /tmp/openmerge-ci-placeholder.pem
           OPENMERGE_API_TOKEN: ci-placeholder-token
-      - run: docker build --tag openmerge:ci .
+      - run: docker build --build-arg REVISION="$GITHUB_SHA" --tag openmerge:ci .
       - run: docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version'
+      # The image has no .git, so the commit must come from the build argument.
+      - run: |
+          docker run --rm openmerge:ci version | tee "$RUNNER_TEMP/version.txt"
+          grep -Fx "commit: $GITHUB_SHA" "$RUNNER_TEMP/version.txt"
+          grep -Fx "attestable: true" "$RUNNER_TEMP/version.txt"
 
   # The required check. It keeps the name `check` that branch protection and
   # .openmerge.yml require, and passes only when every job it needs succeeded:

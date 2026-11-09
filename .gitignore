@@ -2,3 +2,4 @@
 /.openmerge-cache/
 /deploy/.env
 __pycache__/
+dist/
