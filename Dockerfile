@@ -4,9 +4,17 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /openmerge ./cmd/openmerge
+# .dockerignore drops .git, so Go cannot stamp the commit itself. Pass
+# REVISION only when the build context is a clean checkout of that commit:
+# the binary attests to whatever revision it is given.
+ARG REVISION=
+RUN CGO_ENABLED=0 go build -trimpath \
+    -ldflags="-s -w -X main.version=${VERSION} -X github.com/CanadaApollo6/openmerge/internal/authority.BuildRevision=${REVISION}" \
+    -o /openmerge ./cmd/openmerge
 
 FROM debian:bookworm-slim
+LABEL org.opencontainers.image.source="https://github.com/CanadaApollo6/openmerge" \
+      org.opencontainers.image.licenses="Apache-2.0"
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 1000 openmerge \

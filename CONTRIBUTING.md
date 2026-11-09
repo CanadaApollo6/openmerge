@@ -100,6 +100,25 @@ We chose the DCO over a CLA deliberately: contributors keep their copyright, and
 
 OpenMerge is built for a world of coding agents, and agent-written contributions are welcome under the same rules as any other: a human signs off, and that human is responsible for the change. Review your agent's diff before opening the PR, and say in the description which parts were generated. Do not submit changes you have not read.
 
+## Cut a release
+
+A maintainer releases by pushing a tag. [`release.yml`](.github/workflows/release.yml) builds and publishes from the tagged commit.
+
+1. Choose a commit on `main` whose CI passed.
+2. Tag the commit and push the tag:
+
+   ```bash
+   git tag -a v0.1.0 COMMIT -m "OpenMerge v0.1.0"
+   git push origin v0.1.0
+   ```
+
+3. Wait for the Release workflow. It creates a GitHub release with one archive for each of Linux and macOS on amd64 and arm64, plus `checksums.txt`. It also pushes `ghcr.io/canadaapollo6/openmerge:v0.1.0` for amd64 and arm64.
+4. Download one archive and run `openmerge version`. The output names the tag and the tagged commit.
+
+A tag that contains a hyphen, such as `v0.2.0-rc.1`, becomes a prerelease. To test the archives without publishing, run `sh scripts/build-release.sh v0.0.0-test /tmp/openmerge-dist` from a clean checkout.
+
+GitHub creates the container package as private on the first push. Make the package public once, in its package settings.
+
 ## License
 
 By contributing, you agree that your contributions are licensed under the [Apache License 2.0](LICENSE).

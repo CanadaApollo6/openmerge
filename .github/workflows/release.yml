@@ -1,0 +1,122 @@
+name: Release
+
+# A pushed v* tag publishes release archives and a container image. Pull
+# requests that touch the release tooling build the archives without
+# publishing, so a broken release script fails before a tag exists.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - scripts/build-release.sh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  archives:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build archives
+        env:
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'v0.0.0-pr' }}
+        run: sh scripts/build-release.sh "$VERSION" dist
+      - name: Check the linux/amd64 binary
+        env:
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'v0.0.0-pr' }}
+        run: |
+          (cd dist && sha256sum --check checksums.txt)
+          tar -C dist -xzf "dist/openmerge_${VERSION#v}_linux_amd64.tar.gz"
+          "dist/openmerge_${VERSION#v}_linux_amd64/openmerge" version | tee version.txt
+          grep -Fx "openmerge $VERSION" version.txt
+          grep -Fx "commit: $(git rev-parse HEAD)" version.txt
+          grep -Fx "attestable: true" version.txt
+
+  # Publishing jobs run for tags only. Each rebuilds from the tagged commit
+  # instead of taking files from the job above, so only these jobs hold a
+  # token that can write.
+  publish-archives:
+    if: github.ref_type == 'tag'
+    needs: archives
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: sh scripts/build-release.sh "$GITHUB_REF_NAME" dist
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=
+          case $GITHUB_REF_NAME in *-*) prerelease=--prerelease ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/openmerge_*.tar.gz dist/checksums.txt \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes $prerelease
+
+  image:
+    if: github.ref_type == 'tag'
+    needs: archives
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build and push the ${{ matrix.arch }} image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          image="ghcr.io/$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker build --build-arg VERSION="$GITHUB_REF_NAME" --build-arg REVISION="$GITHUB_SHA" \
+            --tag "$image:$GITHUB_REF_NAME-$ARCH" .
+          docker run --rm "$image:$GITHUB_REF_NAME-$ARCH" version | tee version.txt
+          grep -Fx "openmerge $GITHUB_REF_NAME" version.txt
+          grep -Fx "commit: $GITHUB_SHA" version.txt
+          docker push "$image:$GITHUB_REF_NAME-$ARCH"
+
+  image-manifest:
+    if: github.ref_type == 'tag'
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Publish the multi-architecture tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          image="ghcr.io/$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker buildx imagetools create --tag "$image:$GITHUB_REF_NAME" \
+            "$image:$GITHUB_REF_NAME-amd64" "$image:$GITHUB_REF_NAME-arm64"
