@@ -28,6 +28,26 @@ Agents now open pull requests faster than CI and humans can land them. The merge
 - [Architecture decisions](docs/adr/README.md): the ADRs behind the design
 - [Research](docs/research/README.md): how Mergify works, and the wider merge-queue landscape
 
+## Install
+
+Download an archive for Linux or macOS from the [releases page](https://github.com/CanadaApollo6/openmerge/releases). Each archive holds one `openmerge` binary.
+
+```bash
+curl -fsSLO https://github.com/CanadaApollo6/openmerge/releases/download/v0.1.0/openmerge_0.1.0_linux_amd64.tar.gz
+curl -fsSLO https://github.com/CanadaApollo6/openmerge/releases/download/v0.1.0/checksums.txt
+sha256sum --check --ignore-missing checksums.txt
+tar -xzf openmerge_0.1.0_linux_amd64.tar.gz
+./openmerge_0.1.0_linux_amd64/openmerge version
+```
+
+`openmerge version` prints the release tag and the commit that the binary was built from. Each release also publishes a container image for amd64 and arm64:
+
+```bash
+docker run --rm ghcr.io/canadaapollo6/openmerge:v0.1.0 version
+```
+
+To build from source, run `make build`, which produces `bin/openmerge`. The commands in this README use that path. If you installed a release, use the path of your binary instead.
+
 ## Try the simulator
 
 The simulator runs the real planner and executor against an in-memory forge on a virtual clock, and checks after every step that main only ever contains tested, passing commits.
