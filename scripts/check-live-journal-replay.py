@@ -46,6 +46,10 @@ type replayQueue struct {
  ID int64
  Base string
  InitialFence string `json:"initial_fence"`
+ // Set for a queue whose policy comes from a --policy-repo clone. Unset
+ // queues use the top-level Live and DefaultBranch.
+ PolicyLive *string `json:"policy_live"`
+ PolicyDefaultBranch string `json:"policy_default_branch"`
 }
 type replayEvent struct {
  ID int64
@@ -132,9 +136,10 @@ func TestLiveJournalReplayProbe(t *testing.T) {
  emit:=func(v any) {if err:=enc.Encode(v); err!=nil {t.Fatal(err)}}
  states:=map[int64]queue.State{}
  workers:=map[int64]*worker{}
- selectPolicy:=func(content,base string) (config.Queue,string) {
+ defaultBranches:=map[int64]string{}
+ selectPolicy:=func(content,base,defaultBranch string) (config.Queue,string) {
   cfg,_,err:=config.Load([]byte(content)); if err!=nil {t.Fatal(err)}
-  selected,diagnostics:=cfg.ResolveBranch(base,in.DefaultBranch)
+  selected,diagnostics:=cfg.ResolveBranch(base,defaultBranch)
   if len(diagnostics)!=0 {t.Fatal(diagnostics)}
   cleanup:=in.DeleteHead
   if cfg.DeleteHeadBranch!=nil {cleanup=*cfg.DeleteHeadBranch}
@@ -177,6 +182,8 @@ func TestLiveJournalReplayProbe(t *testing.T) {
  for _,q:=range in.Queues {
   if q.Base=="" {t.Fatalf("queue %d: missing base",q.ID)}
   states[q.ID]=queue.State{BaseBranch:q.Base,Fence:q.InitialFence}
+  defaultBranches[q.ID]=in.DefaultBranch
+  if q.PolicyDefaultBranch!="" {defaultBranches[q.ID]=q.PolicyDefaultBranch}
   workers[q.ID]=&worker{}
  }
  for _,e:=range in.Events {
@@ -184,7 +191,7 @@ func TestLiveJournalReplayProbe(t *testing.T) {
   state:=states[e.QueueID]
   w:=workers[e.QueueID]
   event,err:=queue.DecodeEvent(e.Payload); if err!=nil {t.Fatalf("event %d: %v",e.ID,err)}
-  selected,digest:=selectPolicy(in.Policies[e.Policy],state.BaseBranch)
+  selected,digest:=selectPolicy(in.Policies[e.Policy],state.BaseBranch,defaultBranches[e.QueueID])
   // Historical digests bind the policy, including the cleanup default. Legacy
   // rows before ConfigApplied use the config at their BaseMoved commit, but
   // retain the empty planner digest just as pre-policy journals did.
@@ -200,7 +207,8 @@ func TestLiveJournalReplayProbe(t *testing.T) {
  horizon:=in.Events[0].RecordedAt; for _,e:=range in.Events {if e.RecordedAt.After(horizon) {horizon=e.RecordedAt}}
  for _,q:=range in.Queues {
   state:=states[q.ID]
-  selected,digest:=selectPolicy(in.Live,q.Base)
+  live:=in.Live; if q.PolicyLive!=nil {live=*q.PolicyLive}
+  selected,digest:=selectPolicy(live,q.Base,defaultBranches[q.ID])
   w:=workers[q.ID]; w.cfg=selected; w.configDigest=state.ConfigDigest
   lastID:=int64(0); for _,e:=range in.Events {if e.QueueID==q.ID {lastID=e.ID}}
   checkpoint(state,w.plannerConfig(time.Duration(in.PollSeconds)*time.Second),replayEvent{ID:lastID,QueueID:q.ID,RecordedAt:horizon},true)
@@ -222,13 +230,43 @@ def rows(path):
         return [json.loads(line) for line in source]
 
 
-def config_at(commit, path=None):
+def config_at(root, commit, path=None):
     # ls-tree distinguishes an absent blob from missing local history. Never fetch.
     paths = [path] if path else CONFIG_PATHS
-    present = git(ROOT, "ls-tree", "--name-only", commit, "--", *paths).splitlines()
+    # The caller reports a missing commit, so Git's own message is not needed.
+    present = subprocess.check_output(["git", "-C", str(root), "ls-tree", "--name-only", commit, "--", *paths],
+                                      text=True, stderr=subprocess.DEVNULL).splitlines()
     if len(present) != 1:
-        raise ValueError(f"{commit}: expected one config among {paths}, found {present}")
-    return subprocess.check_output(["git", "-C", str(ROOT), "show", f"{commit}:{present[0]}"], text=True)
+        raise ValueError(f"{root} at {commit}: expected one config among {paths}, found {present}")
+    return subprocess.check_output(["git", "-C", str(root), "show", f"{commit}:{present[0]}"], text=True)
+
+
+def policy_sources(values):
+    """Map each --policy-repo OWNER/NAME=PATH to a local clone of that repository.
+
+    The server reads queue policy from the served repository's default branch.
+    A journal from another repository therefore names commits that the
+    OpenMerge checkout does not have. The clone must have its default branch
+    checked out: HEAD supplies the live policy, and the branch name is the
+    default branch. Repository names compare case-insensitively, as on GitHub.
+    """
+    sources = {}
+    for value in values or []:
+        name, separator, path = value.partition("=")
+        if not separator or not path or name.count("/") != 1 or "" in name.split("/"):
+            raise ValueError(f"--policy-repo {value}: expected OWNER/NAME=PATH")
+        if name.lower() in sources:
+            raise ValueError(f"--policy-repo {name}: given more than once")
+        root = Path(path).resolve()
+        try:
+            commit, branch = (subprocess.check_output(["git", "-C", str(root), *command], text=True,
+                                                      stderr=subprocess.DEVNULL).strip()
+                              for command in (("rev-parse", "HEAD"), ("symbolic-ref", "--short", "HEAD")))
+        except (subprocess.CalledProcessError, OSError):
+            raise ValueError(f"--policy-repo {name}: {root} must be a clone with its default branch checked out") from None
+        sources[name.lower()] = dict(repository=name, path=str(root), commit=commit, default_branch=branch,
+                                     config_sha256=None, queue_ids=[])
+    return sources
 
 
 def prepare(args):
@@ -238,6 +276,20 @@ def prepare(args):
     ids = [q["id"] for q in queues]
     if len(set(ids)) != len(ids):
         raise ValueError("duplicate queue id")
+    sources = policy_sources(getattr(args, "policy_repo", None))
+    roots = {}
+    for q in queues:
+        source = sources.get(str(q.get("repository", "")).lower())
+        roots[q["id"]] = Path(source["path"]) if source else ROOT
+        if source:
+            live = config_at(source["path"], source["commit"])
+            source["config_sha256"] = hashlib.sha256(live.encode()).hexdigest()
+            source["queue_ids"].append(q["id"])
+            q["policy_live"] = live
+            q["policy_default_branch"] = source["default_branch"]
+    unused = [source["repository"] for source in sources.values() if not source["queue_ids"]]
+    if unused:
+        raise ValueError(f"--policy-repo {unused}: no queue in the export has this repository")
     previous = 0
     active = {}
     policies = {}
@@ -265,11 +317,18 @@ def prepare(args):
                 raise ValueError(f"event {e['id']}: no historical policy; missing BaseMoved/ConfigApplied")
         else:
             commit = active[qid]
+        # One commit ID names one tree, so a commit that two repositories
+        # share (a fork) has the same policy in both.
         if commit not in policies:
-            policies[commit] = config_at(commit)
+            try:
+                policies[commit] = config_at(roots[qid], commit)
+            except subprocess.CalledProcessError:
+                raise ValueError(f"event {e['id']}: policy commit {commit} of queue {qid} is not in {roots[qid]}; "
+                                 "pass --policy-repo OWNER/NAME=CLONE for that queue's repository") from None
         e["Policy"] = commit
     return dict(Queues=sorted(queues, key=lambda q: q["id"]), Events=events,
-                Policies=policies, Live=config_at("HEAD", args.config_file),
+                PolicySources=sorted(sources.values(), key=lambda source: source["repository"].lower()),
+                Policies=policies, Live=config_at(ROOT, "HEAD", args.config_file),
                 DefaultBranch=args.default_branch, PollSeconds=args.poll_interval_seconds,
                 DeleteHead=not args.keep_head_branch)
 
@@ -630,6 +689,9 @@ def main():
     parser.add_argument("--events", required=True, type=Path)
     parser.add_argument("--queues", required=True, type=Path)
     parser.add_argument("--config-file", help="path in candidate HEAD (default: discover OpenMerge config)")
+    parser.add_argument("--policy-repo", action="append", metavar="OWNER/NAME=PATH",
+                        help="read that repository's queue policy from a local clone with its default branch "
+                             "checked out (repeatable; default: the candidate checkout)")
     parser.add_argument("--out", type=Path)
     parser.add_argument("--strict-state", action="store_true", help="compare original snapshot hashes (same-codec comparisons)")
     parser.add_argument("--default-branch", default="main")
@@ -717,6 +779,7 @@ def main():
                       clock="event recorded_at", deadline_enumeration_clock="zero time (includes elapsed timers)", poll_interval_seconds=args.poll_interval_seconds,
                       delete_head_branch_default=not args.keep_head_branch, default_branch=args.default_branch,
                       config_sha256=hashlib.sha256(inputs["Live"].encode()).hexdigest(),
+                      policy_sources=inputs["PolicySources"],
                       streams=summaries, first_difference=difference,
                       **comparisons, state_mode="strict" if args.strict_state else "structural",
                       gate2="PASS" if difference is None and derived_ok else "FAIL", gate4="PASS" if gate4 else "FAIL",
@@ -724,6 +787,9 @@ def main():
         for name, checkout in (("baseline", args.baseline), ("candidate", ROOT)):
             if git(checkout, "status", "--porcelain") or git(checkout, "rev-parse", "HEAD") != commits[name]:
                 raise ValueError(f"{name} checkout changed during replay; refusing report")
+        for source in inputs["PolicySources"]:
+            if git(source["path"], "rev-parse", "HEAD") != source["commit"]:
+                raise ValueError(f"policy clone {source['path']} changed during replay; refusing report")
         rendered = json.dumps(report, indent=2, sort_keys=True)
         print(rendered)
         report_path.write_text(rendered + "\n")

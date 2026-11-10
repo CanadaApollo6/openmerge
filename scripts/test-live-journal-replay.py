@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 import sys
 import tempfile
@@ -229,6 +230,82 @@ class ComparisonTest(unittest.TestCase):
             self.assertIsNotNone(result["first_boundary_divergence"])
 
 
+class PolicySourceTest(unittest.TestCase):
+    """A journal from another repository reads its policy from that repository's clone."""
+
+    OLD = "version: 1\nqueues:\n- name: main\n  merge_when: [check-success = ci]\n"
+    NEW = OLD + "  check_timeout: 10m\n"
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="policy-source-")
+        self.directory = Path(self.temporary.name)
+        self.clone = self.directory / "clone"
+        self.clone.mkdir()
+        self.git("init", "--quiet", "--initial-branch", "trunk")
+        self.old = self.commit(self.OLD)
+        self.new = self.commit(self.NEW)
+        self.write_export("Acme/API")
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def git(self, *args):
+        return replay.git(self.clone, "-c", "user.name=replay", "-c", "user.email=replay@example.invalid",
+                          "-c", "commit.gpgsign=false", *args)
+
+    def commit(self, config):
+        (self.clone / ".openmerge.yml").write_text(config)
+        self.git("add", ".openmerge.yml")
+        self.git("commit", "--quiet", "--message", "policy")
+        return self.git("rev-parse", "HEAD")
+
+    def write_export(self, repository):
+        queue = dict(id=7, installation="1", repository=repository, base="trunk", initial_fence="f0")
+        (self.directory / "queues.jsonl").write_text(json.dumps(queue) + "\n")
+        events = [("base_moved", dict(sha=self.old)), ("config_applied", dict(commit=self.new, digest="d"))]
+        (self.directory / "events.jsonl").write_text("".join(
+            json.dumps(dict(id=index, queue_id=7, type=kind, payload=dict(version=1, type=kind, data=data),
+                            recorded_at="2026-01-01T00:00:00Z")) + "\n"
+            for index, (kind, data) in enumerate(events, 1)))
+
+    def prepare(self, *policy_repo):
+        return replay.prepare(SimpleNamespace(
+            events=self.directory / "events.jsonl", queues=self.directory / "queues.jsonl", config_file=None,
+            policy_repo=list(policy_repo), default_branch="main", poll_interval_seconds=60, keep_head_branch=False))
+
+    def test_queue_reads_policy_from_its_clone(self):
+        # The journal spells the repository "Acme/API"; GitHub names ignore case.
+        inputs = self.prepare(f"acme/api={self.clone}")
+        self.assertEqual(inputs["Policies"], {self.old: self.OLD, self.new: self.NEW})
+        self.assertEqual([event["Policy"] for event in inputs["Events"]], [self.old, self.new])
+        queue = inputs["Queues"][0]
+        self.assertEqual(queue["policy_live"], self.NEW)
+        self.assertEqual(queue["policy_default_branch"], "trunk")
+        source, = inputs["PolicySources"]
+        self.assertEqual((source["commit"], source["default_branch"], source["queue_ids"]), (self.new, "trunk", [7]))
+        self.assertEqual(source["config_sha256"], replay.hashlib.sha256(self.NEW.encode()).hexdigest())
+        # The OpenMerge checkout still supplies the fallback live policy.
+        self.assertEqual(inputs["Live"], replay.config_at(replay.ROOT, "HEAD"))
+
+    def test_unmapped_foreign_commit_names_the_option(self):
+        with self.assertRaisesRegex(ValueError, "--policy-repo"):
+            self.prepare()
+
+    def test_mapping_without_a_queue_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "no queue in the export"):
+            self.prepare(f"acme/api={self.clone}", f"acme/other={self.clone}")
+
+    def test_malformed_and_duplicate_mappings_are_refused(self):
+        for values in (["acme/api"], ["acme=x"], ["/api=x"], [f"acme/api={self.clone}", f"Acme/API={self.clone}"]):
+            with self.assertRaisesRegex(ValueError, "--policy-repo"):
+                self.prepare(*values)
+
+    def test_detached_clone_is_refused(self):
+        self.git("checkout", "--quiet", "--detach")
+        with self.assertRaisesRegex(ValueError, "default branch checked out"):
+            self.prepare(f"acme/api={self.clone}")
+
+
 class SyntheticProbeTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -327,6 +404,22 @@ class SyntheticProbeTest(unittest.TestCase):
         self.assertEqual(result["derived_determinism"], "PASS")
         self.assertEqual(result["non_allowlisted_fields"], [])
         self.assertIsNone(result["first_boundary_divergence"])
+
+    def test_queue_policy_replaces_shared_policy(self):
+        # The shared values alone cannot resolve this queue: no queue in the
+        # shared live policy targets "main" when the default branch is "other".
+        queue = self.inputs["Queues"][0]
+        shared = self.inputs["Live"], self.inputs["DefaultBranch"]
+        queue.update(policy_live=self.inputs["Live"], policy_default_branch="main")
+        self.inputs.update(Live="version: 1\nqueues: []\n", DefaultBranch="other")
+        try:
+            self.write_input()
+            lines = replay.probe(replay.ROOT, self.directory, "candidate-queue-policy", self.args)
+        finally:
+            self.inputs["Live"], self.inputs["DefaultBranch"] = shared
+            del queue["policy_live"], queue["policy_default_branch"]
+            self.write_input()
+        self.assertEqual(lines, self.baseline)
 
     def test_final_checkpoint_includes_queue_without_events(self):
         self.inputs["Queues"].append(dict(id=2, base="main", initial_fence="f2"))
