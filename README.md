@@ -6,7 +6,7 @@
 
 Agents now open pull requests faster than CI and humans can land them. The merge path — queuing, batching, speculative testing, flaky-test handling, and the rules around them — has become the bottleneck, and the best tools for it are closed, paywalled, or tied to a single forge. OpenMerge brings the ideas that Mergify popularized to everyone, under the Apache 2.0 license.
 
-> **Status: pre-alpha.** OpenMerge lands its own PRs. In a 14-day trial at speculation depth 4 it landed 131 changes, and daily audits of 129 of them found no violation ([log](docs/research/phase2-dogfood.md#log)). Built: the strict queue with batching and bisection, speculative chains with an adaptive window (`max_depth` defaults to 1), adaptive batch sizing, bounded check retries, optional CI cancellation, multi-repository serving with webhooks and backstop polling, and a read-only status API, CLI, and MCP server. The [savings report](docs/savings-report.md) and [CI doctor](docs/ci-doctor.md) show where queue CI time goes. Not built yet: priorities, freezes, check timeouts, a dashboard, post-merge verification, and any forge other than GitHub. See the [roadmap](ROADMAP.md).
+> **Status: pre-alpha.** OpenMerge lands its own PRs. In a 14-day trial at speculation depth 4 it landed 131 changes, and daily audits of 129 of them found no violation ([log](docs/research/phase2-dogfood.md#log)). Built: the strict queue with batching and bisection, speculative chains with an adaptive window (`max_depth` defaults to 1), adaptive batch sizing, bounded check retries, optional CI cancellation, multi-repository serving with webhooks and backstop polling, and a read-only status API, CLI, and MCP server. The [savings report](docs/savings-report.md) and [CI doctor](docs/ci-doctor.md) show where queue CI time goes. Not built yet: priorities, freezes, automatic check timeouts (each queue has a fixed `check_timeout`), a dashboard, post-merge verification, and any forge other than GitHub. See the [roadmap](ROADMAP.md).
 
 ## What it will do
 
@@ -27,6 +27,26 @@ Agents now open pull requests faster than CI and humans can land them. The merge
 - [CI savings report](docs/savings-report.md) and [CI doctor](docs/ci-doctor.md): what the queue saved, and where queue CI time goes
 - [Architecture decisions](docs/adr/README.md): the ADRs behind the design
 - [Research](docs/research/README.md): how Mergify works, and the wider merge-queue landscape
+
+## Install
+
+Download an archive for Linux or macOS from the [releases page](https://github.com/CanadaApollo6/openmerge/releases). Each archive holds one `openmerge` binary.
+
+```bash
+curl -fsSLO https://github.com/CanadaApollo6/openmerge/releases/download/v0.1.0/openmerge_0.1.0_linux_amd64.tar.gz
+curl -fsSLO https://github.com/CanadaApollo6/openmerge/releases/download/v0.1.0/checksums.txt
+sha256sum --check --ignore-missing checksums.txt
+tar -xzf openmerge_0.1.0_linux_amd64.tar.gz
+./openmerge_0.1.0_linux_amd64/openmerge version
+```
+
+`openmerge version` prints the release tag and the commit that the binary was built from. Each release also publishes a container image for amd64 and arm64:
+
+```bash
+docker run --rm ghcr.io/canadaapollo6/openmerge:v0.1.0 version
+```
+
+To build from source, run `make build`, which produces `bin/openmerge`. The commands in this README use that path. If you installed a release, use the path of your binary instead.
 
 ## Try the simulator
 

@@ -1879,14 +1879,14 @@ uses a forge token, PR authorization, or the status API. Connections do not run
 migrations. `--timeout` bounds connection, lock wait and transaction time together
 (default 2 minutes; allowed range 1ms through 2 minutes).
 
-Until [Docker/release revision wiring #118](https://github.com/CanadaApollo6/openmerge/issues/118)
-lands after ADR 0009 period B, `--verify` and `admin acknowledge` require operators
-to use a binary built with `make build` from a clean git checkout. Shipped Docker
-images exclude `.git` and have no embedded revision fallback, so they cannot
-attest. Run `openmerge version` and retain the exact `commit` with
-`attestable: true` in the evidence. The command prefers `vcs.revision`, otherwise
-prints the `authority.BuildRevision` ldflags fallback; missing or dirty metadata
-is not attestable. Verification enforces revision matching; acknowledgement's
+`--verify` and `admin acknowledge` require an attestable binary: a release
+archive, a release image, or a binary built with `make build` from a clean git
+checkout. Release builds do not use Go's VCS stamp: the release workflow passes
+the tagged commit as the `authority.BuildRevision` ldflags fallback. An image
+that you build without `--build-arg REVISION` has no revision and cannot attest. Run
+`openmerge version` and retain the exact `commit` with `attestable: true` in the
+evidence. The command prefers `vcs.revision`, otherwise prints the fallback;
+missing or dirty metadata is not attestable. Verification enforces revision matching; acknowledgement's
 receipt-file checks leave this build prerequisite to the operator.
 
 Before the **first acknowledgement event**, finish the trial period-B drain and
