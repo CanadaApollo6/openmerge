@@ -239,25 +239,26 @@ class PolicySourceTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="policy-source-")
         self.directory = Path(self.temporary.name)
-        self.clone = self.directory / "clone"
-        self.clone.mkdir()
-        self.git("init", "--quiet", "--initial-branch", "trunk")
+        self.upstream, self.clone = self.directory / "upstream", self.directory / "clone"
+        self.upstream.mkdir()
+        self.git("init", "--quiet", "--initial-branch", "trunk", root=self.upstream)
         self.old = self.commit(self.OLD)
         self.new = self.commit(self.NEW)
+        replay.git(self.directory, "clone", "--quiet", str(self.upstream), str(self.clone))
         self.write_export("Acme/API")
 
     def tearDown(self):
         self.temporary.cleanup()
 
-    def git(self, *args):
-        return replay.git(self.clone, "-c", "user.name=replay", "-c", "user.email=replay@example.invalid",
+    def git(self, *args, root=None):
+        return replay.git(root or self.clone, "-c", "user.name=replay", "-c", "user.email=replay@example.invalid",
                           "-c", "commit.gpgsign=false", *args)
 
     def commit(self, config):
-        (self.clone / ".openmerge.yml").write_text(config)
-        self.git("add", ".openmerge.yml")
-        self.git("commit", "--quiet", "--message", "policy")
-        return self.git("rev-parse", "HEAD")
+        (self.upstream / ".openmerge.yml").write_text(config)
+        self.git("add", ".openmerge.yml", root=self.upstream)
+        self.git("commit", "--quiet", "--message", "policy", root=self.upstream)
+        return self.git("rev-parse", "HEAD", root=self.upstream)
 
     def write_export(self, repository):
         queue = dict(id=7, installation="1", repository=repository, base="trunk", initial_fence="f0")
@@ -304,6 +305,26 @@ class PolicySourceTest(unittest.TestCase):
         self.git("checkout", "--quiet", "--detach")
         with self.assertRaisesRegex(ValueError, "default branch checked out"):
             self.prepare(f"acme/api={self.clone}")
+
+    def test_clone_without_recorded_default_branch_is_refused(self):
+        self.git("remote", "set-head", "origin", "--delete")
+        with self.assertRaisesRegex(ValueError, "refs/remotes/origin/HEAD"):
+            self.prepare(f"acme/api={self.clone}")
+
+    def test_feature_branch_is_refused(self):
+        # The feature branch holds the same commit; only the branch differs.
+        self.git("checkout", "--quiet", "-b", "feature")
+        with self.assertRaisesRegex(ValueError, "origin's default branch is trunk"):
+            self.prepare(f"acme/api={self.clone}")
+
+    def test_branch_behind_its_fetched_tip_is_refused(self):
+        self.commit(self.NEW + "  merge_method: squash\n")
+        self.git("fetch", "--quiet", "origin")
+        with self.assertRaisesRegex(ValueError, "not at origin/trunk as last fetched"):
+            self.prepare(f"acme/api={self.clone}")
+        self.git("merge", "--quiet", "--ff-only", "origin/trunk")
+        self.assertEqual(self.prepare(f"acme/api={self.clone}")["Queues"][0]["policy_live"],
+                         self.NEW + "  merge_method: squash\n")
 
 
 class SyntheticProbeTest(unittest.TestCase):

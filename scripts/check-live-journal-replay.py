@@ -246,9 +246,13 @@ def policy_sources(values):
 
     The server reads queue policy from the served repository's default branch.
     A journal from another repository therefore names commits that the
-    OpenMerge checkout does not have. The clone must have its default branch
-    checked out: HEAD supplies the live policy, and the branch name is the
-    default branch. Repository names compare case-insensitively, as on GitHub.
+    OpenMerge checkout does not have. HEAD supplies the live policy, so the
+    clone must be on the default branch at the tip that it last fetched: the
+    checked-out branch must be the one that refs/remotes/origin/HEAD names, at
+    the same commit. A feature branch or a local branch that is behind would
+    otherwise pass gate 4 with a policy that the server no longer reads. The
+    tool cannot see a tip that the clone never fetched. Repository names
+    compare case-insensitively, as on GitHub.
     """
     sources = {}
     for value in values or []:
@@ -259,11 +263,21 @@ def policy_sources(values):
             raise ValueError(f"--policy-repo {name}: given more than once")
         root = Path(path).resolve()
         try:
-            commit, branch = (subprocess.check_output(["git", "-C", str(root), *command], text=True,
-                                                      stderr=subprocess.DEVNULL).strip()
-                              for command in (("rev-parse", "HEAD"), ("symbolic-ref", "--short", "HEAD")))
+            commit, branch, default, tip = (
+                subprocess.check_output(["git", "-C", str(root), *command], text=True,
+                                        stderr=subprocess.DEVNULL).strip()
+                for command in (("rev-parse", "HEAD"), ("symbolic-ref", "--short", "HEAD"),
+                                ("symbolic-ref", "refs/remotes/origin/HEAD"),
+                                ("rev-parse", "refs/remotes/origin/HEAD")))
         except (subprocess.CalledProcessError, OSError):
-            raise ValueError(f"--policy-repo {name}: {root} must be a clone with its default branch checked out") from None
+            raise ValueError(f"--policy-repo {name}: {root} must be a clone with its default branch checked out "
+                             "and refs/remotes/origin/HEAD set") from None
+        default = default.removeprefix("refs/remotes/origin/")
+        if branch != default:
+            raise ValueError(f"--policy-repo {name}: {root} has {branch} checked out, "
+                             f"but origin's default branch is {default}")
+        if commit != tip:
+            raise ValueError(f"--policy-repo {name}: {root} is not at origin/{default} as last fetched")
         sources[name.lower()] = dict(repository=name, path=str(root), commit=commit, default_branch=branch,
                                      config_sha256=None, queue_ids=[])
     return sources
