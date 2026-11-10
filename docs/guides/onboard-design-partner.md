@@ -232,13 +232,19 @@ If a pull request waits, see
 Upgrade your own instances first. ADR 0012 then requires a backup and a passing
 replay of the partner's journal, as
 [Deploying outside a trial](../operating.md#deploying-outside-a-trial)
-describes.
+describes. Use the partner's database, unit name, and binary path in those
+steps.
 
-The replay tool cannot do that yet. `scripts/check-live-journal-replay.py`
-reads every queue policy from the OpenMerge checkout, so it cannot replay a
-journal from a partner's repository
-([#236](https://github.com/CanadaApollo6/openmerge/issues/236)). Do not upgrade
-a partner instance until that issue is closed.
+The partner's journal names policy commits from the partner's repositories, so
+the replay tool needs a clone of each one:
+
+1. Get read access to each served repository. Ask the partner for it before
+   the first upgrade.
+2. Clone each repository on the host. If the clone exists, run
+   `git pull --ff-only` in it. The tool refuses a clone that is not on the
+   default branch at the tip that it last fetched.
+3. Pass `--policy-repo ORG/REPO=PATH` to
+   `scripts/check-live-journal-replay.py` once for each repository.
 
 ## Remove a partner
 

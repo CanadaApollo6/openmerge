@@ -1063,6 +1063,19 @@ These are operator commands; the replay tool never connects to Postgres or GitHu
    descriptive label for the probe's API surface, not an enforced compatibility
    registry or proof that all worker behaviour is exercised.
 
+   An instance that serves another repository records that repository's policy
+   commits, which the OpenMerge checkout does not have. For such an instance,
+   pass `--policy-repo OWNER/NAME=PATH` once for each served repository. `PATH`
+   is a local clone whose remote is named `origin`. The tool reads the
+   historical and the live policy of that repository's queues from the clone.
+   The clone must have the default branch checked out at `origin`'s tip as last
+   fetched: the tool refuses a detached clone, a branch other than the one that
+   `refs/remotes/origin/HEAD` names, and a branch that differs from its
+   remote-tracking tip. The tool never fetches, so run `git pull --ff-only` in
+   the clone before you run it. A queue with no mapping uses the candidate
+   checkout. The report lists each clone's commit, branch and policy hash under
+   `policy_sources`.
+
    Attach this report, exact commands, config identity, export watermark and
    the complementary evidence below to the deploy record. The watermark includes
    max event ID, max `recorded_at`, latest `ConfigApplied` digest (per queue),
