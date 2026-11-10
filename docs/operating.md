@@ -41,6 +41,9 @@ process. Processes may share Postgres, but each needs a distinct
 `--git-cache-dir` / `OPENMERGE_GIT_CACHE_DIR`, `--webhook-listen` /
 `OPENMERGE_WEBHOOK_LISTEN`, and `--api-listen` / `OPENMERGE_API_LISTEN`.
 
+To run an instance for a design partner's organization, follow
+[How to onboard a design partner](guides/onboard-design-partner.md).
+
 `--github-installation-id` / `OPENMERGE_GITHUB_INSTALLATION_ID`, `--repos` /
 `OPENMERGE_REPOS`, and `--base` / `OPENMERGE_BASE` are optional, deprecated
 **narrowing allowlists**. The warnings name the replacement: App installation
