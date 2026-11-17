@@ -187,6 +187,14 @@ shunt adds batch-then-bisect, about log₂N extra runs per failure. **This is th
 
 **Gap:** no widely used, forge-neutral, open-source flaky-test *service* (ingest JUnit XML, score, quarantine list, API) appears to exist. OpenMerge could fill it.
 
+### 2.12 Delta and DeltaDB (Zed): version control between commits (added 2026-11-16)
+- **What it is:** Delta is Zed Industries' collaboration product: a desktop app, a browser view and a CLI. DeltaDB is its shared database. It "records every edit with the conversation behind it". The unit is a *delta*: a file edit, worktree change, message or comment. Each delta records whether a person or an agent made it.
+- **How it works:** DeltaDB is built on CRDTs, "loosely based on diamond-types and adapted to work with Git". Versions are Git objects or sets of earlier deltas. Ordering comes from the causal graph, and each client holds a replica that a sync server relays to.
+- **Relation to Git:** it does not replace Git. A project needs a Git remote, "commits stay in Git, and you push and open pull requests as usual." Zed's beta announcement is still titled "Replace PRs with Delta".
+- **Status:** public beta since Sep 2026. The pages read on 2026-11-16 state no license, no public API or wire format, and no commit-to-thread link format.
+
+**Takeaway:** DeltaDB sits *before* the commit; OpenMerge starts at the head commit. CRDT convergence makes replicas agree on text, not code correct, so it cannot replace testing the exact commit that lands. Two points matter to OpenMerge. First, a Delta thread is a provenance source that [ADR 0010](../adr/0010-agent-provenance.md) can accept as a declaration. Second, tools that move work to a branch without a pull request make an independent, PR-optional gate ([ADR 0007](../adr/0007-changes-not-prs.md)) more useful, not less.
+
 ---
 
 ## 3. Comparison table
@@ -390,3 +398,7 @@ Notation: N = PRs in the queue, T = CI duration, p = per-PR failure probability 
 - https://specstory.com/learning/ci-cd/ci-for-coding-agents
 - https://blog.codacy.com/ai-breaking-code-review-how-engineering-teams-survive-pr-bottleneck
 - https://inside.basepowercompany.com/p/merge-dont-queue
+- https://delta.dev/deltadb
+- https://delta.dev/docs/concepts/delta-and-git
+- https://delta.dev/blog/future-of-version-control
+- https://zed.dev/blog/delta-public-beta

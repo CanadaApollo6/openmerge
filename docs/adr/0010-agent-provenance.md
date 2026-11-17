@@ -581,6 +581,16 @@ Cross-repository dependent changes are accepted separately in ADR 0011.
 This ADR defines no dependency graph, cross-repository ordering, or atomic
 multi-repository landing protocol.
 
+Zed's Delta (DeltaDB) is a second candidate source, checked on 2026-11-16 at
+public beta. It records edits between commits along with the conversation
+behind them, and it marks each edit as made by a person or an agent. A Delta user
+can declare a thread now with the neutral trailer, for example
+`Agent-Session: delta:<thread-id>`, if Delta's thread IDs fit the
+`session-id` grammar. A Delta resolver like the Entire one needs Delta
+to publish a stable commit-to-thread link and storage format first. Its
+public docs describe neither, so Delta remains a declaration source only.
+See the [landscape report](../research/landscape.md#212-delta-and-deltadb-zed-version-control-between-commits-added-2026-11-16).
+
 ## Consequences
 
 Owners can require human attention and checkpoint availability for declared
